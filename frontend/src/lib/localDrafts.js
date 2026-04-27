@@ -1,4 +1,5 @@
 import { STORAGE_KEYS } from "@shared/mvpConfig.js";
+import { resolveTargetLength } from "./contentGenerator.js";
 
 const emptyDrafts = [];
 
@@ -18,13 +19,16 @@ export function findDraft(draftId) {
 export function saveDraft(form, result, previousId) {
   const drafts = loadDrafts();
   const now = new Date().toISOString();
-  const title = result.titles?.[0] || form.keyword || "제목 없는 초안";
+  const title = result.selectedTitle || result.titles?.[0] || form.keyword || "제목 없는 초안";
   const draft = {
     id: previousId || `draft-${Date.now()}`,
     form,
     result,
     title,
     keyword: form.keyword,
+    selectedTopic: result.selectedTopic || "",
+    selectedTitle: result.selectedTitle || "",
+    targetLength: resolveTargetLength(form),
     summary: result.body?.slice(0, 120) ?? "",
     updatedAt: now,
     createdAt: drafts.find((item) => item.id === previousId)?.createdAt ?? now

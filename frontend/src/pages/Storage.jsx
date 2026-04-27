@@ -61,6 +61,14 @@ export default function Storage() {
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-moss">{draft.keyword || "키워드 없음"}</p>
                   <h3 className="mt-1 text-lg font-bold">{draft.title}</h3>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-ink/55">
+                    {draft.selectedTopic && (
+                      <span className="rounded-md bg-white px-2 py-1">주제: {draft.selectedTopic}</span>
+                    )}
+                    {draft.targetLength && (
+                      <span className="rounded-md bg-white px-2 py-1">목표: {draft.targetLength}자</span>
+                    )}
+                  </div>
                   <p className="mt-2 line-clamp-2 text-sm leading-6 text-ink/65">{draft.summary}</p>
                   <time className="mt-3 block text-xs font-semibold text-ink/50">
                     {formatDate(draft.updatedAt)}

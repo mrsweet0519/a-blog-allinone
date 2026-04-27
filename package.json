@@ -2,6 +2,7 @@
   "name": "a-blog-allinone",
   "private": true,
   "version": "0.1.0",
+  "type": "module",
   "description": "Blog All-in-One 1st MVP workspace",
   "scripts": {
     "install:all": "npm install --prefix frontend && npm install --prefix backend",
