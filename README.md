@@ -28,6 +28,86 @@ npm.cmd run dev:backend
 
 백엔드 상태 확인 주소는 `http://localhost:4000/api/health`입니다.
 
+## 크몽 시연용 데모 배포
+
+정식 SaaS가 아니라 판매 전 시연용 URL이 목표라면 다음 구조가 가장 단순합니다.
+
+- 프론트엔드: Vercel
+- 백엔드: Render Web Service
+- 저장 방식: 현재 MVP처럼 브라우저 `localStorage`
+- 제외 범위: 회원가입, 결제, DB 저장, 실제 외부 발행 자동화
+
+프론트는 정적 React 앱이므로 Vercel에 잘 맞고, 백엔드는 Express API이므로 Render Web Service로 분리하는 방식이 관리하기 쉽습니다.
+
+### 필요한 환경변수
+
+프론트엔드, Vercel에 입력합니다.
+
+```text
+VITE_API_BASE_URL=https://내-render-백엔드주소.onrender.com
+```
+
+백엔드, Render에 입력합니다.
+
+```text
+CORS_ORIGIN=https://내-vercel-프론트주소.vercel.app
+GEMINI_API_KEY=
+PEXELS_API_KEY=
+```
+
+Render는 실행 포트로 `PORT` 환경변수를 사용할 수 있고, 별도 설정이 없으면 기본 웹 서비스 포트인 `10000`을 사용합니다. 로컬에서 직접 포트를 바꾸고 싶을 때만 `BACKEND_PORT=4000`을 사용합니다.
+
+현재 1차 MVP는 Gemini/Pexels API를 실제 호출하지 않습니다. 나중에 연결할 때도 API 키는 프론트가 아니라 Render 백엔드 환경변수에만 넣어야 합니다.
+
+### 프론트 배포, Vercel
+
+1. Vercel에서 GitHub 저장소 `mrsweet0519/a-blog-allinone`을 Import합니다.
+2. Framework Preset은 `Vite`를 선택합니다.
+3. Root Directory는 `frontend`로 설정합니다.
+4. Build Command는 `npm run build`를 사용합니다.
+5. Output Directory는 `dist`를 사용합니다.
+6. Environment Variables에 `VITE_API_BASE_URL`을 입력합니다.
+7. Deploy 후 Vercel 프로젝트 화면의 Domains 영역에서 접속 URL을 확인합니다.
+
+### 백엔드 배포, Render
+
+1. Render에서 New Web Service를 선택합니다.
+2. GitHub 저장소 `mrsweet0519/a-blog-allinone`을 연결합니다.
+3. Root Directory는 `backend`로 설정합니다.
+4. Build Command는 `npm install`을 사용합니다.
+5. Start Command는 `npm start`를 사용합니다.
+6. Environment Variables에 `CORS_ORIGIN`을 입력합니다.
+7. Deploy 후 Render 서비스 화면의 URL 뒤에 `/api/health`를 붙여 접속합니다.
+
+예:
+
+```text
+https://내-render-백엔드주소.onrender.com/api/health
+```
+
+`{"ok":true}`가 보이면 백엔드가 정상입니다.
+
+### 로컬 환경변수 예시
+
+예시 파일은 아래에 있습니다.
+
+- `frontend/.env.example`
+- `backend/.env.example`
+
+프론트에서 백엔드 API를 사용하려면 `frontend/.env`에 다음 값을 둡니다.
+
+```text
+VITE_API_BASE_URL=http://localhost:4000
+```
+
+백엔드 CORS 허용 주소를 바꾸려면 Render 또는 로컬 실행 환경에 다음처럼 넣습니다.
+
+```text
+CORS_ORIGIN=http://127.0.0.1:5173,http://localhost:5173,https://내-vercel-프론트주소.vercel.app
+```
+
+배포 후에는 Vercel URL로 프론트에 접속하고, 설정 화면의 백엔드 API 상태를 눌러 Render 연결 여부를 확인할 수 있습니다.
+
 ## 폴더 구조
 
 ```text

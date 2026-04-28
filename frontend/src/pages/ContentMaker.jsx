@@ -12,6 +12,7 @@ import {
   createTopicRecommendations,
   getTargetLengthRange
 } from "../lib/contentGenerator.js";
+import { isBackendApiEnabled, postBackend } from "../lib/backendApi.js";
 import { findDraft, saveDraft } from "../lib/localDrafts.js";
 
 const initialForm = {
@@ -67,6 +68,17 @@ const isCustomTargetReady = (form) =>
 
 const isReadyForm = (form) =>
   Boolean(form.keyword.trim() && form.category && form.goal && form.tone && isCustomTargetReady(form));
+
+const requestContentApi = async (path, payload, fallback) => {
+  if (!isBackendApiEnabled()) return fallback();
+
+  try {
+    return await postBackend(path, payload);
+  } catch (error) {
+    console.warn(error);
+    return fallback();
+  }
+};
 
 const normalizeForm = (storedForm = {}) => {
   const knownTarget = makerOptions.targetLengths.some(
@@ -229,9 +241,14 @@ export default function ContentMaker() {
     setStatus("generating");
     setEditing(false);
     await wait(500);
+    const data = await requestContentApi(
+      "/api/content/topics",
+      form,
+      () => ({ topics: createTopicRecommendations(form) })
+    );
     setResult({
       ...emptyResult,
-      topics: createTopicRecommendations(form)
+      topics: data.topics
     });
     setStatus("generated");
   };
@@ -266,9 +283,17 @@ export default function ContentMaker() {
     setStatus("generating");
     setEditing(false);
     await wait(500);
+    const data = await requestContentApi(
+      "/api/content/titles",
+      {
+        ...form,
+        selectedTopic: result.selectedTopic
+      },
+      () => ({ titles: createTitleCandidates(form, result.selectedTopic) })
+    );
     setResult((current) => ({
       ...current,
-      titles: createTitleCandidates(form, current.selectedTopic),
+      titles: data.titles,
       selectedTitle: "",
       selectedTitleType: "",
       outlineSections: [],
@@ -315,13 +340,32 @@ export default function ContentMaker() {
     setStatus("generating");
     setEditing(false);
     await wait(500);
-    const openingSentenceCandidates = createOpeningSentenceCandidates(form);
-    const ctaCandidates = createCtaCandidates(form);
+    const [outlineData, writingChoiceData] = await Promise.all([
+      requestContentApi(
+        "/api/content/outline",
+        {
+          ...form,
+          selectedTopic: result.selectedTopic,
+          selectedTitle: result.selectedTitle
+        },
+        () => ({
+          outlineSections: createOutlineSections(form, result.selectedTopic, result.selectedTitle)
+        })
+      ),
+      requestContentApi(
+        "/api/content/writing-choices",
+        form,
+        () => ({
+          openingSentenceCandidates: createOpeningSentenceCandidates(form),
+          ctaCandidates: createCtaCandidates(form)
+        })
+      )
+    ]);
+    const openingSentenceCandidates = writingChoiceData.openingSentenceCandidates || [];
+    const ctaCandidates = writingChoiceData.ctaCandidates || [];
     setResult((current) => ({
       ...current,
-      outlineSections: toOutlineItems(
-        createOutlineSections(form, current.selectedTopic, current.selectedTitle)
-      ),
+      outlineSections: toOutlineItems(outlineData.outlineSections),
       openingSentenceCandidates,
       selectedOpeningSentence: openingSentenceCandidates[0] || "",
       ctaCandidates,
@@ -343,25 +387,29 @@ export default function ContentMaker() {
     setStatus("generating");
     setEditing(false);
     await wait(650);
-    setResult((current) => {
-      const finalContent = createFinalContent(
-        form,
-        current.selectedTopic,
-        current.selectedTitle,
-        getSelectedOutlineHeadings(current.outlineSections),
-        {
-          selectedOpeningSentence: current.selectedOpeningSentence,
-          selectedCtaSentence: current.selectedCtaSentence
-        }
-      );
+    const finalContent = await requestContentApi(
+      "/api/content/final",
+      {
+        ...form,
+        selectedTopic: result.selectedTopic,
+        selectedTitle: result.selectedTitle,
+        outlineSections: selectedOutlineHeadings,
+        selectedOpeningSentence: result.selectedOpeningSentence,
+        selectedCtaSentence: result.selectedCtaSentence
+      },
+      () =>
+        createFinalContent(form, result.selectedTopic, result.selectedTitle, selectedOutlineHeadings, {
+          selectedOpeningSentence: result.selectedOpeningSentence,
+          selectedCtaSentence: result.selectedCtaSentence
+        })
+    );
 
-      return {
+    setResult((current) => ({
         ...current,
         ...finalContent,
         selectedTitleType: current.selectedTitleType || inferTitleType(current.titles, current.selectedTitle),
         outlineSections: current.outlineSections
-      };
-    });
+    }));
     setStatus("generated");
   };
 

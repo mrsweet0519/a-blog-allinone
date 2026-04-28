@@ -1,6 +1,7 @@
-import { LockKeyhole, PlugZap, Save, ToggleLeft } from "lucide-react";
+import { LockKeyhole, PlugZap, Save, Server, ToggleLeft } from "lucide-react";
 import { useState } from "react";
 import { makerOptions } from "@shared/mvpConfig.js";
+import { API_BASE_URL, checkBackendHealth, isBackendApiEnabled } from "../lib/backendApi.js";
 import { loadSettings, saveSettings } from "../lib/localDrafts.js";
 
 const defaultSettings = {
@@ -12,6 +13,7 @@ const defaultSettings = {
 export default function Settings() {
   const [settings, setSettings] = useState(() => ({ ...defaultSettings, ...loadSettings() }));
   const [saved, setSaved] = useState(false);
+  const [backendStatus, setBackendStatus] = useState(isBackendApiEnabled() ? "확인 전" : "미설정");
 
   const updateSettings = (key, value) => {
     setSettings((current) => ({ ...current, [key]: value }));
@@ -21,6 +23,21 @@ export default function Settings() {
   const persist = () => {
     saveSettings(settings);
     setSaved(true);
+  };
+
+  const checkBackend = async () => {
+    if (!isBackendApiEnabled()) {
+      setBackendStatus("미설정");
+      return;
+    }
+
+    setBackendStatus("확인 중");
+    try {
+      const health = await checkBackendHealth();
+      setBackendStatus(health.ok ? "연결됨" : "응답 확인 필요");
+    } catch {
+      setBackendStatus("연결 실패");
+    }
   };
 
   return (
@@ -89,6 +106,12 @@ export default function Settings() {
           <h3 className="text-lg font-bold">향후 확장</h3>
           <div className="mt-5 space-y-3">
             <ExtensionSlot
+              icon={Server}
+              title={`백엔드 API ${API_BASE_URL || "미설정"}`}
+              status={backendStatus}
+              action={isBackendApiEnabled() ? checkBackend : null}
+            />
+            <ExtensionSlot
               icon={LockKeyhole}
               title="Gemini API 연결"
               status="2차 MVP"
@@ -110,18 +133,28 @@ export default function Settings() {
   );
 }
 
-function ExtensionSlot({ icon: Icon, title, status }) {
+function ExtensionSlot({ icon: Icon, title, status, action }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-line bg-paper p-4">
       <div className="flex min-w-0 items-center gap-3">
         <div className="grid h-10 w-10 place-items-center rounded-md bg-white text-moss">
           <Icon size={18} aria-hidden="true" />
         </div>
-        <p className="font-semibold">{title}</p>
+        <p className="min-w-0 break-all font-semibold">{title}</p>
       </div>
-      <span className="shrink-0 rounded-md bg-white px-2.5 py-1 text-xs font-bold text-ink/55">
-        {status}
-      </span>
+      {action ? (
+        <button
+          type="button"
+          onClick={action}
+          className="focus-ring shrink-0 rounded-md bg-white px-2.5 py-1 text-xs font-bold text-ink/55 transition hover:text-moss"
+        >
+          {status}
+        </button>
+      ) : (
+        <span className="shrink-0 rounded-md bg-white px-2.5 py-1 text-xs font-bold text-ink/55">
+          {status}
+        </span>
+      )}
     </div>
   );
 }
