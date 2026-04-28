@@ -20,14 +20,20 @@ export function saveDraft(form, result, previousId) {
   const drafts = loadDrafts();
   const now = new Date().toISOString();
   const title = result.selectedTitle || result.titles?.[0] || form.keyword || "제목 없는 초안";
+  const selectedTitleType = result.selectedTitleType || result.titleType || "미분류";
   const draft = {
     id: previousId || `draft-${Date.now()}`,
     form,
-    result,
+    result: {
+      ...result,
+      selectedTitleType
+    },
     title,
+    titleType: selectedTitleType,
     keyword: form.keyword,
     selectedTopic: result.selectedTopic || "",
     selectedTitle: result.selectedTitle || "",
+    selectedTitleType,
     targetLength: resolveTargetLength(form),
     summary: result.body?.slice(0, 120) ?? "",
     updatedAt: now,

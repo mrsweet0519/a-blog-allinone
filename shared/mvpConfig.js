@@ -13,6 +13,7 @@ export const makerOptions = {
     "기타"
   ],
   goals: ["정보 전달", "신뢰 형성", "상품 홍보", "방문 유도"],
+  audienceTypes: ["사업자/매장 홍보", "인플루언서/수익형"],
   tones: ["친근한", "전문적인", "차분한", "활기찬"],
   targetLengths: [
     { label: "1200자", value: "1200" },

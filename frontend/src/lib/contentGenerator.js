@@ -1,7 +1,10 @@
 export {
   createDraftContent,
+  createCtaCandidates,
   createFinalContent,
+  createOpeningSentenceCandidates,
   createKeywordOptimizationPlan,
+  createOutlineSections,
   createTitleCandidates,
   createTopicRecommendations,
   getTargetLengthRange,

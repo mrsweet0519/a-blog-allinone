@@ -22,7 +22,7 @@ export default function Storage() {
     if (!normalizedQuery) return drafts;
 
     return drafts.filter((draft) =>
-      [draft.title, draft.keyword, draft.summary]
+      [draft.title, draft.titleType, draft.selectedTitleType, draft.keyword, draft.summary]
         .join(" ")
         .toLowerCase()
         .includes(normalizedQuery)
@@ -65,6 +65,9 @@ export default function Storage() {
                     {draft.selectedTopic && (
                       <span className="rounded-md bg-white px-2 py-1">주제: {draft.selectedTopic}</span>
                     )}
+                    <span className="rounded-md bg-white px-2 py-1">
+                      제목 유형: {draft.selectedTitleType || draft.titleType || "미분류"}
+                    </span>
                     {draft.targetLength && (
                       <span className="rounded-md bg-white px-2 py-1">목표: {draft.targetLength}자</span>
                     )}
