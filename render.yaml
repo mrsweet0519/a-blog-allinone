@@ -1,0 +1,32 @@
+services:
+  # Backend API Service
+  - type: web
+    name: blog-allinone-backend
+    env: node
+    plan: free
+    buildCommand: npm install && cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        value: "*" # 초기 테스트를 위해 와일드카드 허용 (추후 프론트엔드 주소로 제한 권장)
+      - key: RENDER
+        value: true
+
+  # Frontend Static Site
+  - type: static_site
+    name: blog-allinone-frontend
+    plan: free
+    buildCommand: npm install && cd frontend && npm install && npm run build
+    publishPath: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        fromService:
+          name: blog-allinone-backend
+          type: web
+          property: url

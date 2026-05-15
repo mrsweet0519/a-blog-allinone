@@ -1,6 +1,7 @@
 export const STORAGE_KEYS = {
   drafts: "a-blog-allinone:drafts",
-  settings: "a-blog-allinone:settings"
+  settings: "a-blog-allinone:settings",
+  companyDefaults: "a-blog-allinone:company-defaults"
 };
 
 export const makerOptions = {

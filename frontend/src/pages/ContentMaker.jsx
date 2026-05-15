@@ -1,4 +1,16 @@
-import { Check, Clipboard, Image, PenLine, RefreshCw, Save, Sparkles } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  CircleHelp,
+  Clipboard,
+  Image,
+  PenLine,
+  Plus,
+  RefreshCw,
+  Save,
+  Sparkles,
+  Trash2
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { makerOptions } from "@shared/mvpConfig.js";
@@ -13,7 +25,13 @@ import {
   getTargetLengthRange
 } from "../lib/contentGenerator.js";
 import { isBackendApiEnabled, postBackend } from "../lib/backendApi.js";
-import { findDraft, saveDraft } from "../lib/localDrafts.js";
+import {
+  clearCompanyDefaults,
+  findDraft,
+  loadCompanyDefaults,
+  saveCompanyDefaults,
+  saveDraft
+} from "../lib/localDrafts.js";
 
 const initialForm = {
   keyword: "",
@@ -32,6 +50,105 @@ const initialForm = {
   customTargetLength: "1800"
 };
 
+const OUTLINE_MIN = 3;
+const OUTLINE_MAX = 6;
+
+const COMPANY_DEFAULT_FIELDS = [
+  "audienceType",
+  "category",
+  "brandName",
+  "region",
+  "strengths",
+  "emphasisPoint",
+  "tone",
+  "useEmoji",
+  "avoid",
+  "ctaDirection",
+  "targetLengthOption",
+  "customTargetLength"
+];
+
+const pickCompanyDefaults = (form) =>
+  COMPANY_DEFAULT_FIELDS.reduce(
+    (defaults, key) => ({
+      ...defaults,
+      [key]: form[key]
+    }),
+    {}
+  );
+
+const mergeUnique = (...groups) =>
+  Array.from(new Set(groups.flat().map((item) => String(item || "").trim()).filter(Boolean)));
+
+const FIELD_TOOLTIPS = {
+  keyword: {
+    title: "키워드",
+    description:
+      "검색되고 싶은 핵심 단어를 입력하세요. 지역명, 서비스명, 후기/비교 표현을 함께 넣으면 좋습니다.",
+    example: "강남 피부관리샵, 물방울리프팅 후기, 육아서적 추천, 무료보호대 비교"
+  },
+  category: {
+    title: "업종/주제",
+    description: "글 주제와 가장 가까운 업종을 선택하세요.",
+    example: "로컬 매장, 온라인 쇼핑몰"
+  },
+  audienceType: {
+    title: "사용자 유형",
+    description: "글을 사용할 목적에 가까운 유형을 선택하세요.",
+    example: "사업자/매장 홍보, 인플루언서/수익형"
+  },
+  goal: {
+    title: "글 목적",
+    description: "글이 독자에게 해야 할 역할을 선택하세요.",
+    example: "정보 전달, 신뢰 형성, 방문 유도"
+  },
+  targetLength: {
+    title: "목표 글자수",
+    description: "원하는 본문 길이를 선택하세요.",
+    example: "1200자, 1500자, 직접입력"
+  },
+  tone: {
+    title: "말투",
+    description: "전체 글의 분위기를 선택하세요.",
+    example: "친근한, 전문적인, 차분한"
+  },
+  brandName: {
+    title: "브랜드명/매장명",
+    description: "매장명이나 브랜드명을 입력하세요. 모르면 비워도 됩니다.",
+    example: "금찌네, 예진에스테틱"
+  },
+  region: {
+    title: "지역",
+    description: "지역 기반 글이면 입력하세요. 온라인 상품은 비워도 됩니다.",
+    example: "서울 강남, 부산 수영구"
+  },
+  strengths: {
+    title: "핵심 강점",
+    description: "고객이 자주 칭찬하는 장점이나 차별점을 입력하세요.",
+    example: "1:1 상담, 맞춤 관리, 사후 안내"
+  },
+  emphasisPoint: {
+    title: "강조 포인트",
+    description: "글에서 꼭 강조하고 싶은 내용을 입력하세요.",
+    example: "처음 방문 고객도 편하게 상담 가능"
+  },
+  avoid: {
+    title: "금지어",
+    description: "글에 나오지 않았으면 하는 단어를 입력하세요.",
+    example: "최고, 무조건, 보장, 즉시효과"
+  },
+  ctaDirection: {
+    title: "CTA 톤",
+    description: "마무리 문장의 방향을 입력하세요.",
+    example: "부담 없이 상담 받아보세요, 기준부터 확인해보세요"
+  },
+  useEmoji: {
+    title: "이모지 사용",
+    description: "본문 첫머리에 가벼운 이모지를 넣을지 선택합니다.",
+    example: "켜기 또는 끄기"
+  }
+};
+
 const TITLE_TYPES = ["정보형", "지역형", "비교형", "클릭형"];
 const TITLE_CANDIDATE_LABELS = TITLE_TYPES.map((type) => `${type} 제목`);
 
@@ -43,6 +160,8 @@ const inferTitleType = (titles = [], selectedTitle = "") => {
 
 const emptyResult = {
   topics: [],
+  topicHistory: [],
+  topicRegenerationCount: 0,
   selectedTopic: "",
   titles: [],
   selectedTitle: "",
@@ -111,18 +230,21 @@ const toOutlineItems = (items = []) =>
         selected: item.selected !== false
       };
     })
-    .filter((item) => item.heading.trim());
+    .filter((item) => item.heading.trim())
+    .slice(0, OUTLINE_MAX);
 
 const getSelectedOutlineHeadings = (outlineSections = []) =>
   outlineSections
     .filter((item) => item.selected !== false)
     .map((item) => item.heading.trim())
     .filter(Boolean)
-    .slice(0, 6);
+    .slice(0, OUTLINE_MAX);
 
 const normalizeResult = (storedResult = {}) => ({
   ...emptyResult,
   ...storedResult,
+  topicHistory: storedResult.topicHistory || [],
+  topicRegenerationCount: storedResult.topicRegenerationCount || 0,
   selectedTopic: storedResult.selectedTopic || "",
   selectedTitle: storedResult.selectedTitle || "",
   selectedTitleType:
@@ -161,6 +283,9 @@ export default function ContentMaker() {
   const [status, setStatus] = useState("idle");
   const [editing, setEditing] = useState(false);
   const [draftId, setDraftId] = useState(null);
+  const [defaultMessage, setDefaultMessage] = useState("");
+  const [hasSavedDefaults, setHasSavedDefaults] = useState(() => Boolean(loadCompanyDefaults()));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const range = useMemo(() => getTargetLengthRange(form), [form]);
   const isFormReady = useMemo(() => isReadyForm(form), [form]);
@@ -172,14 +297,30 @@ export default function ContentMaker() {
     () => getSelectedOutlineHeadings(result.outlineSections),
     [result.outlineSections]
   );
-  const hasOutline = selectedOutlineHeadings.length >= 4 && selectedOutlineHeadings.length <= 6;
+  const hasOutline = selectedOutlineHeadings.length >= OUTLINE_MIN && selectedOutlineHeadings.length <= OUTLINE_MAX;
   const hasWritingChoices = Boolean(result.selectedOpeningSentence && result.selectedCtaSentence);
   const hasFinal = Boolean(result.body && result.hashtags.length > 0);
 
   useEffect(() => {
     const draft = location.state?.draftId ? findDraft(location.state.draftId) : null;
 
-    if (!draft) return;
+    if (!draft) {
+      const companyDefaults = loadCompanyDefaults();
+
+      setHasSavedDefaults(Boolean(companyDefaults));
+
+      if (!companyDefaults) return;
+
+      const nextForm = normalizeForm({
+        ...initialForm,
+        ...companyDefaults
+      });
+
+      setForm(nextForm);
+      setStatus(isReadyForm(nextForm) ? "ready" : "idle");
+      setDefaultMessage("저장된 업체 기본값이 적용되었습니다.");
+      return;
+    }
 
     setForm(normalizeForm(draft.form));
     setResult(
@@ -192,6 +333,7 @@ export default function ContentMaker() {
     setDraftId(draft.id);
     setStatus("saved");
     setEditing(false);
+    setDefaultMessage("");
   }, [location.state]);
 
   const updateForm = (key, value) => {
@@ -235,21 +377,36 @@ export default function ContentMaker() {
     setResult(emptyResult);
   };
 
-  const generateTopics = async () => {
+  const generateTopics = async ({ forceNew = false } = {}) => {
     if (!isFormReady) return;
+
+    const shouldRegenerate = forceNew || result.topics.length > 0;
+    const previousTopics = shouldRegenerate ? mergeUnique(result.topicHistory, result.topics) : [];
+    const nextRegenerationCount = shouldRegenerate ? (result.topicRegenerationCount || 0) + 1 : 0;
+    const topicPayload = {
+      ...form,
+      previousTopics,
+      topicHistory: previousTopics,
+      regenerationCount: nextRegenerationCount,
+      variationSeed: shouldRegenerate ? `${Date.now()}-${nextRegenerationCount}` : ""
+    };
 
     setStatus("generating");
     setEditing(false);
     await wait(500);
     const data = await requestContentApi(
       "/api/content/topics",
-      form,
-      () => ({ topics: createTopicRecommendations(form) })
+      topicPayload,
+      () => ({ topics: createTopicRecommendations(topicPayload) })
     );
+    const nextTopics = data.topics || [];
     setResult({
       ...emptyResult,
-      topics: data.topics
+      topics: nextTopics,
+      topicHistory: mergeUnique(previousTopics, nextTopics).slice(-30),
+      topicRegenerationCount: nextRegenerationCount
     });
+    setDraftId(null);
     setStatus("generated");
   };
 
@@ -414,27 +571,7 @@ export default function ContentMaker() {
   };
 
   const regenerate = () => {
-    if (hasOutline && !hasWritingChoices) {
-      generateOutline();
-      return;
-    }
-
-    if (hasOutline) {
-      generateFinal();
-      return;
-    }
-
-    if (hasSelectedTitle) {
-      generateOutline();
-      return;
-    }
-
-    if (hasSelectedTopic) {
-      generateTitles();
-      return;
-    }
-
-    generateTopics();
+    generateTopics({ forceNew: true });
   };
 
   const saveCurrentDraft = () => {
@@ -461,6 +598,46 @@ export default function ContentMaker() {
 
     await navigator.clipboard.writeText(resultToClipboard(form, result));
     setStatus("copied");
+  };
+
+  const saveCompanyDefaultsFromForm = () => {
+    saveCompanyDefaults(pickCompanyDefaults(form));
+    setHasSavedDefaults(true);
+    setDefaultMessage("기본값을 저장했습니다. 이 정보는 다음 글 생성 시 자동으로 불러올 수 있습니다.");
+  };
+
+  const loadCompanyDefaultsToForm = () => {
+    const companyDefaults = loadCompanyDefaults();
+
+    if (!companyDefaults) {
+      setHasSavedDefaults(false);
+      setDefaultMessage("저장된 업체 기본값이 아직 없습니다.");
+      return;
+    }
+
+    setForm((current) => {
+      const nextForm = normalizeForm({
+        ...current,
+        ...companyDefaults
+      });
+      setStatus(isReadyForm(nextForm) ? "ready" : "idle");
+      return nextForm;
+    });
+    setResult(emptyResult);
+    setDraftId(null);
+    setEditing(false);
+    setHasSavedDefaults(true);
+    setDefaultMessage("저장된 업체 기본값이 적용되었습니다.");
+  };
+
+  const resetCompanyDefaults = () => {
+    const confirmed = window.confirm("저장된 업체 기본값을 초기화할까요?");
+
+    if (!confirmed) return;
+
+    clearCompanyDefaults();
+    setHasSavedDefaults(false);
+    setDefaultMessage("저장된 업체 기본값을 초기화했습니다.");
   };
 
   const updateImageSuggestion = (id, key, value) => {
@@ -508,6 +685,60 @@ export default function ContentMaker() {
     setStatus("generated");
   };
 
+  const addOutlineSection = () => {
+    setResult((current) => {
+      if (current.outlineSections.length >= OUTLINE_MAX) return current;
+
+      return {
+        ...current,
+        outlineSections: [
+          ...current.outlineSections,
+          {
+            id: `outline-${Date.now()}`,
+            heading: `새 소제목 ${current.outlineSections.length + 1}`,
+            selected: true
+          }
+        ],
+        body: "",
+        hashtags: [],
+        hashtagGroups: [],
+        imageSuggestions: [],
+        strategyMemo: null,
+        seoCheck: null,
+        keywordOptimization: null
+      };
+    });
+    setDraftId(null);
+    setEditing(false);
+    setStatus("generated");
+  };
+
+  const deleteOutlineSection = (id) => {
+    setResult((current) => {
+      const nextOutline = current.outlineSections.filter((item) => item.id !== id);
+      const selectedCount = getSelectedOutlineHeadings(nextOutline).length;
+
+      if (current.outlineSections.length <= OUTLINE_MIN || selectedCount < OUTLINE_MIN) {
+        return current;
+      }
+
+      return {
+        ...current,
+        outlineSections: nextOutline,
+        body: "",
+        hashtags: [],
+        hashtagGroups: [],
+        imageSuggestions: [],
+        strategyMemo: null,
+        seoCheck: null,
+        keywordOptimization: null
+      };
+    });
+    setDraftId(null);
+    setEditing(false);
+    setStatus("generated");
+  };
+
   const selectWritingChoice = (key, value) => {
     setResult((current) => ({
       ...current,
@@ -535,7 +766,7 @@ export default function ContentMaker() {
         <StatusBadge status={status} />
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[0.78fr_1.22fr]">
+      <div className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
         <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">입력값</h3>
@@ -544,213 +775,283 @@ export default function ContentMaker() {
             </span>
           </div>
 
-          <div className="mt-5 space-y-4">
-            <label className="block">
-              <span className="text-sm font-semibold">키워드</span>
-              <input
-                value={form.keyword}
-                onChange={(event) => updateForm("keyword", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 스마트스토어 상세페이지"
-              />
-            </label>
+          <div className="mt-4 rounded-md border border-line bg-paper px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-ink/55">
+                <span>업체 기본값</span>
+                <span className={`rounded-md px-2 py-0.5 ${hasSavedDefaults ? "bg-moss/10 text-moss" : "bg-white"}`}>
+                  {hasSavedDefaults ? "저장됨" : "없음"}
+                </span>
+              </div>
+              <div className="grid w-full grid-cols-3 gap-1.5 sm:w-auto">
+                <button
+                  type="button"
+                  onClick={saveCompanyDefaultsFromForm}
+                  className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-moss hover:text-moss"
+                >
+                  <Save size={14} aria-hidden="true" />
+                  저장
+                </button>
+                <button
+                  type="button"
+                  onClick={loadCompanyDefaultsToForm}
+                  disabled={!hasSavedDefaults}
+                  className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  불러오기
+                </button>
+                <button
+                  type="button"
+                  onClick={resetCompanyDefaults}
+                  disabled={!hasSavedDefaults}
+                  className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30"
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                  초기화
+                </button>
+              </div>
+            </div>
+          </div>
+          {defaultMessage && (
+            <p className="mt-2 rounded-md bg-paper px-3 py-2 text-xs font-semibold text-moss">
+              {defaultMessage}
+            </p>
+          )}
 
-            <label className="block">
-              <span className="text-sm font-semibold">업종/주제</span>
-              <select
-                value={form.category}
-                onChange={(event) => updateForm("category", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-              >
-                <option value="">선택</option>
-                {makerOptions.categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className="mt-5 space-y-5">
+            <div className="space-y-4">
+              <h4 className="text-sm font-bold text-ink/70">기본 입력</h4>
 
-            <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
-                <span className="text-sm font-semibold">브랜드명/매장명</span>
+                <FieldLabel required tooltip={FIELD_TOOLTIPS.keyword}>키워드</FieldLabel>
                 <input
-                  value={form.brandName}
-                  onChange={(event) => updateForm("brandName", event.target.value)}
+                  value={form.keyword}
+                  onChange={(event) => updateForm("keyword", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 안티그래비티"
+                  placeholder="예: 피부관리샵 리프팅"
                 />
               </label>
 
               <label className="block">
-                <span className="text-sm font-semibold">지역</span>
-                <input
-                  value={form.region}
-                  onChange={(event) => updateForm("region", event.target.value)}
+                <FieldLabel required tooltip={FIELD_TOOLTIPS.category}>업종/주제</FieldLabel>
+                <select
+                  value={form.category}
+                  onChange={(event) => updateForm("category", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 서울 강남"
-                />
+                >
+                  <option value="">업종 고르기</option>
+                  {makerOptions.categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <fieldset>
+                <legend>
+                  <FieldLabel tooltip={FIELD_TOOLTIPS.audienceType}>사용자 유형</FieldLabel>
+                </legend>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {makerOptions.audienceTypes.map((audienceType) => (
+                    <label
+                      key={audienceType}
+                      className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
+                        form.audienceType === audienceType
+                          ? "border-coral bg-coral text-white"
+                          : "border-line bg-paper hover:border-coral"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="audienceType"
+                        value={audienceType}
+                        checked={form.audienceType === audienceType}
+                        onChange={(event) => updateForm("audienceType", event.target.value)}
+                        className="sr-only"
+                      />
+                      {audienceType}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>
+                  <FieldLabel required tooltip={FIELD_TOOLTIPS.goal}>글 목적</FieldLabel>
+                </legend>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {makerOptions.goals.map((goal) => (
+                    <label
+                      key={goal}
+                      className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
+                        form.goal === goal
+                          ? "border-moss bg-moss text-white"
+                          : "border-line bg-paper hover:border-moss"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="goal"
+                        value={goal}
+                        checked={form.goal === goal}
+                        onChange={(event) => updateForm("goal", event.target.value)}
+                        className="sr-only"
+                      />
+                      {goal}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>
+                  <FieldLabel tooltip={FIELD_TOOLTIPS.targetLength}>목표 글자수</FieldLabel>
+                </legend>
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {makerOptions.targetLengths.map((option) => (
+                    <label
+                      key={option.value}
+                      className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
+                        form.targetLengthOption === option.value
+                          ? "border-amber bg-amber text-white"
+                          : "border-line bg-paper hover:border-amber"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="targetLength"
+                        value={option.value}
+                        checked={form.targetLengthOption === option.value}
+                        onChange={(event) => updateForm("targetLengthOption", event.target.value)}
+                        className="sr-only"
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+                {form.targetLengthOption === "custom" && (
+                  <input
+                    type="number"
+                    min="600"
+                    max="5000"
+                    value={form.customTargetLength}
+                    onChange={(event) => updateForm("customTargetLength", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                    placeholder="예: 1800"
+                  />
+                )}
+              </fieldset>
+
+              <label className="block">
+                <FieldLabel required tooltip={FIELD_TOOLTIPS.tone}>말투</FieldLabel>
+                <select
+                  value={form.tone}
+                  onChange={(event) => updateForm("tone", event.target.value)}
+                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                >
+                  {makerOptions.tones.map((tone) => (
+                    <option key={tone} value={tone}>
+                      {tone}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
 
-            <fieldset>
-              <legend className="text-sm font-semibold">글 목적</legend>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {makerOptions.goals.map((goal) => (
-                  <label
-                    key={goal}
-                    className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
-                      form.goal === goal
-                        ? "border-moss bg-moss text-white"
-                        : "border-line bg-paper hover:border-moss"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="goal"
-                      value={goal}
-                      checked={form.goal === goal}
-                      onChange={(event) => updateForm("goal", event.target.value)}
-                      className="sr-only"
-                    />
-                    {goal}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend className="text-sm font-semibold">사용자 유형</legend>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {makerOptions.audienceTypes.map((audienceType) => (
-                  <label
-                    key={audienceType}
-                    className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
-                      form.audienceType === audienceType
-                        ? "border-coral bg-coral text-white"
-                        : "border-line bg-paper hover:border-coral"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="audienceType"
-                      value={audienceType}
-                      checked={form.audienceType === audienceType}
-                      onChange={(event) => updateForm("audienceType", event.target.value)}
-                      className="sr-only"
-                    />
-                    {audienceType}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-
-            <label className="block">
-              <span className="text-sm font-semibold">말투</span>
-              <select
-                value={form.tone}
-                onChange={(event) => updateForm("tone", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+            <div className="border-t border-line pt-4">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((current) => !current)}
+                aria-expanded={advancedOpen}
+                className="focus-ring flex min-h-10 w-full items-center justify-between gap-3 rounded-md border border-line bg-white px-3 text-sm font-bold transition hover:border-moss hover:text-moss"
               >
-                {makerOptions.tones.map((tone) => (
-                  <option key={tone} value={tone}>
-                    {tone}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-semibold">핵심 강점 2~3개</span>
-              <textarea
-                value={form.strengths}
-                onChange={(event) => updateForm("strengths", event.target.value)}
-                rows={3}
-                className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-                placeholder="예: 빠른 상담, 꼼꼼한 안내, 합리적인 구성"
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-semibold">꼭 강조할 포인트</span>
-              <input
-                value={form.emphasisPoint}
-                onChange={(event) => updateForm("emphasisPoint", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 처음 문의하는 분도 쉽게 이해할 수 있는 안내"
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-semibold">CTA 톤/마무리 방향</span>
-              <input
-                value={form.ctaDirection}
-                onChange={(event) => updateForm("ctaDirection", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 부담 없이 문의하도록 부드럽게 마무리"
-              />
-            </label>
-
-            <fieldset>
-              <legend className="text-sm font-semibold">목표 글자수</legend>
-              <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {makerOptions.targetLengths.map((option) => (
-                  <label
-                    key={option.value}
-                    className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
-                      form.targetLengthOption === option.value
-                        ? "border-amber bg-amber text-white"
-                        : "border-line bg-paper hover:border-amber"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="targetLength"
-                      value={option.value}
-                      checked={form.targetLengthOption === option.value}
-                      onChange={(event) => updateForm("targetLengthOption", event.target.value)}
-                      className="sr-only"
-                    />
-                    {option.label}
-                  </label>
-                ))}
-              </div>
-              {form.targetLengthOption === "custom" && (
-                <input
-                  type="number"
-                  min="600"
-                  max="5000"
-                  value={form.customTargetLength}
-                  onChange={(event) => updateForm("customTargetLength", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 1800"
+                <span>고급 입력 {advancedOpen ? "닫기" : "열기"}</span>
+                <ChevronDown
+                  size={17}
+                  className={`transition ${advancedOpen ? "rotate-180" : ""}`}
+                  aria-hidden="true"
                 />
+              </button>
+
+              {advancedOpen && (
+                <div className="mt-4 space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.brandName}>브랜드명/매장명</FieldLabel>
+                      <input
+                        value={form.brandName}
+                        onChange={(event) => updateForm("brandName", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 금찌네"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.region}>지역</FieldLabel>
+                      <input
+                        value={form.region}
+                        onChange={(event) => updateForm("region", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 서울 강남"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block">
+                    <FieldLabel tooltip={FIELD_TOOLTIPS.strengths}>핵심 강점</FieldLabel>
+                    <textarea
+                      value={form.strengths}
+                      onChange={(event) => updateForm("strengths", event.target.value)}
+                      rows={3}
+                      className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
+                      placeholder="예: 1:1 상담, 맞춤 관리"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <FieldLabel tooltip={FIELD_TOOLTIPS.emphasisPoint}>강조 포인트</FieldLabel>
+                    <input
+                      value={form.emphasisPoint}
+                      onChange={(event) => updateForm("emphasisPoint", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                      placeholder="예: 처음 방문 고객도 편하게 상담 가능"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <FieldLabel tooltip={FIELD_TOOLTIPS.ctaDirection}>CTA 톤</FieldLabel>
+                    <input
+                      value={form.ctaDirection}
+                      onChange={(event) => updateForm("ctaDirection", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                      placeholder="예: 부담 없이 상담 받아보세요"
+                    />
+                  </label>
+
+                  <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-line bg-paper px-3">
+                    <FieldLabel tooltip={FIELD_TOOLTIPS.useEmoji}>이모지 사용</FieldLabel>
+                    <input
+                      type="checkbox"
+                      checked={form.useEmoji}
+                      onChange={(event) => updateForm("useEmoji", event.target.checked)}
+                      className="h-5 w-5 accent-[#52796f]"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <FieldLabel tooltip={FIELD_TOOLTIPS.avoid}>금지어</FieldLabel>
+                    <input
+                      value={form.avoid}
+                      onChange={(event) => updateForm("avoid", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                      placeholder="예: 최고, 무조건, 보장"
+                    />
+                  </label>
+                </div>
               )}
-              <p className="mt-2 text-xs leading-5 text-ink/55">
-                실제 초안은 문장 흐름을 위해 목표 글자수에 딱 맞추기보다 ±10% 범위인{" "}
-                {range.min}-{range.max}자 안에서 자연스럽게 작성합니다.
-              </p>
-            </fieldset>
-
-            <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-line bg-paper px-3">
-              <span className="text-sm font-semibold">이모지 사용</span>
-              <input
-                type="checkbox"
-                checked={form.useEmoji}
-                onChange={(event) => updateForm("useEmoji", event.target.checked)}
-                className="h-5 w-5 accent-[#52796f]"
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-semibold">금지어</span>
-              <input
-                value={form.avoid}
-                onChange={(event) => updateForm("avoid", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="쉼표로 구분"
-              />
-            </label>
+            </div>
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-2">
@@ -773,6 +1074,11 @@ export default function ContentMaker() {
               다시 생성
             </button>
           </div>
+          {result.topicRegenerationCount > 0 && (
+            <p className="mt-2 text-xs font-semibold text-ink/55">
+              이전 주제와 겹치지 않도록 새로운 관점으로 {result.topicRegenerationCount + 1}번째 후보를 만들었습니다.
+            </p>
+          )}
         </section>
 
         <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
@@ -809,15 +1115,26 @@ export default function ContentMaker() {
             </div>
           </div>
 
-          <FlowSteps
-            hasTopics={hasTopics}
-            hasSelectedTopic={hasSelectedTopic}
-            hasTitles={hasTitles}
-            hasSelectedTitle={hasSelectedTitle}
-            hasOutline={hasOutline}
-            hasWritingChoices={hasWritingChoices}
-            hasFinal={hasFinal}
-          />
+          {hasFinal && (
+            <FinalResultPanel
+              result={result}
+              editing={editing}
+              range={range}
+              onCopy={copyResult}
+              onImageChange={updateImageSuggestion}
+              onTitleChange={(value) =>
+                setResult((current) => ({ ...current, selectedTitle: value }))
+              }
+              onBodyChange={(value) => setResult((current) => ({ ...current, body: value }))}
+              onHashtagsChange={(value) =>
+                setResult((current) => ({
+                  ...current,
+                  hashtags: value.split(/\s+/).filter(Boolean).slice(0, 14),
+                  hashtagGroups: []
+                }))
+              }
+            />
+          )}
 
           <div className="mt-5 space-y-6">
             <SelectableList
@@ -852,7 +1169,7 @@ export default function ContentMaker() {
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">3. 개요 소제목 4~6개</h4>
+                <h4 className="text-sm font-bold text-ink/70">3. 개요 소제목 3~6개</h4>
                 <button
                   type="button"
                   onClick={generateOutline}
@@ -867,6 +1184,8 @@ export default function ContentMaker() {
                 selectedCount={selectedOutlineHeadings.length}
                 emptyText="제목을 하나 선택한 뒤 개요 생성을 누르세요."
                 onChange={updateOutlineSection}
+                onAdd={addOutlineSection}
+                onDelete={deleteOutlineSection}
               />
             </div>
 
@@ -909,103 +1228,135 @@ export default function ContentMaker() {
                 </div>
               )}
 
-              {hasFinal && (
-                <div className="mt-4 space-y-5">
-                  <div className="rounded-md border border-line bg-white p-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <h5 className="text-sm font-bold text-ink/70">1. 제목</h5>
-                      <span className="text-xs font-semibold text-moss">네이버 복붙용 결과</span>
-                    </div>
-                    {editing ? (
-                      <input
-                        value={result.selectedTitle}
-                        onChange={(event) =>
-                          setResult((current) => ({ ...current, selectedTitle: event.target.value }))
-                        }
-                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-base font-bold"
-                      />
-                    ) : (
-                      <p className="mt-2 text-xl font-bold leading-8 text-ink">{result.selectedTitle}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <h5 className="text-sm font-bold text-ink/70">2. 본문</h5>
-                    <textarea
-                      value={result.body}
-                      onChange={(event) =>
-                        setResult((current) => ({ ...current, body: event.target.value }))
-                      }
-                      readOnly={!editing}
-                      rows={15}
-                      className={`focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-7 whitespace-pre-wrap ${
-                        editing ? "bg-white" : ""
-                      }`}
-                    />
-                  </div>
-
-                  <div>
-                    <h5 className="text-sm font-bold text-ink/70">3. 검색패턴 해시태그</h5>
-                    {editing ? (
-                      <textarea
-                        value={result.hashtags.join(" ")}
-                        onChange={(event) =>
-                          setResult((current) => ({
-                            ...current,
-                            hashtags: event.target.value.split(/\s+/).filter(Boolean).slice(0, 14),
-                            hashtagGroups: []
-                          }))
-                        }
-                        rows={3}
-                        className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-7"
-                      />
-                    ) : (
-                      <HashtagGroupCards groups={result.hashtagGroups} fallbackTags={result.hashtags} />
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={copyResult}
-                    className="focus-ring inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-amber px-4 text-sm font-bold text-white transition hover:bg-[#b8862c]"
-                  >
-                    <Clipboard size={18} aria-hidden="true" />
-                    4. 제목 + 본문 + 해시태그 복사
-                  </button>
-
-                  <ImageSuggestionList
-                    items={result.imageSuggestions}
-                    editing={editing}
-                    onChange={updateImageSuggestion}
-                  />
-
-                  <details className="rounded-md border border-line bg-paper p-4 text-sm">
-                    <summary className="cursor-pointer font-bold text-ink/70">선택한 주제/개요 확인</summary>
-                    <div className="mt-3 leading-6 text-ink/70">
-                      <p className="font-semibold text-ink">선택 주제</p>
-                      <p>{result.selectedTopic}</p>
-                      <p className="mt-3 font-semibold text-ink">선택 개요</p>
-                      <p className="whitespace-pre-line">
-                        {selectedOutlineHeadings.map((heading, index) => `${index + 1}. ${heading}`).join("\n")}
-                      </p>
-                    <p className="mt-3 font-semibold text-ink">선택 문장</p>
-                      <p>제목 유형: {result.selectedTitleType || "미분류"}</p>
-                      <p>첫 문장: {result.selectedOpeningSentence}</p>
-                      <p>CTA: {result.selectedCtaSentence}</p>
-                      <p className="mt-3 font-semibold text-ink">목표 글자수</p>
-                      <p>
-                        {range.target}자 기준, 자연스러운 범위 {range.min}-{range.max}자
-                      </p>
-                    </div>
-                  </details>
-
-                  <StrategyMemo result={result} />
-                </div>
-              )}
             </div>
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+function FieldLabel({ children, required = false, tooltip = null }) {
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+      <span>{children}</span>
+      {required && (
+        <span className="rounded-md bg-coral/10 px-2 py-0.5 text-[11px] font-bold text-coral">
+          필수
+        </span>
+      )}
+      {tooltip && <FieldTooltip text={tooltip} />}
+    </span>
+  );
+}
+
+function FieldTooltip({ text }) {
+  const [open, setOpen] = useState(false);
+  const tooltip = typeof text === "string" ? { description: text } : text;
+
+  return (
+    <span
+      className="relative inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          setOpen((current) => !current);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        className="focus-ring inline-grid h-5 w-5 place-items-center rounded-full text-ink/45 transition hover:bg-white hover:text-moss"
+        aria-label="입력 도움말"
+      >
+        <CircleHelp size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <span className="absolute bottom-7 left-1/2 z-30 w-64 -translate-x-1/2 rounded-md border border-line bg-white px-3 py-3 text-xs font-medium leading-6 text-ink/70 shadow-soft sm:w-72">
+          {tooltip?.title && <span className="block text-sm font-bold text-ink">{tooltip.title}</span>}
+          {tooltip?.description && (
+            <span className="mt-1 block whitespace-normal">{tooltip.description}</span>
+          )}
+          {tooltip?.example && (
+            <span className="mt-1 block whitespace-normal text-moss">
+              예: {tooltip.example}
+            </span>
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function FinalResultPanel({
+  result,
+  editing,
+  range,
+  onCopy,
+  onImageChange,
+  onTitleChange,
+  onBodyChange,
+  onHashtagsChange
+}) {
+  return (
+    <div className="mt-5 space-y-5 border-t border-line pt-5">
+      <div className="rounded-md border border-line bg-white p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h5 className="text-sm font-bold text-ink/70">1. 선택 제목</h5>
+          <span className="text-xs font-semibold text-moss">게시용 결과</span>
+        </div>
+        {editing ? (
+          <input
+            value={result.selectedTitle}
+            onChange={(event) => onTitleChange(event.target.value)}
+            className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-base font-bold"
+          />
+        ) : (
+          <p className="mt-2 text-xl font-bold leading-8 text-ink">{result.selectedTitle}</p>
+        )}
+      </div>
+
+      <div>
+        <h5 className="text-sm font-bold text-ink/70">2. 게시용 본문</h5>
+        <textarea
+          value={result.body}
+          onChange={(event) => onBodyChange(event.target.value)}
+          readOnly={!editing}
+          rows={15}
+          className={`focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-7 whitespace-pre-wrap ${
+            editing ? "bg-white" : ""
+          }`}
+        />
+      </div>
+
+      <div>
+        <h5 className="text-sm font-bold text-ink/70">3. 해시태그 그룹</h5>
+        {editing ? (
+          <textarea
+            value={result.hashtags.join(" ")}
+            onChange={(event) => onHashtagsChange(event.target.value)}
+            rows={3}
+            className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-7"
+          />
+        ) : (
+          <HashtagGroupCards groups={result.hashtagGroups} fallbackTags={result.hashtags} />
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onCopy}
+        className="focus-ring inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-amber px-4 text-sm font-bold text-white transition hover:bg-[#b8862c]"
+      >
+        <Clipboard size={18} aria-hidden="true" />
+        4. 제목 + 본문 + 해시태그 복사
+      </button>
+
+      <ImageSuggestionList items={result.imageSuggestions} editing={editing} onChange={onImageChange} />
+
+      <StrategyMemo result={result} range={range} />
     </div>
   );
 }
@@ -1054,124 +1405,112 @@ function HashtagGroupCards({ groups = [], fallbackTags = [] }) {
   );
 }
 
-function StrategyMemo({ result }) {
+const SEO_CHECK_LABELS = {
+  "first-sentence-keyword": "첫 문장 키워드 반영",
+  "total-keyword-count": "키워드 자연 분산",
+  region: "지역명 반영",
+  cta: "CTA 반영",
+  avoid: "금지어 없음"
+};
+
+const createSeoChecklist = (seoCheck) => {
+  const items = seoCheck?.items || [];
+
+  return Object.entries(SEO_CHECK_LABELS).map(([id, label]) => {
+    const item = items.find((check) => check.id === id);
+
+    return {
+      id,
+      label,
+      passed: item?.passed === true
+    };
+  });
+};
+
+function StrategyMemo({ result, range }) {
   const memo = result.strategyMemo;
   const keyword = result.keywordOptimization;
   const seoCheck = result.seoCheck || memo?.seoCheck;
 
   if (!memo && !keyword && !seoCheck) return null;
 
+  const summaryItems = [
+    ["선택 주제", memo?.selectedTopic || result.selectedTopic],
+    ["선택 제목", memo?.selectedTitle || result.selectedTitle],
+    ["목표 글자수", `${range?.target || keyword?.targetLength || ""}자`],
+    ["사용자 유형", memo?.audienceType]
+  ].filter(([, value]) => value && value !== "자");
+  const checklist = createSeoChecklist(seoCheck);
+  const imageItems = (result.imageSuggestions || []).slice(0, 3).map((item) => ({
+    id: item.id,
+    label: item.label || item.title,
+    keyword: item.searchKeyword || item.query || item.imageSearch?.query || "",
+    concept: item.description || item.title || ""
+  }));
+
   return (
-    <details className="rounded-lg border border-line bg-paper p-4">
-      <summary className="cursor-pointer text-sm font-bold text-ink/70">
+    <details className="rounded-md border border-line bg-white p-4 text-sm">
+      <summary className="cursor-pointer font-bold text-ink/65">
         운영 메모 / 내부 전략 데이터
       </summary>
-      <div className="mt-4 grid gap-4 text-sm leading-6 text-ink/70">
-        {memo && (
-          <div>
-            <p className="font-bold text-ink">전략 메모</p>
-            <p className="mt-1">생성 구조: {memo.goalTemplate}</p>
-            <p>사용자 유형: {memo.audienceType}</p>
-            <p>핵심 메시지: {memo.writingDirection.coreMessage}</p>
-            <p>마무리 방향: {memo.writingDirection.ctaDirection}</p>
-            <p>본문 길이: {memo.bodyLength}자</p>
-            {memo.outlineSections?.length > 0 && (
-              <p>개요: {memo.outlineSections.join(" → ")}</p>
-            )}
-          </div>
-        )}
-
-        {keyword && (
-          <div>
-            <p className="font-bold text-ink">키워드 최적화 메모</p>
-            <p>
-              메인 키워드: {keyword.mainKeyword} / 실제 {keyword.actualOccurrences}회 / 목표{" "}
-              {keyword.targetOccurrences.min}-{keyword.targetOccurrences.max}회
-            </p>
-            <p>연관 표현: {keyword.relatedExpressions?.slice(0, 4).join(", ")}</p>
-          </div>
-        )}
+      <div className="mt-4 space-y-4 leading-6 text-ink/70">
+        <section>
+          <h6 className="text-xs font-bold text-ink/50">선택값 요약</h6>
+          <dl className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+            {summaryItems.map(([label, value]) => (
+              <div key={label} className="grid grid-cols-[72px_1fr] gap-2">
+                <dt className="text-xs font-bold text-ink/45">{label}</dt>
+                <dd className="min-w-0 text-sm text-ink/75">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
 
         {seoCheck && (
-          <div>
-            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-              <p className="font-bold text-ink">최적화 체크</p>
-              <p className="text-xs font-bold text-moss">
-                {seoCheck.passedCount}/{seoCheck.totalCount} 통과
-              </p>
+          <section className="border-t border-line pt-4">
+            <div className="flex items-center justify-between gap-2">
+              <h6 className="text-xs font-bold text-ink/50">최적화 체크</h6>
+              <span className="text-xs font-bold text-moss">
+                {checklist.filter((item) => item.passed).length}/{checklist.length} 통과
+              </span>
             </div>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {seoCheck.items.map((item) => (
-                <div key={item.id} className="rounded-md bg-white p-3">
-                  <p className={`font-semibold ${item.passed ? "text-moss" : "text-coral"}`}>
-                    {item.passed ? "통과" : "확인 필요"} · {item.label}
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-ink/60">{item.detail}</p>
-                </div>
+            <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+              {checklist.map((item) => (
+                <li key={item.id} className="flex items-center gap-2 text-sm">
+                  <span
+                    className={`grid h-5 w-5 shrink-0 place-items-center rounded-full ${
+                      item.passed ? "bg-moss/10 text-moss" : "bg-coral/10 text-coral"
+                    }`}
+                  >
+                    {item.passed ? <Check size={13} aria-hidden="true" /> : <CircleHelp size={13} aria-hidden="true" />}
+                  </span>
+                  <span className="text-ink/75">{item.label}</span>
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </section>
         )}
 
-        {memo?.imageBridgeMemo && (
-          <div>
-            <p className="font-bold text-ink">이미지 브리지 구조</p>
-            <div className="mt-2 grid gap-2">
-              {memo.imageBridgeMemo.map((item) => (
-                <div key={item.id} className="rounded-md bg-white p-3">
-                  <p className="font-semibold">{item.slot}</p>
-                  <p>{item.insertAfter}</p>
-                  <p>{item.description}</p>
-                  {item.searchKeyword && (
-                    <p>
-                      이미지 검색: {item.searchKeyword}
-                      {item.query ? ` / query: ${item.query}` : ""}
-                      {item.imageProvider ? ` / ${item.imageProvider}` : ""}
-                    </p>
+        {imageItems.length > 0 && (
+          <section className="border-t border-line pt-4">
+            <h6 className="text-xs font-bold text-ink/50">이미지 추천 데이터</h6>
+            <ul className="mt-2 space-y-2">
+              {imageItems.map((item) => (
+                <li key={item.id} className="text-sm">
+                  <p className="font-semibold text-ink/75">{item.label}</p>
+                  {item.keyword && (
+                    <p className="text-ink/60">이미지 검색 키워드: {item.keyword}</p>
                   )}
-                </div>
+                  {item.concept && (
+                    <p className="line-clamp-2 text-ink/60">추천 이미지 컨셉: {item.concept}</p>
+                  )}
+                </li>
               ))}
-            </div>
-          </div>
+            </ul>
+          </section>
         )}
       </div>
     </details>
-  );
-}
-
-function FlowSteps({
-  hasTopics,
-  hasSelectedTopic,
-  hasTitles,
-  hasSelectedTitle,
-  hasOutline,
-  hasWritingChoices,
-  hasFinal
-}) {
-  const steps = [
-    { label: "주제 생성", done: hasTopics },
-    { label: "주제 선택", done: hasSelectedTopic },
-    { label: "제목 생성", done: hasTitles },
-    { label: "제목 선택", done: hasSelectedTitle },
-    { label: "개요 확정", done: hasOutline },
-    { label: "문장 선택", done: hasWritingChoices },
-    { label: "본문 완성", done: hasFinal }
-  ];
-
-  return (
-    <div className="mt-5 grid gap-2 sm:grid-cols-7">
-      {steps.map((step) => (
-        <div
-          key={step.label}
-          className={`flex min-h-10 items-center justify-center gap-2 rounded-md border px-2 text-xs font-bold ${
-            step.done ? "border-moss bg-moss/10 text-moss" : "border-line bg-paper text-ink/45"
-          }`}
-        >
-          {step.done && <Check size={14} aria-hidden="true" />}
-          {step.label}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -1259,44 +1598,77 @@ function WritingChoiceGroup({ title, items, selected, emptyText, onSelect }) {
   );
 }
 
-function OutlineEditor({ items, selectedCount, emptyText, onChange }) {
-  const isValid = selectedCount >= 4 && selectedCount <= 6;
+function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDelete }) {
+  const isValid = selectedCount >= OUTLINE_MIN && selectedCount <= OUTLINE_MAX;
+  const canAdd = items.length > 0 && items.length < OUTLINE_MAX;
 
   return (
     <div className="mt-2">
       {items.length > 0 && (
-        <div className="mb-2 rounded-md border border-line bg-paper px-3 py-2 text-xs font-semibold text-ink/60">
-          선택된 소제목 {selectedCount}개 / 권장 4~6개
-          {!isValid && <span className="ml-2 text-coral">본문 생성 전 4~6개로 맞춰주세요.</span>}
+        <div className="mb-2 flex flex-col gap-2 rounded-md border border-line bg-paper px-3 py-2 text-xs font-semibold text-ink/60 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            선택된 소제목 {selectedCount}개 / 권장 {OUTLINE_MIN}~{OUTLINE_MAX}개
+            {!isValid && (
+              <span className="ml-2 text-coral">
+                본문 생성 전 {OUTLINE_MIN}~{OUTLINE_MAX}개로 맞춰주세요.
+              </span>
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={onAdd}
+            disabled={!canAdd}
+            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md bg-white px-2.5 text-xs font-bold text-moss transition hover:bg-moss hover:text-white disabled:cursor-not-allowed disabled:text-ink/30"
+          >
+            <Plus size={14} aria-hidden="true" />
+            소제목 추가
+          </button>
         </div>
       )}
 
       <div className="space-y-2">
-        {items.map((item, index) => (
-          <div
-            key={item.id}
-            className={`rounded-md border p-3 ${
-              item.selected !== false ? "border-moss bg-moss/10" : "border-line bg-paper"
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <label className="mt-2 flex items-center gap-2 text-xs font-bold text-ink/60">
+        {items.map((item, index) => {
+          const isSelected = item.selected !== false;
+          const toggleDisabled = isSelected && selectedCount <= OUTLINE_MIN;
+          const deleteDisabled = items.length <= OUTLINE_MIN || (isSelected && selectedCount <= OUTLINE_MIN);
+
+          return (
+            <div
+              key={item.id}
+              className={`rounded-md border p-3 ${
+                isSelected ? "border-moss bg-moss/10" : "border-line bg-paper"
+              }`}
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                <label className="flex min-h-10 items-center gap-2 text-xs font-bold text-ink/60 sm:w-16">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={toggleDisabled}
+                    onChange={(event) => onChange(item.id, "selected", event.target.checked)}
+                    className="h-4 w-4 accent-[#52796f] disabled:opacity-40"
+                  />
+                  {index + 1}
+                </label>
                 <input
-                  type="checkbox"
-                  checked={item.selected !== false}
-                  onChange={(event) => onChange(item.id, "selected", event.target.checked)}
-                  className="h-4 w-4 accent-[#52796f]"
+                  value={item.heading}
+                  onChange={(event) => onChange(item.id, "heading", event.target.value)}
+                  className="focus-ring min-h-10 flex-1 rounded-md border border-line bg-white px-3 text-sm font-semibold"
+                  placeholder={`소제목 ${index + 1}`}
                 />
-                {index + 1}
-              </label>
-              <input
-                value={item.heading}
-                onChange={(event) => onChange(item.id, "heading", event.target.value)}
-                className="focus-ring min-h-10 flex-1 rounded-md border border-line bg-white px-3 text-sm font-semibold"
-              />
+                <button
+                  type="button"
+                  onClick={() => onDelete(item.id)}
+                  disabled={deleteDisabled}
+                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-1 rounded-md border border-line bg-white px-3 text-xs font-bold text-ink/55 transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30 sm:w-20"
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                  삭제
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {items.length === 0 && (
           <div className="rounded-lg border border-dashed border-line bg-paper p-5 text-center text-sm text-ink/60">
@@ -1340,7 +1712,7 @@ function ImageSuggestionList({ items, editing, onChange }) {
                 ) : (
                   <div className="flex min-h-24 items-center gap-3 px-3 py-4 text-sm text-ink/55">
                     <Image size={18} className="shrink-0 text-moss" aria-hidden="true" />
-                    <span>Pexels 검색어: {pexelsQuery}</span>
+                    <span>이미지 검색어: {pexelsQuery}</span>
                   </div>
                 )}
               </div>
@@ -1356,7 +1728,7 @@ function ImageSuggestionList({ items, editing, onChange }) {
                     value={searchKeyword}
                     onChange={(event) => onChange(item.id, "searchKeyword", event.target.value)}
                     className="focus-ring min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm"
-                    placeholder="Pexels 검색 키워드"
+                    placeholder="이미지 검색 키워드"
                   />
                   <textarea
                     value={item.description}
@@ -1371,7 +1743,7 @@ function ImageSuggestionList({ items, editing, onChange }) {
                   <p className="mt-1 text-sm leading-6 text-ink/65">{item.description}</p>
                   <p className="mt-2 text-xs font-semibold text-ink/50">
                     검색 키워드: {searchKeyword}
-                    {pexelsQuery && pexelsQuery !== searchKeyword ? ` / query: ${pexelsQuery}` : ""}
+                    {pexelsQuery && pexelsQuery !== searchKeyword ? ` / 보조 검색어: ${pexelsQuery}` : ""}
                   </p>
                 </>
               )}

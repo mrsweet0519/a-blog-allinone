@@ -3,8 +3,7 @@ import express from "express";
 import { contentRouter } from "./api/contentRoutes.js";
 
 const app = express();
-const defaultPort = process.env.RENDER ? 10000 : 4000;
-const port = process.env.PORT || process.env.BACKEND_PORT || defaultPort;
+const port = process.env.PORT || process.env.BACKEND_PORT || 4000;
 const defaultCorsOrigins = ["http://127.0.0.1:5173", "http://localhost:5173"];
 const corsOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")

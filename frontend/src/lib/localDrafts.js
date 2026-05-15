@@ -64,3 +64,21 @@ export function saveSettings(settings) {
   localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings));
   return settings;
 }
+
+export function loadCompanyDefaults() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.companyDefaults);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveCompanyDefaults(defaults) {
+  localStorage.setItem(STORAGE_KEYS.companyDefaults, JSON.stringify(defaults));
+  return defaults;
+}
+
+export function clearCompanyDefaults() {
+  localStorage.removeItem(STORAGE_KEYS.companyDefaults);
+}

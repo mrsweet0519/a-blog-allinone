@@ -702,7 +702,7 @@ const createReaderFacingPostBody = (
   const audienceProfile = getAudienceProfile(form);
   const normalizedOutline = normalizeOutlineSections(outlineSections);
   const outline =
-    normalizedOutline.length >= 4
+    normalizedOutline.length >= 3
       ? normalizedOutline
       : createOutlineSections(form, selectedTopic, selectedTitle);
   const flowBlocks = createFlowBlocks({ form, cta });
@@ -785,7 +785,27 @@ export function createKeywordOptimizationPlan(form = {}) {
   };
 }
 
-export function createTopicRecommendations(form) {
+const getTopicVariationOffset = (form, total) => {
+  if (!total) return 0;
+
+  const regenerationCount = Number.parseInt(form?.regenerationCount ?? 0, 10);
+  const seed = text(form?.variationSeed);
+  const seedOffset = Array.from(seed).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+
+  return (Math.max(0, Number.isFinite(regenerationCount) ? regenerationCount : 0) * 3 + seedOffset) % total;
+};
+
+const getPreviousTopicSet = (form = {}) =>
+  new Set(
+    [
+      ...(Array.isArray(form.previousTopics) ? form.previousTopics : []),
+      ...(Array.isArray(form.topicHistory) ? form.topicHistory : [])
+    ]
+      .map(text)
+      .filter(Boolean)
+  );
+
+export function createTopicRecommendations(form = {}) {
   const keyword = text(form.keyword);
   const category = text(form.category);
   const goal = text(form.goal);
@@ -793,33 +813,65 @@ export function createTopicRecommendations(form) {
   const region = getRegionPhrase(form);
   const audienceProfile = getAudienceProfile(form);
   const avoidWords = splitAvoidWords(form.avoid);
+  const previousTopics = getPreviousTopicSet(form);
 
   const topicsByGoal = {
     "정보 전달": [
       `${asObject(keyword)} 처음 알아볼 때 놓치기 쉬운 기준`,
       `${region}${asObject(keyword)} 비교하기 전에 확인하면 좋은 흐름`,
-      `${audienceProfile.readerLabel}이 ${asObject(keyword)} 고를 때 자주 묻는 질문`
+      `${audienceProfile.readerLabel}이 ${asObject(keyword)} 고를 때 자주 묻는 질문`,
+      `${keyword} 상담 전에 알아두면 좋은 질문`,
+      `${keyword} 필요한 순간과 선택 기준`,
+      `처음 보는 고객을 위한 ${keyword} 체크리스트`,
+      `${keyword} 결정 전 확인하면 좋은 실제 포인트`,
+      `${category} 관점에서 보는 ${keyword} 비교 방법`,
+      `${keyword} 정보를 볼 때 헷갈리기 쉬운 표현 정리`
     ],
     "신뢰 형성": [
       `${asActor(brand)} ${asObject(keyword)} 꼼꼼하게 안내하는 방식`,
       `${keyword} 선택 전 신뢰할 수 있는 곳을 알아보는 방법`,
-      `${region}${asObject(keyword)} 안심하고 문의하기 위한 체크 포인트`
+      `${region}${asObject(keyword)} 안심하고 문의하기 위한 체크 포인트`,
+      `${keyword} 상담 흐름으로 판단하는 신뢰 기준`,
+      `${brand}를 처음 알아볼 때 확인하면 좋은 안내 방식`,
+      `${keyword} 후기보다 먼저 살펴볼 응대 포인트`,
+      `${audienceProfile.readerLabel}이 불안을 줄이는 확인 질문`,
+      `${keyword} 문의 전 믿을 만한 설명을 구분하는 법`,
+      `${region}${keyword} 알아볼 때 편하게 비교하는 기준`
     ],
     "상품 홍보": [
       `${asObject(keyword)} 찾는 분들이 ${asObject(brand)} 살펴보는 이유`,
       `${brand}의 ${keyword} 강점을 자연스럽게 보여주는 이야기`,
-      `${audienceProfile.readerLabel}에게 필요한 ${keyword} 활용 장면`
+      `${audienceProfile.readerLabel}에게 필요한 ${keyword} 활용 장면`,
+      `${keyword} 장점을 비교할 때 먼저 볼 포인트`,
+      `${brand}의 차이를 부담 없이 이해하는 방법`,
+      `${keyword} 선택 전 놓치면 아쉬운 활용 기준`,
+      `${category} 고객에게 ${keyword}가 필요한 상황`,
+      `${keyword} 처음 고민하는 분을 위한 장점 정리`,
+      `${brand}를 다시 떠올리게 만드는 ${keyword} 포인트`
     ],
     "방문 유도": [
       `${region}${asObject(keyword)} 찾는 분들이 방문 전 확인하면 좋은 것들`,
       `${brand} 방문 전에 알아두면 편한 ${keyword} 안내`,
-      `${category} 고객이 부담 없이 들를 수 있는 ${keyword} 이야기`
+      `${category} 고객이 부담 없이 들를 수 있는 ${keyword} 이야기`,
+      `${keyword} 방문 상담 전에 준비하면 좋은 질문`,
+      `${region}${keyword} 처음 방문할 때 확인할 체크리스트`,
+      `${brand}에 문의하기 전 부담을 줄이는 방법`,
+      `${keyword} 방문이 필요한 순간과 선택 기준`,
+      `${category} 이용 전 알아두면 편한 상담 흐름`,
+      `${region}${keyword} 알아볼 때 이동 전 확인할 포인트`
     ]
   };
 
-  return (topicsByGoal[goal] ?? topicsByGoal["정보 전달"]).map((topic) =>
-    applyAvoidWords(topic, avoidWords)
+  const pool = topicsByGoal[goal] ?? topicsByGoal["정보 전달"];
+  const offset = getTopicVariationOffset(form, pool.length);
+  const rotated = [...pool.slice(offset), ...pool.slice(0, offset)];
+  const candidates = Array.from(
+    new Set(rotated.map((topic) => applyAvoidWords(topic, avoidWords)).filter(Boolean))
   );
+  const freshTopics = candidates.filter((topic) => !previousTopics.has(topic));
+  const fallbackTopics = candidates.filter((topic) => previousTopics.has(topic));
+
+  return [...freshTopics, ...fallbackTopics].slice(0, 3);
 }
 
 export function createTitleCandidates(form, selectedTopic) {
@@ -1370,7 +1422,7 @@ export function createFinalContent(
   const keywordPlan = createKeywordOptimizationPlan(form);
   const resolvedOutline = normalizeOutlineSections(outlineSections);
   const finalOutline =
-    resolvedOutline.length >= 4 ? resolvedOutline : createOutlineSections(form, selectedTopic, selectedTitle);
+    resolvedOutline.length >= 3 ? resolvedOutline : createOutlineSections(form, selectedTopic, selectedTitle);
   const openingSentenceCandidates = createOpeningSentenceCandidates(form);
   const ctaCandidates = createCtaCandidates(form);
   const selectedOpeningSentence =
