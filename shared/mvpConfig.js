@@ -1,7 +1,8 @@
 export const STORAGE_KEYS = {
   drafts: "a-blog-allinone:drafts",
   settings: "a-blog-allinone:settings",
-  companyDefaults: "a-blog-allinone:company-defaults"
+  companyDefaults: "a-blog-allinone:company-defaults",
+  commentReplies: "a-blog-allinone:comment-replies"
 };
 
 export const makerOptions = {
@@ -45,8 +46,9 @@ export const mvpScope = {
     "광고주형 입력값 보강",
     "이미지 위치 추천",
     "해시태그 구성",
+    "댓글 응답 관리 수동 MVP",
     "기본 대시보드",
     "로컬 초안 보관"
   ],
-  excluded: ["댓글/대댓글 자동화 본체", "실제 AI API 연결", "외부 블로그 발행", "고급 자동화 설정"]
+  excluded: ["댓글 자동 수집/자동등록 본체", "실제 AI API 연결", "외부 블로그 발행", "고급 자동화 설정"]
 };

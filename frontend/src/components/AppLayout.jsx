@@ -1,6 +1,7 @@
 import {
   Archive,
   LayoutDashboard,
+  MessageSquare,
   Settings2,
   Sparkles,
   WandSparkles
@@ -10,6 +11,7 @@ import { NavLink } from "react-router-dom";
 const navItems = [
   { to: "/", label: "대시보드", icon: LayoutDashboard },
   { to: "/maker", label: "콘텐츠 메이커", icon: WandSparkles },
+  { to: "/comment-replies", label: "댓글 응답 관리", icon: MessageSquare },
   { to: "/storage", label: "내 보관함", icon: Archive },
   { to: "/settings", label: "고급 설정", icon: Settings2 }
 ];

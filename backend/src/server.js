@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { commentReplyRouter } from "./api/commentReplyRoutes.js";
 import { contentRouter } from "./api/contentRoutes.js";
 
 const app = express();
@@ -34,6 +35,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/content", contentRouter);
+app.use("/api/comment-replies", commentReplyRouter);
 
 app.listen(port, () => {
   console.log(`Backend API is running on port ${port}`);
