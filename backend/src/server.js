@@ -8,6 +8,7 @@ import { contentRouter } from "./api/contentRoutes.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendDistPath = path.resolve(dirname, "../../frontend/dist");
+const frontendAssetsPath = path.join(frontendDistPath, "assets");
 const frontendIndexPath = path.join(frontendDistPath, "index.html");
 
 const app = express();
@@ -49,14 +50,46 @@ app.use("/api", (_req, res) => {
   });
 });
 
-app.use(express.static(frontendDistPath));
+app.use(
+  "/assets",
+  express.static(frontendAssetsPath, {
+    fallthrough: false,
+    immutable: true,
+    maxAge: "1y"
+  })
+);
+app.use("/assets", (error, _req, res, next) => {
+  if (!error) {
+    next();
+    return;
+  }
 
-app.get("*", (_req, res) => {
+  res.status(error.status || 500).type("text/plain").send("Static asset not found.");
+});
+
+app.use(
+  express.static(frontendDistPath, {
+    index: false,
+    setHeaders(res, filePath) {
+      if (filePath.endsWith("index.html")) {
+        res.setHeader("Cache-Control", "no-cache");
+      }
+    }
+  })
+);
+
+app.get("*", (req, res) => {
+  if (path.extname(req.path)) {
+    res.status(404).type("text/plain").send("Static asset not found.");
+    return;
+  }
+
   if (!fs.existsSync(frontendIndexPath)) {
     res.status(404).send("Frontend build not found. Run `npm run build --prefix frontend` before starting the server.");
     return;
   }
 
+  res.setHeader("Cache-Control", "no-cache");
   res.sendFile(frontendIndexPath);
 });
 
