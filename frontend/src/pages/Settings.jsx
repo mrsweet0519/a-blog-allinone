@@ -1,7 +1,7 @@
 import { LockKeyhole, PlugZap, Save, Server, ToggleLeft } from "lucide-react";
 import { useState } from "react";
 import { makerOptions } from "@shared/mvpConfig.js";
-import { API_BASE_URL, checkBackendHealth, isBackendApiEnabled } from "../lib/backendApi.js";
+import { checkBackendHealth, getApiBaseLabel, isBackendApiEnabled } from "../lib/backendApi.js";
 import { loadSettings, saveSettings } from "../lib/localDrafts.js";
 
 const defaultSettings = {
@@ -107,7 +107,7 @@ export default function Settings() {
           <div className="mt-5 space-y-3">
             <ExtensionSlot
               icon={Server}
-              title={`백엔드 API ${API_BASE_URL || "미설정"}`}
+              title={`백엔드 API ${getApiBaseLabel() || "미설정"}`}
               status={backendStatus}
               action={isBackendApiEnabled() ? checkBackend : null}
             />
