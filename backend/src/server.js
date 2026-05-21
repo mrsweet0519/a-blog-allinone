@@ -13,26 +13,49 @@ const frontendIndexPath = path.join(frontendDistPath, "index.html");
 
 const app = express();
 const port = process.env.PORT || process.env.BACKEND_PORT || 4000;
-const defaultCorsOrigins = ["http://127.0.0.1:5173", "http://localhost:5173"];
+const defaultCorsOrigins = [
+  "http://127.0.0.1:5173",
+  "http://localhost:5173",
+  "https://a-blog-allinone.onrender.com"
+];
 const corsOrigins = (process.env.CORS_ORIGIN || "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 const allowedOrigins = corsOrigins.length > 0 ? corsOrigins : defaultCorsOrigins;
 
-app.use(
-  cors({
+const isSameOrigin = (origin, host) => {
+  if (!origin || !host) return false;
+
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+};
+
+const apiCors = cors((req, callback) => {
+  const requestHost = req.get("host");
+
+  callback(null, {
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+      if (
+        !origin ||
+        allowedOrigins.includes("*") ||
+        allowedOrigins.includes(origin) ||
+        isSameOrigin(origin, requestHost)
+      ) {
         callback(null, true);
         return;
       }
 
       callback(new Error(`CORS blocked for origin: ${origin}`));
     }
-  })
-);
+  });
+});
+
 app.use(express.json());
+app.use("/api", apiCors);
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -64,7 +87,7 @@ app.use("/assets", (error, _req, res, next) => {
     return;
   }
 
-  res.status(error.status || 500).type("text/plain").send("Static asset not found.");
+  res.status(error.status || error.statusCode || 500).type("text/plain").send("Static asset not found.");
 });
 
 app.use(
