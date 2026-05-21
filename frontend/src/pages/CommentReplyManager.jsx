@@ -686,145 +686,130 @@ export default function CommentReplyManager() {
               </div>
             </div>
 
-            <div className="mt-5 max-w-full overflow-x-auto overscroll-x-contain pb-2">
-              <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-y border-line bg-paper text-xs font-bold text-ink/55">
-                    <th className="w-36 px-3 py-3">작성자</th>
-                    <th className="w-64 px-3 py-3">원댓글</th>
-                    <th className="w-28 px-3 py-3">댓글 유형</th>
-                    <th className="w-40 px-3 py-3">감정/의도</th>
-                    <th className="w-36 px-3 py-3">핵심 키워드</th>
-                    <th className="w-72 px-3 py-3">생성된 대댓글</th>
-                    <th className="w-48 px-3 py-3">검수</th>
-                    <th className="w-28 px-3 py-3">상태</th>
-                    <th className="w-56 px-3 py-3">작업</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line">
-                  {comments.map((comment) => (
-                    <tr key={comment.id} className="align-top">
-                      <td className="px-3 py-3">
-                        <input
-                          value={comment.author}
-                          onChange={(event) => updateComment(comment.id, "author", event.target.value)}
-                          className="focus-ring min-h-10 w-full rounded-md border border-line bg-paper px-2 text-sm"
-                          placeholder="작성자"
-                        />
-                        <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-ink/55">
+            <div className="mt-5 grid min-w-0 gap-4">
+              {comments.map((comment, index) => {
+                const forbiddenWordsText = comment.forbiddenWordsFound?.length
+                  ? comment.forbiddenWordsFound.join(", ")
+                  : "없음";
+                const duplicateClass =
+                  duplicateClassName[comment.duplicateRisk] || duplicateClassName["중복 위험 낮음"];
+
+                return (
+                  <article
+                    key={comment.id}
+                    className="min-w-0 rounded-lg border border-line bg-paper p-4"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-bold text-ink/45">댓글 {index + 1}</span>
+                          <input
+                            value={comment.author}
+                            onChange={(event) => updateComment(comment.id, "author", event.target.value)}
+                            className="focus-ring min-h-9 w-full rounded-md border border-line bg-white px-2 text-sm font-semibold sm:w-48"
+                            placeholder="작성자"
+                          />
+                          <SmallBadge>{comment.type || "대기"}</SmallBadge>
+                          <StatusPill status={comment.status} />
+                          {comment.reviewed && (
+                            <span className="inline-flex rounded-md bg-moss px-2.5 py-1 text-xs font-bold text-white">
+                              검토 완료
+                            </span>
+                          )}
+                        </div>
+                        <label className="mt-3 flex items-center gap-2 text-xs font-semibold text-ink/55">
                           <input
                             type="checkbox"
                             checked={comment.hasOwnerReply}
                             onChange={(event) => updateComment(comment.id, "hasOwnerReply", event.target.checked)}
                             className="h-4 w-4 accent-[#52796f]"
                           />
-                          기존 내 답글
+                          기존 내 답글 있음
                         </label>
-                      </td>
-                      <td className="px-3 py-3">
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <ActionButton
+                          icon={Sparkles}
+                          label="생성"
+                          onClick={() => generateOne(comment.id)}
+                          disabled={!ready || !comment.content.trim() || status === "generating"}
+                        />
+                        <ActionButton
+                          icon={RefreshCw}
+                          label="다시 생성"
+                          onClick={() => generateOne(comment.id, { regenerate: true })}
+                          disabled={!ready || !comment.content.trim() || status === "generating"}
+                        />
+                        <ActionButton
+                          icon={Copy}
+                          label="복사"
+                          onClick={() => copyText(comment.reply, "대댓글을 복사했습니다.")}
+                          disabled={!comment.reply}
+                        />
+                        <ActionButton icon={SkipForward} label="스킵" onClick={() => markSkip(comment.id)} />
+                        <ActionButton
+                          icon={Check}
+                          label="검토 완료"
+                          onClick={() => markReviewed(comment.id)}
+                          disabled={!comment.reply && comment.status !== "스킵 권장"}
+                        />
+                        <ActionButton icon={Trash2} label="삭제" onClick={() => removeComment(comment.id)} />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-2">
+                      <label className="block min-w-0">
+                        <span className="text-xs font-bold text-ink/55">원댓글</span>
                         <textarea
                           value={comment.content}
                           onChange={(event) => updateComment(comment.id, "content", event.target.value)}
                           rows={4}
-                          className="focus-ring w-full rounded-md border border-line bg-paper p-2 text-sm leading-6"
+                          className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
                           placeholder="댓글 내용"
                         />
-                      </td>
-                      <td className="px-3 py-3">
-                        <SmallBadge>{comment.type || "대기"}</SmallBadge>
-                      </td>
-                      <td className="px-3 py-3">
-                        <p className="font-semibold text-ink/70">{comment.sentiment || "-"}</p>
-                        <p className="mt-1 text-xs leading-5 text-ink/55">{comment.intent || "-"}</p>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap gap-1.5">
-                          {(comment.coreKeywords || []).length > 0 ? (
-                            comment.coreKeywords.map((keyword) => (
-                              <span
-                                key={`${comment.id}-${keyword}`}
-                                className="rounded-md bg-paper px-2 py-1 text-xs font-bold text-ink/60"
-                              >
-                                {keyword}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-xs font-semibold text-ink/40">-</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3">
+                      </label>
+
+                      <label className="block min-w-0">
+                        <span className="text-xs font-bold text-ink/55">생성된 대댓글</span>
                         <textarea
                           value={comment.reply}
                           onChange={(event) => updateComment(comment.id, "reply", event.target.value)}
                           rows={4}
-                          className="focus-ring w-full rounded-md border border-line bg-white p-2 text-sm leading-6"
+                          className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
                           placeholder={comment.status === "스킵 권장" ? comment.skipReason || "스킵 권장" : "생성 대기"}
                         />
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="space-y-2 text-xs font-semibold">
-                          <CheckLine label="키워드" value={comment.mainKeywordUsed ? "반영" : "미반영"} />
-                          <CheckLine
-                            label="금지어"
-                            value={
-                              comment.forbiddenWordsFound?.length
-                                ? comment.forbiddenWordsFound.join(", ")
-                                : "없음"
-                            }
-                            danger={Boolean(comment.forbiddenWordsFound?.length)}
-                          />
+                      </label>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
+                      <InfoChip label="키워드" value={comment.mainKeywordUsed ? "자연 반영" : "미반영"} />
+                      <InfoChip
+                        label="금지어"
+                        value={forbiddenWordsText}
+                        danger={Boolean(comment.forbiddenWordsFound?.length)}
+                      />
+                      <span className={`inline-flex rounded-md px-2.5 py-1 ${duplicateClass}`}>
+                        {comment.duplicateRisk}
+                      </span>
+                      <InfoChip label="감정" value={comment.sentiment || "-"} />
+                      <InfoChip label="의도" value={comment.intent || "-"} />
+                      {(comment.coreKeywords || []).length > 0 ? (
+                        comment.coreKeywords.map((keyword) => (
                           <span
-                            className={`inline-flex rounded-md px-2 py-1 ${
-                              duplicateClassName[comment.duplicateRisk] || duplicateClassName["중복 위험 낮음"]
-                            }`}
+                            key={`${comment.id}-${keyword}`}
+                            className="rounded-md bg-white px-2.5 py-1 text-ink/60"
                           >
-                            {comment.duplicateRisk}
+                            #{keyword}
                           </span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <StatusPill status={comment.status} />
-                        {comment.reviewed && (
-                          <span className="mt-2 inline-flex rounded-md bg-moss px-2 py-1 text-xs font-bold text-white">
-                            검토 완료
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="grid grid-cols-2 gap-2">
-                          <ActionButton
-                            icon={Sparkles}
-                            label="생성"
-                            onClick={() => generateOne(comment.id)}
-                            disabled={!ready || !comment.content.trim() || status === "generating"}
-                          />
-                          <ActionButton
-                            icon={RefreshCw}
-                            label="다시"
-                            onClick={() => generateOne(comment.id, { regenerate: true })}
-                            disabled={!ready || !comment.content.trim() || status === "generating"}
-                          />
-                          <ActionButton
-                            icon={Copy}
-                            label="복사"
-                            onClick={() => copyText(comment.reply, "대댓글을 복사했습니다.")}
-                            disabled={!comment.reply}
-                          />
-                          <ActionButton icon={SkipForward} label="스킵" onClick={() => markSkip(comment.id)} />
-                          <ActionButton
-                            icon={Check}
-                            label="검토"
-                            onClick={() => markReviewed(comment.id)}
-                            disabled={!comment.reply && comment.status !== "스킵 권장"}
-                          />
-                          <ActionButton icon={Trash2} label="삭제" onClick={() => removeComment(comment.id)} />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        ))
+                      ) : (
+                        <InfoChip label="핵심 키워드" value="-" />
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </div>
         </section>
@@ -883,12 +868,11 @@ function StatusPill({ status }) {
   );
 }
 
-function CheckLine({ label, value, danger = false }) {
+function InfoChip({ label, value, danger = false }) {
   return (
-    <div className="flex items-center justify-between gap-2 rounded-md bg-paper px-2 py-1">
-      <span className="text-ink/45">{label}</span>
-      <span className={danger ? "text-coral" : "text-ink/65"}>{value}</span>
-    </div>
+    <span className={`inline-flex rounded-md bg-white px-2.5 py-1 ${danger ? "text-coral" : "text-ink/60"}`}>
+      {label}: {value}
+    </span>
   );
 }
 
@@ -898,7 +882,7 @@ function ActionButton({ icon: Icon, label, onClick, disabled = false }) {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+      className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2.5 text-xs font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
     >
       <Icon size={14} aria-hidden="true" />
       {label}
