@@ -115,7 +115,7 @@ const FIELD_TOOLTIPS = {
   brandName: {
     title: "브랜드명/매장명",
     description: "매장명이나 브랜드명을 입력하세요. 모르면 비워도 됩니다.",
-    example: "금찌네, 예진에스테틱"
+    example: "엠고컴퍼니, 예진에스테틱"
   },
   region: {
     title: "지역",
@@ -757,7 +757,7 @@ export default function ContentMaker() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-sm font-semibold text-coral">선택형 MVP 작업 화면</p>
@@ -766,8 +766,8 @@ export default function ContentMaker() {
         <StatusBadge status={status} />
       </header>
 
-      <div className="grid gap-6 xl:grid-cols-[0.7fr_1.3fr]">
-        <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
+      <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(320px,0.38fr)_minmax(0,0.62fr)]">
+        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">입력값</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
@@ -984,7 +984,7 @@ export default function ContentMaker() {
                         value={form.brandName}
                         onChange={(event) => updateForm("brandName", event.target.value)}
                         className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                        placeholder="예: 금찌네"
+                        placeholder="예: 엠고컴퍼니"
                       />
                     </label>
 
@@ -1081,7 +1081,7 @@ export default function ContentMaker() {
           )}
         </section>
 
-        <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
+        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-lg font-bold">선택 및 결과</h3>
             <div className="grid grid-cols-2 gap-2 sm:flex">

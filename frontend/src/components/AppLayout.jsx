@@ -19,8 +19,8 @@ const navItems = [
 export default function AppLayout({ children }) {
   return (
     <div className="min-h-screen bg-paper text-ink">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1440px] flex-col lg:flex-row">
-        <aside className="border-b border-line bg-[#262b2f] px-5 py-4 text-white lg:min-h-screen lg:w-72 lg:border-b-0 lg:border-r">
+      <div className="flex min-h-screen w-full flex-col lg:flex-row">
+        <aside className="border-b border-line bg-[#262b2f] px-5 py-4 text-white lg:min-h-screen lg:w-72 lg:shrink-0 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-lg bg-coral text-white">
               <Sparkles size={21} aria-hidden="true" />
@@ -57,7 +57,9 @@ export default function AppLayout({ children }) {
           </nav>
         </aside>
 
-        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">{children}</main>
+        <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+          <div className="mx-auto w-full max-w-[1480px]">{children}</div>
+        </main>
       </div>
     </div>
   );

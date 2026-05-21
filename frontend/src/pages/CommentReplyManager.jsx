@@ -372,7 +372,7 @@ export default function CommentReplyManager() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-sm font-semibold text-coral">검토 후 등록 MVP</p>
@@ -392,8 +392,8 @@ export default function CommentReplyManager() {
         </p>
       )}
 
-      <div className="grid gap-6 2xl:grid-cols-[0.75fr_1.25fr]">
-        <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
+      <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)]">
+        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">입력값</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
@@ -456,7 +456,7 @@ export default function CommentReplyManager() {
                   value={form.brandName}
                   onChange={(event) => updateForm("brandName", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 금찌네"
+                  placeholder="예: 엠고컴퍼니"
                 />
               </label>
 
@@ -602,8 +602,8 @@ export default function CommentReplyManager() {
           </div>
         </section>
 
-        <section className="space-y-5">
-          <div className="rounded-lg border border-line bg-white p-5 shadow-soft">
+        <section className="min-w-0 space-y-5">
+          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
                 <MessageSquare size={19} className="text-moss" aria-hidden="true" />
@@ -656,7 +656,7 @@ export default function CommentReplyManager() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-line bg-white p-5 shadow-soft">
+          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <h3 className="text-lg font-bold">댓글 목록</h3>
@@ -686,8 +686,8 @@ export default function CommentReplyManager() {
               </div>
             </div>
 
-            <div className="mt-5 overflow-x-auto">
-              <table className="min-w-[1180px] w-full border-collapse text-left text-sm">
+            <div className="mt-5 max-w-full overflow-x-auto overscroll-x-contain pb-2">
+              <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-y border-line bg-paper text-xs font-bold text-ink/55">
                     <th className="w-36 px-3 py-3">작성자</th>
