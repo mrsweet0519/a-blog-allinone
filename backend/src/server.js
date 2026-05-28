@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
+import { commentAutomationRouter } from "./api/commentAutomationRoutes.js";
 import { commentReplyRouter } from "./api/commentReplyRoutes.js";
 import { contentRouter } from "./api/contentRoutes.js";
 
@@ -67,6 +68,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/content", contentRouter);
 app.use("/api/comment-replies", commentReplyRouter);
+app.use("/api/comment-automation", commentAutomationRouter);
 app.use("/api", (_req, res) => {
   res.status(404).json({
     message: "API route not found."

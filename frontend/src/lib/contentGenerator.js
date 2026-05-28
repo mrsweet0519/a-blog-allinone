@@ -7,6 +7,8 @@ export {
   createOutlineSections,
   createTitleCandidates,
   createTopicRecommendations,
+  getOutlineSectionCount,
   getTargetLengthRange,
+  parseKeywordInput,
   resolveTargetLength
 } from "@shared/contentGenerator.js";

@@ -1,8 +1,9 @@
 import { LockKeyhole, PlugZap, Save, Server, ToggleLeft } from "lucide-react";
 import { useState } from "react";
 import { makerOptions } from "@shared/mvpConfig.js";
-import { checkBackendHealth, getApiBaseLabel, isBackendApiEnabled } from "../lib/backendApi.js";
+import { checkBackendHealth, getBackendModeLabel, isBackendApiEnabled } from "../lib/backendApi.js";
 import { loadSettings, saveSettings } from "../lib/localDrafts.js";
+import { getRuntimeInfo, isStaticBetaMode, STATIC_BETA_NOTICE } from "../lib/runtimeMode.js";
 
 const defaultSettings = {
   blogName: "",
@@ -13,7 +14,11 @@ const defaultSettings = {
 export default function Settings() {
   const [settings, setSettings] = useState(() => ({ ...defaultSettings, ...loadSettings() }));
   const [saved, setSaved] = useState(false);
-  const [backendStatus, setBackendStatus] = useState(isBackendApiEnabled() ? "확인 전" : "미설정");
+  const [backendStatus, setBackendStatus] = useState(
+    isBackendApiEnabled() ? "확인 전" : isStaticBetaMode() ? "정적 베타 비활성" : "미설정"
+  );
+  const runtime = getRuntimeInfo();
+  const staticBeta = isStaticBetaMode();
 
   const updateSettings = (key, value) => {
     setSettings((current) => ({ ...current, [key]: value }));
@@ -27,7 +32,7 @@ export default function Settings() {
 
   const checkBackend = async () => {
     if (!isBackendApiEnabled()) {
-      setBackendStatus("미설정");
+      setBackendStatus(staticBeta ? "정적 베타 비활성" : "미설정");
       return;
     }
 
@@ -107,10 +112,20 @@ export default function Settings() {
           <div className="mt-5 space-y-3">
             <ExtensionSlot
               icon={Server}
-              title={`백엔드 API ${getApiBaseLabel() || "미설정"}`}
+              title={`실행 환경: ${runtime.label}`}
+              status={runtime.target}
+            />
+            <ExtensionSlot
+              icon={Server}
+              title={`백엔드 API ${getBackendModeLabel()}`}
               status={backendStatus}
               action={isBackendApiEnabled() ? checkBackend : null}
             />
+            {staticBeta && (
+              <p className="rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm font-semibold leading-6 text-[#7a5a1e]">
+                {STATIC_BETA_NOTICE}
+              </p>
+            )}
             <ExtensionSlot
               icon={LockKeyhole}
               title="Gemini API 연결"

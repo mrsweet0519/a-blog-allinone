@@ -1,28 +1,42 @@
 import {
+  Bot,
   Check,
   Clipboard,
   Copy,
+  Eye,
+  FileText,
+  Image as ImageIcon,
   Link,
   ListChecks,
+  Loader2,
   MessageSquare,
+  Play,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
+  Send,
   ShieldCheck,
   SkipForward,
   Sparkles,
-  Trash2
+  StopCircle,
+  Trash2,
+  Upload
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { makerOptions, STORAGE_KEYS } from "@shared/mvpConfig.js";
-import { isBackendApiEnabled, postBackend } from "../lib/backendApi.js";
+import { isBackendApiEnabled, postBackend, requestBackend } from "../lib/backendApi.js";
+import { extractCaptureTextFromImage } from "../lib/captureOcr.js";
+import { isStaticBetaMode, STATIC_BETA_NOTICE } from "../lib/runtimeMode.js";
 import {
   createCommentCollectionBridge,
   createCommentReplyBatch,
   createCommentReplyForOne,
   createMainKeywordCandidates,
+  generateContextualCaptureReplies,
+  generateContextualCaptureReply,
   normalizeComment,
+  parseCapturedComments,
   parseManualComments,
   resolveMainKeyword
 } from "../lib/commentReplyGenerator.js";
@@ -63,14 +77,64 @@ const duplicateClassName = {
   "재생성 권장": "bg-coral/10 text-coral"
 };
 
+const automationModes = [
+  { id: "manual", label: "수동 댓글 입력" },
+  { id: "capture", label: "캡처 이미지 업로드" },
+  { id: "url-review", label: "URL 자동화 브리지", requiresBridge: true }
+];
+
+const modeLabels = {
+  manual: "수동 댓글 입력",
+  capture: "캡처 이미지 업로드",
+  "url-review": "URL 자동화 브리지",
+  "url-auto": "URL 자동 등록"
+};
+
+const bridgeStatusClassName = {
+  connected: "border-moss/30 bg-moss/10 text-moss",
+  not_connected: "border-coral/30 bg-coral/10 text-coral",
+  checking: "border-amber/40 bg-amber/15 text-[#7a5a1e]"
+};
+
+const supportedCaptureImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isSupportedCaptureImage = (file) => supportedCaptureImageTypes.has(String(file?.type || "").toLowerCase());
+
+const getCaptureImageFromTransfer = (dataTransfer) => {
+  if (!dataTransfer) return { file: null, unsupported: false };
+
+  const items = Array.from(dataTransfer.items || []);
+  let unsupported = false;
+
+  for (const item of items) {
+    if (!String(item.type || "").startsWith("image/")) continue;
+
+    const file = item.getAsFile?.();
+    if (isSupportedCaptureImage(file)) return { file, unsupported: false };
+    unsupported = true;
+  }
+
+  for (const file of Array.from(dataTransfer.files || [])) {
+    if (!String(file.type || "").startsWith("image/")) continue;
+    if (isSupportedCaptureImage(file)) return { file, unsupported: false };
+    unsupported = true;
+  }
+
+  return { file: null, unsupported };
+};
 
 const createEmptyComment = () => ({
   id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  commentId: "",
   author: "",
   content: "",
+  createdAt: "",
   source: "manual",
+  isOwnerComment: false,
   hasOwnerReply: false,
+  existingReplies: [],
   type: "",
   sentiment: "",
   intent: "",
@@ -81,6 +145,11 @@ const createEmptyComment = () => ({
   duplicateRisk: "중복 위험 낮음",
   status: "대기",
   skipReason: "",
+  processStatus: "",
+  registerStatus: "",
+  retryCount: 0,
+  errorMessage: "",
+  selected: false,
   reviewed: false
 });
 
@@ -93,9 +162,21 @@ const loadStoredWork = () => {
   }
 };
 
+const normalizeInitialMode = (value) =>
+  isStaticBetaMode() && (value === "url-review" || value === "url-auto") ? "manual" : value || "manual";
+
+const isMissingAuthor = (author = "") => {
+  const normalized = String(author || "").trim();
+  return !normalized || normalized === "작성자 미입력" || normalized === "작성자 미확인";
+};
+
+const getCommentDisplayName = (comment = {}, index = 0) =>
+  isMissingAuthor(comment.author) ? `댓글 ${index + 1}` : comment.author;
+
 const normalizeStoredComments = (comments = []) => {
   const normalized = comments.map((comment, index) => ({
     ...normalizeComment(comment, index),
+    selected: Boolean(comment.selected),
     reviewed: Boolean(comment.reviewed)
   }));
 
@@ -118,18 +199,134 @@ const requestCommentReplyApi = async (path, payload, fallback) => {
   }
 };
 
+const createEmptyReport = () => ({
+  totalComments: 0,
+  targetComments: 0,
+  skippedCount: 0,
+  generatedCount: 0,
+  registeredCount: 0,
+  failedCount: 0,
+  retryCount: 0,
+  exitReason: "",
+  failedComments: []
+});
+
+const createLogEntry = (message, level = "info") => ({
+  id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  time: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+  level,
+  message
+});
+
+const normalizeAutomationComment = (comment = {}, index = 0) => ({
+  ...createEmptyComment(),
+  ...normalizeComment(comment, index),
+  id: comment.id || comment.commentId || `url-${Date.now()}-${index + 1}`,
+  commentId: comment.commentId || comment.commentNo || comment.commentKey || comment.id || "",
+  createdAt: comment.createdAt || comment.writtenAt || comment.datetime || comment.date || "",
+  source: comment.source || "url",
+  isOwnerComment: Boolean(comment.isOwnerComment || comment.isMine || comment.isMyComment),
+  hasOwnerReply: Boolean(comment.hasOwnerReply || comment.hasMyReply || comment.alreadyReplied),
+  existingReplies: Array.isArray(comment.existingReplies)
+    ? comment.existingReplies
+    : Array.isArray(comment.replies)
+      ? comment.replies
+      : [],
+  processStatus: comment.processStatus || comment.processingStatus || "",
+  registerStatus: comment.registerStatus || "",
+  retryCount: Number(comment.retryCount || 0),
+  errorMessage: comment.errorMessage || comment.error || "",
+  selected: Boolean(comment.selected),
+  reviewed: Boolean(comment.reviewed)
+});
+
+const normalizeCapturedComment = (comment = {}, index = 0) => ({
+  ...createEmptyComment(),
+  ...normalizeComment(
+    {
+      ...comment,
+      source: "capture"
+    },
+    index
+  ),
+  id: comment.id || comment.commentId || `capture-${Date.now()}-${index + 1}`,
+  commentId: comment.commentId || comment.commentNo || comment.commentKey || comment.id || "",
+  source: "capture",
+  selected: Boolean(comment.selected),
+  reviewed: Boolean(comment.reviewed)
+});
+
+const normalizeCaptureReviewComment = (comment = {}, index = 0, confidence = 0) => ({
+  ...normalizeCapturedComment(comment, index),
+  id: comment.id || `capture-review-${Date.now()}-${index + 1}`,
+  extractionConfidence: Number.isFinite(confidence) ? confidence : 0,
+  extractionStatus: confidence > 0.7 ? "자동 추출" : "확인 필요",
+  status: "대기",
+  reply: "",
+  reviewed: false
+});
+
+const createEmptyCaptureReviewComment = () => ({
+  ...createEmptyComment(),
+  id: `capture-review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  author: "작성자 미확인",
+  content: "",
+  source: "capture",
+  extractionConfidence: 0,
+  extractionStatus: "직접 입력",
+  status: "대기"
+});
+
+const createCapturePlaceholderComment = () => ({
+  ...createEmptyComment(),
+  id: `capture-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  author: "작성자 미확인",
+  content: "",
+  source: "capture",
+  status: "검토 필요",
+  skipReason: "OCR 결과를 확인하고 댓글 내용을 입력해주세요."
+});
+
+const buildReportFromComments = (comments = [], base = {}) => {
+  const skipped = comments.filter(
+    (comment) => comment.status === "스킵 권장" || comment.skipReason || comment.hasOwnerReply || comment.isOwnerComment
+  );
+  const failed = comments.filter((comment) => comment.registerStatus === "등록 실패" || comment.errorMessage);
+
+  return {
+    ...createEmptyReport(),
+    ...base,
+    totalComments: base.totalComments ?? comments.length,
+    targetComments: base.targetComments ?? Math.max(0, comments.length - skipped.length),
+    skippedCount: base.skippedCount ?? skipped.length,
+    generatedCount: base.generatedCount ?? comments.filter((comment) => Boolean(comment.reply)).length,
+    registeredCount: base.registeredCount ?? comments.filter((comment) => comment.registerStatus === "등록 완료").length,
+    failedCount: base.failedCount ?? failed.length,
+    retryCount: base.retryCount ?? comments.reduce((sum, comment) => sum + Number(comment.retryCount || 0), 0),
+    failedComments:
+      base.failedComments?.length > 0
+        ? base.failedComments
+        : failed.map((comment) => ({
+            id: comment.id,
+            author: comment.author,
+            content: comment.content,
+            reason: comment.errorMessage || comment.skipReason || "실패"
+          }))
+  };
+};
+
 const toReplyListText = (comments) =>
   comments
     .filter((comment) => comment.reply)
-    .map((comment) => `${comment.author || "작성자 미입력"}: ${comment.reply}`)
+    .map((comment, index) => `${getCommentDisplayName(comment, index)}: ${comment.reply}`)
     .join("\n");
 
 const toReplySetText = (comments) =>
   comments
     .filter((comment) => comment.content && (comment.reply || comment.status === "스킵 권장"))
-    .map((comment, index) =>
+    .map((comment) =>
       [
-        `${index + 1}. 원댓글 작성자: ${comment.author || "작성자 미입력"}`,
+        `[${getCommentDisplayName(comment, index)}]`,
         `원댓글: ${comment.content}`,
         comment.reply ? `대댓글: ${comment.reply}` : `상태: ${comment.skipReason || "스킵 권장"}`
       ].join("\n")
@@ -138,26 +335,94 @@ const toReplySetText = (comments) =>
 
 export default function CommentReplyManager() {
   const storedWork = useMemo(loadStoredWork, []);
+  const staticBeta = isStaticBetaMode();
+  const automationAbortRef = useRef(null);
+  const captureFileInputRef = useRef(null);
+  const capturePasteZoneRef = useRef(null);
   const [form, setForm] = useState(() => ({
     ...initialForm,
     ...(storedWork?.form || {})
   }));
   const [comments, setComments] = useState(() => normalizeStoredComments(storedWork?.comments || []));
   const [manualInput, setManualInput] = useState("");
+  const [mode, setMode] = useState(() => normalizeInitialMode(storedWork?.mode));
+  const [captureImage, setCaptureImage] = useState(null);
+  const [captureOcrText, setCaptureOcrText] = useState(storedWork?.capture?.ocrText || "");
+  const [captureOcrMeta, setCaptureOcrMeta] = useState(
+    storedWork?.capture?.ocrMeta || {
+      provider: "",
+      confidence: 0,
+      warnings: []
+    }
+  );
+  const [captureReviewComments, setCaptureReviewComments] = useState(() =>
+    (storedWork?.capture?.reviewComments || []).map((comment, index) =>
+      normalizeCaptureReviewComment(comment, index, comment.extractionConfidence || storedWork?.capture?.ocrMeta?.confidence || 0)
+    )
+  );
+  const [captureDragActive, setCaptureDragActive] = useState(false);
+  const [bridge, setBridge] = useState(() => storedWork?.bridge || createCommentCollectionBridge());
+  const [automationLogs, setAutomationLogs] = useState(() => storedWork?.automationLogs || []);
+  const [automationReport, setAutomationReport] = useState(() => storedWork?.automationReport || createEmptyReport());
+  const [automationBusy, setAutomationBusy] = useState(false);
   const [status, setStatus] = useState(storedWork ? "saved" : "idle");
   const [message, setMessage] = useState(storedWork ? "저장된 댓글 응답 작업을 불러왔습니다." : "");
 
   const keywordCandidates = useMemo(() => createMainKeywordCandidates(form.postTitle), [form.postTitle]);
   const resolvedMainKeyword = useMemo(() => resolveMainKeyword(form), [form]);
-  const ready = Boolean(form.blogUrl.trim() && form.postTitle.trim());
-  const bridge = useMemo(createCommentCollectionBridge, []);
+  const urlReady = Boolean(form.blogUrl.trim() && form.postTitle.trim());
+  const urlMode = !staticBeta && (mode === "url-review" || mode === "url-auto");
+  const ready = Boolean(form.postTitle.trim() && (!urlMode || form.blogUrl.trim()));
+  const replyContextReady = Boolean(form.postTitle.trim() || form.mainKeyword.trim() || resolvedMainKeyword);
+  const bridgeConnected = bridge.connected || bridge.status === "connected";
+  const bridgeChecking = bridge.status === "checking";
+  const bridgeStatusLabel = bridgeChecking ? "확인 중" : bridgeConnected ? "연결됨" : "연결 안 됨";
+  const canScanComments = !staticBeta && isBackendApiEnabled() && bridgeConnected && bridge.canScan !== false;
+  const canRegisterReplies = !staticBeta && isBackendApiEnabled() && bridgeConnected && bridge.canRegister !== false;
+  const canRunLegacyAuto = !staticBeta && isBackendApiEnabled() && bridgeConnected && bridge.canRunAuto !== false;
   const validComments = comments.filter((comment) => comment.content.trim());
+  const captureReviewValidCount = captureReviewComments.filter((comment) => comment.content.trim()).length;
+  const captureReplyTargetCount = validComments.length;
+  const captureReviewGenerateHint =
+    status === "generating"
+      ? "상호대댓글을 생성 중입니다."
+      : automationBusy
+        ? "이미지 처리 또는 댓글 추출이 끝나면 생성할 수 있습니다."
+        : captureReviewValidCount === 0
+          ? "추출된 댓글이 없습니다. 먼저 댓글 추출을 눌러주세요."
+          : replyContextReady
+            ? "추출된 댓글 전체에 맞춤 대댓글을 한 번에 생성합니다."
+            : "포스팅 제목이나 메인 키워드를 넣으면 더 자연스럽지만, 지금도 생성할 수 있습니다.";
+  const captureCardGenerateHint =
+    status === "generating"
+      ? "상호대댓글을 생성 중입니다."
+      : automationBusy
+        ? "이미지 처리 또는 댓글 추출이 끝나면 생성할 수 있습니다."
+        : captureReplyTargetCount === 0
+          ? "댓글 카드가 없습니다. 댓글 추출 후 카드로 반영하거나 위 생성 버튼을 눌러주세요."
+          : replyContextReady
+            ? "댓글 카드 전체에 맞춤 대댓글을 한 번에 생성합니다."
+            : "포스팅 제목이나 메인 키워드를 넣으면 더 자연스럽지만, 지금도 생성할 수 있습니다.";
+  const selectedComments = comments.filter((comment) => comment.selected && comment.reply);
   const generatedCount = comments.filter((comment) => comment.reply || comment.status === "스킵 권장").length;
+  const liveReport = useMemo(
+    () => buildReportFromComments(comments, automationReport),
+    [comments, automationReport]
+  );
+
+  useEffect(() => {
+    const previewUrl = captureImage?.previewUrl;
+
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [captureImage?.previewUrl]);
 
   const updateForm = (key, value) => {
     setForm((current) => {
       const next = { ...current, [key]: value };
-      setStatus(next.blogUrl.trim() && next.postTitle.trim() ? "ready" : "idle");
+      const nextNeedsUrl = !staticBeta && (mode === "url-review" || mode === "url-auto");
+      setStatus(next.postTitle.trim() && (!nextNeedsUrl || next.blogUrl.trim()) ? "ready" : "idle");
       return next;
     });
     setMessage("");
@@ -182,6 +447,9 @@ export default function CommentReplyManager() {
                     duplicateRisk: "중복 위험 낮음",
                     status: "대기",
                     skipReason: "",
+                    processStatus: "",
+                    registerStatus: "",
+                    errorMessage: "",
                     reviewed: false
                   }
                 : {})
@@ -189,6 +457,31 @@ export default function CommentReplyManager() {
           : comment
       )
     );
+    setMessage("");
+  };
+
+  const updateCaptureReviewComment = (id, key, value) => {
+    setCaptureReviewComments((current) =>
+      current.map((comment) =>
+        comment.id === id
+          ? {
+              ...comment,
+              [key]: value,
+              extractionStatus: "확인 필요"
+            }
+          : comment
+      )
+    );
+    setMessage("");
+  };
+
+  const addCaptureReviewComment = () => {
+    setCaptureReviewComments((current) => [...current, createEmptyCaptureReviewComment()]);
+    setMessage("");
+  };
+
+  const removeCaptureReviewComment = (id) => {
+    setCaptureReviewComments((current) => current.filter((comment) => comment.id !== id));
     setMessage("");
   };
 
@@ -227,8 +520,377 @@ export default function CommentReplyManager() {
     setMessage(`${parsed.length}개 댓글을 목록에 추가했습니다.`);
   };
 
-  const generateAll = async ({ seed = 0 } = {}) => {
+  const parseCaptureTextToReview = (rawText = captureOcrText, confidence = captureOcrMeta.confidence || 0) => {
+    const parsed = parseCapturedComments(rawText);
+    const nextReviewComments = parsed.map((comment, index) =>
+      normalizeCaptureReviewComment(comment, index, confidence)
+    );
+
+    setMode("capture");
+    setCaptureReviewComments(nextReviewComments);
+    setAutomationReport(
+      buildReportFromComments(nextReviewComments, { exitReason: parsed.length ? "capture_parsed" : "capture_needs_review" })
+    );
+    setStatus(form.postTitle.trim() ? "ready" : "idle");
+    setMessage(
+      parsed.length
+        ? `${parsed.length}개 댓글을 자동 분리했습니다. 아래 추출 결과를 확인한 뒤 댓글 카드로 반영해주세요.`
+        : "댓글을 찾지 못했습니다. 아래 텍스트를 직접 수정해주세요."
+    );
+
+    return nextReviewComments;
+  };
+
+  const applyCaptureReviewToComments = (reviewComments = captureReviewComments) => {
+    const nextComments = buildCaptureReviewComments(reviewComments);
+
+    if (nextComments.length === 0) {
+      setMessage("댓글 카드로 반영할 내용이 없습니다. 추출 텍스트나 댓글 내용을 먼저 입력해주세요.");
+      return;
+    }
+
+    setMode("capture");
+    setComments(nextComments);
+    setAutomationReport(buildReportFromComments(nextComments, { exitReason: "capture_review_applied" }));
+    setStatus(replyContextReady ? "ready" : "idle");
+    setMessage(`${nextComments.length}개 댓글을 댓글 카드로 반영했습니다. 이제 대댓글을 생성할 수 있습니다.`);
+  };
+
+  const buildCaptureReviewComments = (reviewComments = captureReviewComments) =>
+    reviewComments
+      .filter((comment) => comment.content.trim())
+      .map((comment, index) =>
+        normalizeCapturedComment(
+          {
+            ...comment,
+            status: "대기",
+            skipReason: ""
+          },
+          index
+        )
+      );
+
+  const handleGenerateAllContextualReplies = async ({
+    seed = 0,
+    sourceComments = validComments,
+    replaceComments = false,
+    confirmRegenerate = false
+  } = {}) => {
+    const targetComments = sourceComments.filter((comment) => comment.content.trim());
+
+    if (targetComments.length === 0) {
+      setMessage("전체 상호대댓글을 생성할 댓글 카드가 없습니다.");
+      return;
+    }
+
+    if (confirmRegenerate && targetComments.some((comment) => comment.reply)) {
+      const ok = window.confirm("이미 생성된 대댓글이 있습니다. 전체 상호대댓글을 다시 생성할까요?");
+      if (!ok) return;
+    }
+
+    try {
+      const missingContext = !replyContextReady;
+      const formPayload = withResolvedKeyword(form);
+      setMode("capture");
+      setStatus("generating");
+      setMessage("");
+      await wait(250);
+
+      const generatedCaptureReplies = generateContextualCaptureReplies(targetComments, formPayload, { seed });
+      const generatedMap = new Map(generatedCaptureReplies.map((comment) => [comment.id, comment]));
+      const generatedComments = replaceComments
+        ? generatedCaptureReplies.map((comment) => ({ ...comment, reviewed: false }))
+        : comments.map((comment) => {
+            const generated = generatedMap.get(comment.id);
+            return generated ? { ...comment, ...generated, reviewed: false, selected: comment.selected } : comment;
+          });
+      const successCount = generatedCaptureReplies.filter((comment) => comment.reply).length;
+      const skippedCount = generatedCaptureReplies.filter((comment) => comment.status === "스킵 권장").length;
+      const failedCount = Math.max(0, targetComments.length - successCount - skippedCount);
+
+      setComments(generatedComments);
+      setAutomationReport(buildReportFromComments(generatedComments, { exitReason: "capture_reply_generated" }));
+      appendAutomationLogs(
+        `${successCount}개 성공 / ${skippedCount}개 스킵 / ${failedCount}개 실패`,
+        failedCount > 0 ? "retry" : "success"
+      );
+      setStatus("generated");
+      setMessage(
+        failedCount > 0
+          ? `${successCount}개 성공 / ${failedCount}개 실패했습니다. 실패한 댓글 내용을 확인해주세요.`
+          : `${successCount}개 대댓글을 생성했습니다.${
+              missingContext ? " 포스팅 제목이나 메인 키워드를 넣으면 더 자연스러운 답글을 만들 수 있습니다." : ""
+            }`
+      );
+    } catch (error) {
+      console.error(error);
+      appendAutomationLogs(`전체 상호대댓글 생성 실패: ${error.message}`, "fail");
+      setStatus("ready");
+      setMessage(`전체 상호대댓글 생성에 실패했습니다: ${error.message}`);
+    }
+  };
+
+  const generateCaptureReviewReplies = async () => {
+    const nextComments = buildCaptureReviewComments();
+
+    if (nextComments.length === 0) {
+      setMessage("전체 상호대댓글을 생성할 댓글이 없습니다. 추출 결과를 확인하거나 댓글을 추가해주세요.");
+      return;
+    }
+
+    await handleGenerateAllContextualReplies({
+      sourceComments: nextComments,
+      replaceComments: true
+    });
+  };
+
+  const processCaptureImage = async (file, source = "upload") => {
+    if (!file) return;
+
+    if (!isSupportedCaptureImage(file)) {
+      setMessage("PNG, JPG, WEBP 형식의 이미지 캡처만 사용할 수 있습니다.");
+      return;
+    }
+
+    const sourceLabel =
+      source === "paste" ? "붙여넣은" : source === "drop" ? "드롭한" : "업로드한";
+
+    setMode("capture");
+    setAutomationBusy(true);
+    setMessage("");
+
+    const previewUrl = URL.createObjectURL(file);
+    setCaptureImage((current) => {
+      if (current?.previewUrl) URL.revokeObjectURL(current.previewUrl);
+      return {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        previewUrl
+      };
+    });
+
+    try {
+      const extraction = await extractCaptureTextFromImage(file);
+      setCaptureOcrText(extraction.text || "");
+      setCaptureOcrMeta({
+        provider: extraction.provider,
+        confidence: extraction.confidence,
+        warnings: extraction.warnings || []
+      });
+      appendAutomationLogs(
+        [
+          extraction.message || `${sourceLabel} 캡처 이미지를 확인했습니다.`,
+          ...(extraction.warnings || [])
+        ].filter(Boolean),
+        extraction.warnings?.length ? "retry" : "success"
+      );
+
+      const nextReviewComments = parseCaptureTextToReview(extraction.text || "", extraction.confidence || 0);
+      setStatus(form.postTitle.trim() ? "ready" : "idle");
+      setMessage(
+        nextReviewComments.length
+          ? `${sourceLabel} 이미지에서 ${nextReviewComments.length}개 댓글을 분리했습니다. 추출 결과를 확인하고 댓글 카드로 반영해주세요.`
+          : `${sourceLabel} 이미지는 반영됐지만 댓글을 찾지 못했습니다. 오른쪽 텍스트 영역에 댓글을 붙여넣거나 직접 수정해주세요.`
+      );
+    } catch (error) {
+      appendAutomationLogs(`캡처 이미지 처리 실패: ${error.message}`, "fail");
+      setMessage("캡처 이미지 처리에 실패했습니다.");
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const handleCaptureImageUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    await processCaptureImage(file, "upload");
+  };
+
+  const handleCapturePaste = async (event) => {
+    const { file, unsupported } = getCaptureImageFromTransfer(event.clipboardData);
+
+    if (file) {
+      event.preventDefault();
+      await processCaptureImage(file, "paste");
+      return;
+    }
+
+    const pastedText = event.clipboardData?.getData("text/plain") || "";
+
+    if (pastedText.trim()) {
+      event.preventDefault();
+      setMode("capture");
+      setCaptureOcrText(pastedText);
+      setCaptureOcrMeta({
+        provider: "clipboard-text",
+        confidence: 1,
+        warnings: ["이미지가 아닌 텍스트를 붙여넣어 추출 텍스트로 반영했습니다."]
+      });
+      parseCaptureTextToReview(pastedText, 1);
+      appendAutomationLogs("클립보드 텍스트를 캡처 추출 텍스트로 반영했습니다.", "info");
+      return;
+    }
+
+    setMessage(unsupported ? "PNG, JPG, WEBP 형식의 이미지 캡처를 붙여넣어 주세요." : "이미지 캡처를 붙여넣어 주세요.");
+  };
+
+  const handleCaptureDragOver = (event) => {
+    event.preventDefault();
+    setCaptureDragActive(true);
+  };
+
+  const handleCaptureDragLeave = (event) => {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setCaptureDragActive(false);
+  };
+
+  const handleCaptureDrop = async (event) => {
+    event.preventDefault();
+    setCaptureDragActive(false);
+
+    const { file, unsupported } = getCaptureImageFromTransfer(event.dataTransfer);
+
+    if (!file) {
+      setMessage(unsupported ? "PNG, JPG, WEBP 형식의 이미지 파일을 올려주세요." : "이미지 파일을 드롭하거나 Ctrl+V로 붙여넣어 주세요.");
+      return;
+    }
+
+    await processCaptureImage(file, "drop");
+  };
+
+  const appendAutomationLogs = (logs = [], level = "info") => {
+    const entries = (Array.isArray(logs) ? logs : [logs])
+      .filter(Boolean)
+      .map((log) => (typeof log === "string" ? createLogEntry(log, level) : { ...createLogEntry(log.message, level), ...log }));
+
+    if (entries.length === 0) return;
+
+    setAutomationLogs((current) => [...entries, ...current].slice(0, 80));
+  };
+
+  const runAutomationRequest = async (path, payload) => {
+    const controller = new AbortController();
+    automationAbortRef.current = controller;
+
+    try {
+      return await requestBackend(path, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+    } finally {
+      automationAbortRef.current = null;
+    }
+  };
+
+  const checkBridgeStatus = async () => {
+    if (staticBeta) {
+      const disconnected = {
+        ...createCommentCollectionBridge(),
+        status: "not_connected",
+        connected: false,
+        message: STATIC_BETA_NOTICE
+      };
+      setBridge(disconnected);
+      appendAutomationLogs(disconnected.message, "info");
+      setMessage(disconnected.message);
+      return;
+    }
+
+    if (!isBackendApiEnabled()) {
+      const disconnected = {
+        ...createCommentCollectionBridge(),
+        status: "not_connected",
+        connected: false,
+        message: "프론트엔드 VITE_API_BASE_URL이 설정되지 않아 브리지 상태를 확인할 수 없습니다."
+      };
+      setBridge(disconnected);
+      appendAutomationLogs(disconnected.message, "fail");
+      setMessage(disconnected.message);
+      return;
+    }
+
+    setBridge((current) => ({ ...current, status: "checking" }));
+    setAutomationBusy(true);
+
+    try {
+      const data = await requestBackend("/api/comment-automation/status");
+      setBridge(data);
+      appendAutomationLogs(data.logs?.length ? data.logs : data.message, data.connected ? "success" : "fail");
+      setMessage(data.message || "브리지 상태를 확인했습니다.");
+    } catch (error) {
+      const disconnected = {
+        ...createCommentCollectionBridge(),
+        status: "not_connected",
+        connected: false,
+        message: error.message
+      };
+      setBridge(disconnected);
+      appendAutomationLogs(`브리지 상태 확인 실패: ${error.message}`, "fail");
+      setMessage("브리지 상태 확인에 실패했습니다.");
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const loadCommentsFromUrl = async () => {
+    if (staticBeta) {
+      setMessage(STATIC_BETA_NOTICE);
+      return;
+    }
+
+    if (!urlReady) {
+      setMessage("블로그 포스팅 URL과 포스팅 제목을 먼저 입력해주세요.");
+      return;
+    }
+
+    setMode("url-review");
+    setAutomationBusy(true);
+    setMessage("");
+    appendAutomationLogs("URL 기준 댓글 수집을 요청했습니다.");
+
+    try {
+      const data = await runAutomationRequest("/api/comment-automation/scan", {
+        form: withResolvedKeyword(form)
+      });
+      if (data.status) setBridge(data.status);
+      appendAutomationLogs(data.logs || data.message, data.ok ? "success" : "fail");
+      setAutomationReport(data.report || createEmptyReport());
+
+      const nextComments = (data.comments || []).map((comment, index) => {
+        const normalized = normalizeAutomationComment(comment, index);
+        const shouldSelect = !normalized.hasOwnerReply && !normalized.isOwnerComment && normalized.status !== "스킵 권장";
+        return { ...normalized, selected: shouldSelect };
+      });
+
+      if (nextComments.length > 0) {
+        setComments(nextComments);
+      }
+
+      setMessage(data.message || `${nextComments.length}개 댓글을 불러왔습니다.`);
+    } catch (error) {
+      appendAutomationLogs(`댓글 불러오기 실패: ${error.message}`, "fail");
+      setMessage("댓글 불러오기에 실패했습니다.");
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const generateAll = async ({ seed = 0, confirmRegenerate = false } = {}) => {
+    const shouldUseCaptureGenerator =
+      mode === "capture" || validComments.some((comment) => comment.source === "capture");
+
+    if (shouldUseCaptureGenerator) {
+      await handleGenerateAllContextualReplies({ seed, confirmRegenerate });
+      return;
+    }
+
     if (!ready || validComments.length === 0) return;
+    if (confirmRegenerate && validComments.some((comment) => comment.reply)) {
+      const ok = window.confirm("이미 생성된 대댓글이 있습니다. 전체 대댓글을 다시 생성할까요?");
+      if (!ok) return;
+    }
 
     const formPayload = withResolvedKeyword(form);
     setStatus("generating");
@@ -236,7 +898,7 @@ export default function CommentReplyManager() {
     await wait(250);
 
     const data = await requestCommentReplyApi(
-      "/api/comment-replies/generate",
+      urlMode ? "/api/comment-automation/generate" : "/api/comment-replies/generate",
       {
         form: formPayload,
         comments: validComments,
@@ -251,16 +913,21 @@ export default function CommentReplyManager() {
     setComments((current) =>
       current.map((comment) => {
         const generated = generatedMap.get(comment.id);
-        return generated ? { ...comment, ...generated, reviewed: false } : comment;
+        return generated ? { ...comment, ...generated, reviewed: false, selected: comment.selected } : comment;
       })
     );
+    setAutomationReport(data.report || buildReportFromComments(data.comments || []));
+    appendAutomationLogs(data.logs || `${data.comments?.length || 0}개 댓글의 대댓글 초안을 생성했습니다.`, "success");
     setStatus("generated");
     setMessage(`${data.comments?.length || 0}개 댓글의 대댓글 초안을 만들었습니다.`);
   };
 
   const generateOne = async (id, { regenerate = false } = {}) => {
     const target = comments.find((comment) => comment.id === id);
-    if (!ready || !target?.content.trim()) return;
+    const captureTarget = mode === "capture" || target?.source === "capture";
+
+    if (!target?.content.trim()) return;
+    if (!captureTarget && !ready) return;
 
     const formPayload = withResolvedKeyword(form);
     const previousReplies = comments
@@ -272,6 +939,22 @@ export default function CommentReplyManager() {
     setStatus("generating");
     setMessage("");
     await wait(180);
+
+    if (captureTarget) {
+      const generatedCaptureReply = generateContextualCaptureReply(target, formPayload, previousReplies, {
+        sequence,
+        seed: regenerate ? Date.now() % 11 : 0
+      });
+
+      setComments((current) =>
+        current.map((comment) =>
+          comment.id === id ? { ...comment, ...generatedCaptureReply, reviewed: false } : comment
+        )
+      );
+      setStatus("generated");
+      setMessage(regenerate ? "상호대댓글을 다시 생성했습니다." : "상호대댓글 초안을 생성했습니다.");
+      return;
+    }
 
     const data = await requestCommentReplyApi(
       "/api/comment-replies/generate-one",
@@ -293,6 +976,147 @@ export default function CommentReplyManager() {
     );
     setStatus("generated");
     setMessage(regenerate ? "대댓글을 다시 생성했습니다." : "대댓글 초안을 생성했습니다.");
+  };
+
+  const registerSelectedReplies = async () => {
+    if (staticBeta) {
+      setMessage(STATIC_BETA_NOTICE);
+      return;
+    }
+
+    if (!urlReady) {
+      setMessage("선택 등록에는 블로그 포스팅 URL과 포스팅 제목이 필요합니다.");
+      return;
+    }
+
+    if (selectedComments.length === 0) {
+      setMessage("등록할 대댓글이 선택되지 않았습니다.");
+      return;
+    }
+
+    setAutomationBusy(true);
+    appendAutomationLogs(`${selectedComments.length}개 선택 대댓글 등록을 요청했습니다.`);
+
+    try {
+      const data = await runAutomationRequest("/api/comment-automation/register", {
+        form: withResolvedKeyword(form),
+        comments: selectedComments
+      });
+      if (data.status) setBridge(data.status);
+      appendAutomationLogs(data.logs || data.message, data.ok ? "success" : "fail");
+      setAutomationReport(data.report || createEmptyReport());
+
+      if (Array.isArray(data.comments) && data.comments.length > 0) {
+        const resultMap = new Map(data.comments.map((comment) => [comment.id, comment]));
+        setComments((current) =>
+          current.map((comment) => {
+            const result = resultMap.get(comment.id);
+            return result ? { ...comment, ...result, selected: comment.selected } : comment;
+          })
+        );
+      }
+
+      setMessage(data.message || "선택 대댓글 등록 요청을 처리했습니다.");
+    } catch (error) {
+      appendAutomationLogs(`선택 등록 실패: ${error.message}`, "fail");
+      setMessage("선택 대댓글 등록에 실패했습니다.");
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const runAutoRegister = async () => {
+    if (staticBeta) {
+      setMessage(STATIC_BETA_NOTICE);
+      return;
+    }
+
+    if (!urlReady) {
+      setMessage("전체 자동 등록에는 블로그 포스팅 URL과 포스팅 제목이 필요합니다.");
+      return;
+    }
+
+    const ok = window.confirm(
+      "전체 자동 등록을 실행할까요? blog-automation의 기존 자동화 엔진이 네이버 댓글을 순회하며 실제 대댓글 등록을 시도합니다."
+    );
+    if (!ok) return;
+
+    setMode("url-auto");
+    setAutomationBusy(true);
+    appendAutomationLogs("전체 자동 등록을 시작했습니다.");
+
+    try {
+      const data = await runAutomationRequest("/api/comment-automation/run", {
+        form: withResolvedKeyword(form),
+        autoRegister: true
+      });
+      if (data.status) setBridge(data.status);
+      appendAutomationLogs(data.logs || data.message, data.ok ? "success" : "fail");
+      setAutomationReport(data.report || createEmptyReport());
+      setMessage(data.message || "전체 자동 등록 작업이 종료되었습니다.");
+    } catch (error) {
+      appendAutomationLogs(`전체 자동 등록 실패: ${error.message}`, "fail");
+      setMessage("전체 자동 등록에 실패했습니다.");
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const stopAutomationWork = async () => {
+    if (staticBeta) {
+      setAutomationBusy(false);
+      setMessage(STATIC_BETA_NOTICE);
+      return;
+    }
+
+    if (automationAbortRef.current) {
+      automationAbortRef.current.abort();
+      appendAutomationLogs("현재 프론트 요청을 취소했습니다.", "retry");
+    }
+
+    try {
+      const data = await postBackend("/api/comment-automation/stop", {
+        form: withResolvedKeyword(form)
+      });
+      appendAutomationLogs(data.logs || data.message, data.ok ? "success" : "fail");
+      setMessage(data.message || "작업 중지 요청을 보냈습니다.");
+    } catch (error) {
+      appendAutomationLogs(`작업 중지 요청 실패: ${error.message}`, "fail");
+      setMessage("작업 중지 요청에 실패했습니다.");
+    } finally {
+      setAutomationBusy(false);
+    }
+  };
+
+  const loadAutomationLogs = async () => {
+    if (staticBeta) {
+      setMessage(STATIC_BETA_NOTICE);
+      return;
+    }
+
+    if (!isBackendApiEnabled()) {
+      setMessage("백엔드 API가 연결되어야 로그를 볼 수 있습니다.");
+      return;
+    }
+
+    setAutomationBusy(true);
+
+    try {
+      const data = await requestBackend("/api/comment-automation/logs");
+      appendAutomationLogs(
+        [
+          ...(data.logs || []),
+          ...(data.files || []).map((file) => `${file.name} (${Math.ceil(file.size / 1024)}KB)`)
+        ],
+        data.ok ? "info" : "fail"
+      );
+      setMessage(data.message || "로그 정보를 불러왔습니다.");
+    } catch (error) {
+      appendAutomationLogs(`로그 보기 실패: ${error.message}`, "fail");
+      setMessage("로그 정보를 불러오지 못했습니다.");
+    } finally {
+      setAutomationBusy(false);
+    }
   };
 
   const copyText = async (value, copiedMessage) => {
@@ -333,10 +1157,32 @@ export default function CommentReplyManager() {
     );
   };
 
+  const toggleCommentSelected = (id, selected) => {
+    setComments((current) =>
+      current.map((comment) =>
+        comment.id === id
+          ? {
+              ...comment,
+              selected
+            }
+          : comment
+      )
+    );
+  };
+
   const saveWork = () => {
     const payload = {
       form,
       comments,
+      mode,
+      bridge,
+      capture: {
+        ocrText: captureOcrText,
+        ocrMeta: captureOcrMeta,
+        reviewComments: captureReviewComments
+      },
+      automationLogs,
+      automationReport,
       updatedAt: new Date().toISOString()
     };
 
@@ -355,6 +1201,21 @@ export default function CommentReplyManager() {
 
     setForm({ ...initialForm, ...(nextWork.form || {}) });
     setComments(normalizeStoredComments(nextWork.comments || []));
+    setMode(normalizeInitialMode(nextWork.mode));
+    setBridge(nextWork.bridge || createCommentCollectionBridge());
+    setCaptureImage((current) => {
+      if (current?.previewUrl) URL.revokeObjectURL(current.previewUrl);
+      return null;
+    });
+    setCaptureOcrText(nextWork.capture?.ocrText || "");
+    setCaptureOcrMeta(nextWork.capture?.ocrMeta || { provider: "", confidence: 0, warnings: [] });
+    setCaptureReviewComments(
+      (nextWork.capture?.reviewComments || []).map((comment, index) =>
+        normalizeCaptureReviewComment(comment, index, comment.extractionConfidence || nextWork.capture?.ocrMeta?.confidence || 0)
+      )
+    );
+    setAutomationLogs(nextWork.automationLogs || []);
+    setAutomationReport(nextWork.automationReport || createEmptyReport());
     setStatus("saved");
     setMessage("저장된 댓글 응답 작업을 불러왔습니다.");
   };
@@ -367,6 +1228,17 @@ export default function CommentReplyManager() {
     setForm(initialForm);
     setComments([createEmptyComment()]);
     setManualInput("");
+    setMode("manual");
+    setCaptureImage((current) => {
+      if (current?.previewUrl) URL.revokeObjectURL(current.previewUrl);
+      return null;
+    });
+    setCaptureOcrText("");
+    setCaptureOcrMeta({ provider: "", confidence: 0, warnings: [] });
+    setCaptureReviewComments([]);
+    setBridge(createCommentCollectionBridge());
+    setAutomationLogs([]);
+    setAutomationReport(createEmptyReport());
     setStatus("idle");
     setMessage("댓글 응답 작업을 초기화했습니다.");
   };
@@ -375,10 +1247,14 @@ export default function CommentReplyManager() {
     <div className="min-w-0 space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <p className="text-sm font-semibold text-coral">검토 후 등록 MVP</p>
+          <p className="text-sm font-semibold text-coral">빠른 대댓글 생성</p>
           <h2 className="mt-1 text-3xl font-bold tracking-normal">댓글 응답 관리</h2>
+          <p className="mt-2 text-sm font-semibold leading-6 text-ink/55">
+            댓글을 넣으면 원댓글 흐름에 맞는 상호대댓글 초안을 바로 만들 수 있습니다.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge label={modeLabels[mode] || "수동 댓글 입력"} status="ready" />
           <StatusBadge label={statusLabel[status] || statusLabel.idle} status={status} />
           <span className="inline-flex min-h-8 items-center rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink/65">
             {generatedCount}/{comments.length} 처리
@@ -395,15 +1271,16 @@ export default function CommentReplyManager() {
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)]">
         <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold">입력값</h3>
+            <h3 className="text-lg font-bold">기본 입력</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
-              {ready ? "생성 가능" : "필수 입력 필요"}
+              {urlMode ? (ready ? "자동화 준비" : "URL 입력 필요") : "빠른 생성"}
             </span>
           </div>
 
           <div className="mt-5 space-y-5">
+            {urlMode && (
             <label className="block">
-              <FieldLabel required>블로그 포스팅 URL</FieldLabel>
+              <FieldLabel required={urlMode}>블로그 포스팅 URL</FieldLabel>
               <div className="mt-2 flex min-h-11 items-center gap-2 rounded-md border border-line bg-paper px-3">
                 <Link size={17} className="text-ink/45" aria-hidden="true" />
                 <input
@@ -413,7 +1290,11 @@ export default function CommentReplyManager() {
                   placeholder="https://blog.naver.com/..."
                 />
               </div>
+              <p className="mt-1 text-xs font-semibold text-ink/45">
+                URL 자동 수집/등록에 필요합니다.
+              </p>
             </label>
+            )}
 
             <label className="block">
               <FieldLabel required>포스팅 제목</FieldLabel>
@@ -451,56 +1332,6 @@ export default function CommentReplyManager() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
-                <FieldLabel>브랜드명/매장명</FieldLabel>
-                <input
-                  value={form.brandName}
-                  onChange={(event) => updateForm("brandName", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 엠고컴퍼니"
-                />
-              </label>
-
-              <label className="block">
-                <FieldLabel>지역</FieldLabel>
-                <input
-                  value={form.region}
-                  onChange={(event) => updateForm("region", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 서울 강남"
-                />
-              </label>
-            </div>
-
-            <fieldset>
-              <legend>
-                <FieldLabel>사용자 유형</FieldLabel>
-              </legend>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                {makerOptions.audienceTypes.map((audienceType) => (
-                  <label
-                    key={audienceType}
-                    className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-center text-sm font-semibold transition ${
-                      form.audienceType === audienceType
-                        ? "border-coral bg-coral text-white"
-                        : "border-line bg-paper hover:border-coral"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="replyAudienceType"
-                      value={audienceType}
-                      checked={form.audienceType === audienceType}
-                      onChange={(event) => updateForm("audienceType", event.target.value)}
-                      className="sr-only"
-                    />
-                    {audienceType}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
                 <FieldLabel>말투</FieldLabel>
                 <select
                   value={form.tone}
@@ -516,62 +1347,154 @@ export default function CommentReplyManager() {
               </label>
 
               <label className="block">
-                <FieldLabel>CTA 톤</FieldLabel>
+                <FieldLabel>금지어</FieldLabel>
                 <input
-                  value={form.ctaTone}
-                  onChange={(event) => updateForm("ctaTone", event.target.value)}
+                  value={form.forbiddenWords}
+                  onChange={(event) => updateForm("forbiddenWords", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 편하게 문의 주세요"
+                  placeholder="예: 최고, 무조건, 보장"
                 />
               </label>
             </div>
 
-            <label className="block">
-              <FieldLabel>금지어</FieldLabel>
-              <input
-                value={form.forbiddenWords}
-                onChange={(event) => updateForm("forbiddenWords", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 최고, 무조건, 보장"
-              />
-            </label>
+            <details
+              key={`advanced-${mode}`}
+              open={urlMode}
+              className="rounded-md border border-line bg-paper p-3"
+            >
+              <summary className="cursor-pointer text-sm font-bold text-ink/70">
+                고급 설정 열기
+              </summary>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <FieldLabel>내 블로그 닉네임</FieldLabel>
-                <input
-                  value={form.ownerNickname}
-                  onChange={(event) => updateForm("ownerNickname", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 블로그지기"
-                />
-              </label>
+              <div className="mt-4 space-y-4">
+                {!urlMode && (
+                  <label className="block">
+                    <FieldLabel>블로그 포스팅 URL</FieldLabel>
+                    <div className="mt-2 flex min-h-11 items-center gap-2 rounded-md border border-line bg-white px-3">
+                      <Link size={17} className="text-ink/45" aria-hidden="true" />
+                      <input
+                        value={form.blogUrl}
+                        onChange={(event) => updateForm("blogUrl", event.target.value)}
+                        className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                        placeholder="수동/캡처에서는 선택 입력"
+                      />
+                    </div>
+                  </label>
+                )}
 
-              <label className="block">
-                <FieldLabel>owner aliases</FieldLabel>
-                <input
-                  value={form.ownerAliases}
-                  onChange={(event) => updateForm("ownerAliases", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="쉼표로 구분"
-                />
-              </label>
-            </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <FieldLabel>브랜드명/매장명</FieldLabel>
+                    <input
+                      value={form.brandName}
+                      onChange={(event) => updateForm("brandName", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                      placeholder="예: 엠고컴퍼니"
+                    />
+                  </label>
 
-            <div className="rounded-md border border-line bg-paper p-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck size={18} className="text-moss" aria-hidden="true" />
-                  <div>
-                    <p className="text-sm font-bold">URL 브리지</p>
-                    <p className="text-xs font-semibold text-ink/50">{bridge.nextIntegration}</p>
-                  </div>
+                  <label className="block">
+                    <FieldLabel>지역</FieldLabel>
+                    <input
+                      value={form.region}
+                      onChange={(event) => updateForm("region", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                      placeholder="예: 서울 강남"
+                    />
+                  </label>
                 </div>
-                <span className="rounded-md bg-white px-2.5 py-1 text-xs font-bold text-ink/55">
-                  {bridge.status}
-                </span>
+
+                <fieldset>
+                  <legend>
+                    <FieldLabel>사용자 유형</FieldLabel>
+                  </legend>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {makerOptions.audienceTypes.map((audienceType) => (
+                      <label
+                        key={audienceType}
+                        className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-center text-sm font-semibold transition ${
+                          form.audienceType === audienceType
+                            ? "border-coral bg-coral text-white"
+                            : "border-line bg-white hover:border-coral"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="replyAudienceType"
+                          value={audienceType}
+                          checked={form.audienceType === audienceType}
+                          onChange={(event) => updateForm("audienceType", event.target.value)}
+                          className="sr-only"
+                        />
+                        {audienceType}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <label className="block">
+                  <FieldLabel>CTA 톤</FieldLabel>
+                  <input
+                    value={form.ctaTone}
+                    onChange={(event) => updateForm("ctaTone", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                    placeholder="예: 편하게 문의 주세요"
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <FieldLabel>내 블로그 닉네임</FieldLabel>
+                    <input
+                      value={form.ownerNickname}
+                      onChange={(event) => updateForm("ownerNickname", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                      placeholder="예: 블로그지기"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <FieldLabel>owner aliases</FieldLabel>
+                    <input
+                      value={form.ownerAliases}
+                      onChange={(event) => updateForm("ownerAliases", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                      placeholder="쉼표로 구분"
+                    />
+                  </label>
+                </div>
+
+                {urlMode && (
+                  <div className="rounded-md border border-line bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck size={18} className="text-moss" aria-hidden="true" />
+                        <div>
+                          <p className="text-sm font-bold">URL 브리지</p>
+                          <p className="text-xs font-semibold text-ink/50">
+                            {bridge.baseUrl || bridge.nextIntegration || "blog-automation"}
+                          </p>
+                        </div>
+                      </div>
+                      <span
+                        className={`rounded-md border px-2.5 py-1 text-xs font-bold ${
+                          bridgeStatusClassName[bridgeChecking ? "checking" : bridgeConnected ? "connected" : "not_connected"]
+                        }`}
+                      >
+                        {bridgeStatusLabel}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-xs font-semibold leading-5 text-ink/55">
+                      {bridgeConnected
+                        ? bridge.session?.ok
+                          ? "네이버 로그인 세션이 확인되었습니다."
+                          : bridge.session?.message || "브리지는 연결됐지만 네이버 로그인 세션 확인이 필요합니다."
+                        : "URL 자동 수집 기능을 사용하려면 blog-automation 브리지가 실행 중이어야 합니다."}
+                    </p>
+                  </div>
+                )}
               </div>
-            </div>
+            </details>
           </div>
 
           <div className="mt-5 grid grid-cols-3 gap-2">
@@ -603,11 +1526,471 @@ export default function CommentReplyManager() {
         </section>
 
         <section className="min-w-0 space-y-5">
+          {mode === "capture" && (
+          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ImageIcon size={19} className="text-moss" aria-hidden="true" />
+                  <h3 className="text-lg font-bold">캡처 붙여넣기</h3>
+                </div>
+                <p className="mt-1 text-sm font-semibold leading-6 text-ink/55">
+                  캡처에서 추출한 댓글을 확인한 뒤, 전체 상호대댓글 생성을 누르면 댓글별 맞춤 답글을 만들 수 있습니다.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  ref={captureFileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={handleCaptureImageUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => captureFileInputRef.current?.click()}
+                  disabled={automationBusy}
+                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
+                >
+                  <Upload size={16} aria-hidden="true" />
+                  캡처 이미지 업로드
+                </button>
+                <button
+                  type="button"
+                  onClick={() => parseCaptureTextToReview()}
+                  disabled={automationBusy}
+                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+                >
+                  <ListChecks size={16} aria-hidden="true" />
+                  댓글 추출
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(300px,420px)_minmax(0,1fr)]">
+              <div className="min-w-0">
+                <div
+                  ref={capturePasteZoneRef}
+                  tabIndex={0}
+                  onPaste={handleCapturePaste}
+                  onDragEnter={handleCaptureDragOver}
+                  onDragOver={handleCaptureDragOver}
+                  onDragLeave={handleCaptureDragLeave}
+                  onDrop={handleCaptureDrop}
+                  onClick={(event) => {
+                    if (!event.target.closest?.("button")) capturePasteZoneRef.current?.focus();
+                  }}
+                  className={`focus-ring min-h-[420px] rounded-lg border-2 border-dashed bg-paper p-4 transition ${
+                    captureDragActive
+                      ? "border-moss bg-moss/10"
+                      : "border-line hover:border-moss hover:bg-white"
+                  }`}
+                >
+                  <div className="flex h-full flex-col gap-4">
+                    <div className="flex aspect-[4/3] items-center justify-center overflow-hidden rounded-md border border-line bg-white">
+                      {captureImage?.previewUrl ? (
+                        <img
+                          src={captureImage.previewUrl}
+                          alt="업로드한 댓글 캡처 미리보기"
+                          className="h-full w-full object-contain"
+                        />
+                      ) : (
+                        <div className="px-4 text-center">
+                          <Clipboard size={30} className="mx-auto text-moss" aria-hidden="true" />
+                          <p className="mt-3 text-base font-bold text-ink">
+                            캡처 이미지를 Ctrl+V로 붙여넣기
+                          </p>
+                          <p className="mt-2 text-sm font-semibold leading-6 text-ink/55">
+                            Win + Shift + S로 댓글 영역을 캡처한 뒤 이 박스를 클릭하고 붙여넣어 주세요.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      <p className="text-sm font-bold text-ink">
+                        파일로 저장하지 않아도 캡처한 이미지를 바로 붙여넣을 수 있습니다.
+                      </p>
+                      <ol className="grid gap-1 text-xs font-semibold leading-5 text-ink/60">
+                        <li>1. 네이버 댓글 영역을 캡처합니다.</li>
+                        <li>2. 이 박스를 클릭합니다.</li>
+                        <li>3. Ctrl+V로 붙여넣습니다.</li>
+                        <li>4. 추출된 댓글을 확인하고 필요하면 수정합니다.</li>
+                        <li>5. 대댓글을 생성합니다.</li>
+                      </ol>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => captureFileInputRef.current?.click()}
+                          disabled={automationBusy}
+                          className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+                        >
+                          <Upload size={16} aria-hidden="true" />
+                          또는 이미지 파일 선택
+                        </button>
+                        {captureImage && (
+                          <span className="inline-flex min-h-10 items-center rounded-md bg-white px-3 text-xs font-bold text-moss">
+                            새 캡처를 붙여넣으면 미리보기가 교체됩니다.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {captureImage && (
+                  <div className="mt-2 rounded-md bg-paper px-3 py-2 text-xs font-semibold text-ink/55">
+                    {captureImage.name} · {Math.max(1, Math.ceil(captureImage.size / 1024))}KB
+                  </div>
+                )}
+              </div>
+
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-bold">추출 결과 확인</p>
+                    <p className="mt-1 text-xs font-semibold text-ink/50">
+                      이미지에서 읽은 원문과 자동 분리된 댓글을 확인한 뒤 댓글 카드로 반영하세요.
+                    </p>
+                  </div>
+                  {captureOcrMeta.provider && (
+                    <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-bold text-ink/55">
+                      {captureOcrMeta.provider}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => parseCaptureTextToReview()}
+                    disabled={automationBusy}
+                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
+                  >
+                    <ListChecks size={16} aria-hidden="true" />
+                    댓글 추출
+                  </button>
+                  <button
+                    type="button"
+                    onClick={addCaptureReviewComment}
+                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss"
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                    댓글 추가
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyCaptureReviewToComments()}
+                    disabled={captureReviewComments.length === 0}
+                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
+                  >
+                    <Check size={16} aria-hidden="true" />
+                    댓글 카드로 반영
+                  </button>
+                  <button
+                    type="button"
+                    onClick={generateCaptureReviewReplies}
+                    disabled={captureReviewValidCount === 0 || status === "generating" || automationBusy}
+                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:bg-ink/25"
+                  >
+                    {status === "generating" ? (
+                      <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Sparkles size={16} aria-hidden="true" />
+                    )}
+                    {status === "generating" ? "생성 중..." : `전체 상호대댓글 생성 (${captureReviewValidCount}개)`}
+                  </button>
+                </div>
+                <p
+                  className={`mt-2 text-xs font-semibold ${
+                    captureReviewValidCount === 0 || automationBusy ? "text-coral" : "text-ink/50"
+                  }`}
+                >
+                  {captureReviewGenerateHint}
+                </p>
+
+                <div className="mt-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-bold">자동 분리된 댓글</p>
+                    <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-bold text-ink/55">
+                      {captureReviewComments.length}개
+                    </span>
+                  </div>
+                  {captureReviewComments.length > 0 ? (
+                    captureReviewComments.map((comment, index) => (
+                      <div key={comment.id} className="rounded-md border border-line bg-paper p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <span className="text-xs font-bold text-ink/45">추출 댓글 {index + 1}</span>
+                          <div className="flex flex-wrap gap-2">
+                            <span className="rounded-md bg-white px-2.5 py-1 text-xs font-bold text-[#7a5a1e]">
+                              {comment.extractionStatus || "확인 필요"}
+                              {comment.extractionConfidence > 0
+                                ? ` ${Math.round(comment.extractionConfidence * 100)}%`
+                                : ""}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeCaptureReviewComment(comment.id)}
+                              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md border border-line bg-white px-2.5 text-xs font-bold text-ink/55 transition hover:border-coral hover:text-coral"
+                            >
+                              <Trash2 size={14} aria-hidden="true" />
+                              삭제
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          <input
+                            value={comment.author}
+                            onChange={(event) => updateCaptureReviewComment(comment.id, "author", event.target.value)}
+                            className="focus-ring min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-semibold"
+                            placeholder="작성자"
+                          />
+                          <textarea
+                            value={comment.content}
+                            onChange={(event) => updateCaptureReviewComment(comment.id, "content", event.target.value)}
+                            rows={3}
+                            className="focus-ring w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                            placeholder="댓글 내용"
+                          />
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-md border border-dashed border-line bg-paper p-4 text-sm font-semibold leading-6 text-ink/55">
+                      댓글을 찾지 못했습니다. 아래 OCR 원문 영역에 댓글을 붙여넣거나 `댓글 추가`로 직접 입력해주세요.
+                    </div>
+                  )}
+                </div>
+
+                <details className="mt-4 rounded-md border border-line bg-paper p-3">
+                  <summary className="cursor-pointer text-sm font-bold text-ink/65">
+                    OCR 원문 전체 보기 / 직접 수정
+                  </summary>
+                  <textarea
+                    value={captureOcrText}
+                    onChange={(event) => setCaptureOcrText(event.target.value)}
+                    rows={8}
+                    className="focus-ring mt-3 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                    placeholder={"이미지에서 댓글을 자동으로 읽지 못했다면 여기에 OCR 원문이나 댓글 텍스트를 붙여넣어 주세요.\n예: 작성자: 댓글작성자\n댓글: 여기 관리 꼼꼼해 보여요"}
+                  />
+                  {captureOcrMeta.warnings?.length > 0 && (
+                    <div className="mt-3 space-y-1 rounded-md border border-amber/30 bg-amber/10 px-3 py-2">
+                      {captureOcrMeta.warnings.map((warning) => (
+                        <p key={warning} className="text-xs font-semibold text-[#7a5a1e]">
+                          {warning}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </details>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  handleGenerateAllContextualReplies({
+                    confirmRegenerate: true,
+                    seed: comments.some((comment) => comment.reply) ? Date.now() % 17 : 0
+                  })
+                }
+                disabled={captureReplyTargetCount === 0 || status === "generating" || automationBusy}
+                className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
+              >
+                {status === "generating" ? (
+                  <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Sparkles size={16} aria-hidden="true" />
+                )}
+                {status === "generating" ? "생성 중..." : `전체 상호대댓글 생성 (${captureReplyTargetCount}개)`}
+              </button>
+              <button
+                type="button"
+                onClick={() => copyText(toReplySetText(comments), "캡처 댓글 원댓글과 대댓글 세트를 복사했습니다.")}
+                disabled={!comments.some((comment) => comment.reply)}
+                className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
+              >
+                <Clipboard size={16} aria-hidden="true" />
+                전체 복사
+              </button>
+            </div>
+            <p
+              className={`mt-2 text-xs font-semibold ${
+                captureReplyTargetCount === 0 || automationBusy ? "text-coral" : "text-ink/50"
+              }`}
+            >
+              {captureCardGenerateHint}
+            </p>
+          </div>
+          )}
+
+          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Bot size={19} className="text-moss" aria-hidden="true" />
+                  <h3 className="text-lg font-bold">입력 방식</h3>
+                </div>
+                <p className="mt-1 text-sm font-semibold text-ink/55">
+                  수동 입력, 캡처 이미지, URL 브리지 중 작업 방식을 선택합니다.
+                </p>
+              </div>
+              {urlMode && (
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={checkBridgeStatus}
+                  disabled={automationBusy || staticBeta}
+                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+                  title={staticBeta ? "정적 베타에서는 로컬 브리지를 사용할 수 없습니다." : "브리지 상태 확인"}
+                >
+                  {automationBusy && bridgeChecking ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
+                  브리지 상태 확인
+                </button>
+                <button
+                  type="button"
+                  onClick={loadAutomationLogs}
+                  disabled={automationBusy || staticBeta}
+                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
+                  title={staticBeta ? "정적 베타에서는 로컬 자동화 로그를 볼 수 없습니다." : "자동화 로그 보기"}
+                >
+                  <Eye size={16} aria-hidden="true" />
+                  로그 보기
+                </button>
+              </div>
+              )}
+            </div>
+
+            <div className="mt-4 grid gap-2 lg:grid-cols-3">
+              {automationModes.map((item) => {
+                const disabled = staticBeta && item.requiresBridge;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      if (disabled) {
+                        setMessage(STATIC_BETA_NOTICE);
+                        return;
+                      }
+
+                      setMode(item.id);
+                      const nextNeedsUrl = !staticBeta && (item.id === "url-review" || item.id === "url-auto");
+                      setStatus(form.postTitle.trim() && (!nextNeedsUrl || form.blogUrl.trim()) ? "ready" : "idle");
+                    }}
+                    disabled={disabled}
+                    className={`focus-ring min-h-11 rounded-md border px-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:border-line disabled:bg-paper disabled:text-ink/30 ${
+                      mode === item.id && !disabled
+                        ? "border-moss bg-moss text-white"
+                        : "border-line bg-paper text-ink/70 hover:border-moss"
+                    }`}
+                    title={disabled ? "정적 베타에서는 로컬 브리지 기능이 비활성화됩니다." : item.label}
+                  >
+                    {item.label}
+                    {disabled && <span className="ml-2 text-[11px]">로컬 전용</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {staticBeta && (
+              <p className="mt-4 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm font-semibold leading-6 text-[#7a5a1e]">
+                {STATIC_BETA_NOTICE}
+              </p>
+            )}
+
+            {urlMode && (
+            <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              <button
+                type="button"
+                onClick={loadCommentsFromUrl}
+                disabled={!urlReady || !canScanComments || automationBusy}
+                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
+              >
+                <FileText size={16} aria-hidden="true" />
+                댓글 불러오기
+              </button>
+              <button
+                type="button"
+                onClick={() => generateAll()}
+                disabled={!ready || validComments.length === 0 || status === "generating" || automationBusy}
+                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
+              >
+                <Sparkles size={16} aria-hidden="true" />
+                전체 대댓글 생성
+              </button>
+              <button
+                type="button"
+                onClick={registerSelectedReplies}
+                disabled={!urlReady || !canRegisterReplies || selectedComments.length === 0 || automationBusy}
+                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+              >
+                <Send size={16} aria-hidden="true" />
+                선택 댓글 등록
+              </button>
+              <button
+                type="button"
+                onClick={runAutoRegister}
+                disabled={!urlReady || !canRunLegacyAuto || automationBusy}
+                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-coral px-3 text-sm font-semibold text-coral transition hover:bg-coral hover:text-white disabled:cursor-not-allowed disabled:border-line disabled:text-ink/30"
+              >
+                <Play size={16} aria-hidden="true" />
+                전체 자동 등록
+              </button>
+              <button
+                type="button"
+                onClick={stopAutomationWork}
+                disabled={!automationBusy}
+                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30 md:col-span-2 xl:col-span-4"
+              >
+                <StopCircle size={16} aria-hidden="true" />
+                작업 중지
+              </button>
+            </div>
+            )}
+
+            {!bridgeConnected && urlMode && (
+              <p className="mt-4 rounded-md border border-coral/20 bg-coral/10 px-3 py-2 text-sm font-semibold text-coral">
+                브리지 미연결 상태에서는 수동 모드만 사용할 수 있습니다.
+              </p>
+            )}
+
+            {urlMode && <ReportGrid report={liveReport} />}
+
+            {urlMode && automationLogs.length > 0 && (
+              <div className="mt-4 max-h-48 overflow-auto rounded-md border border-line bg-paper p-3">
+                <div className="mb-2 flex items-center gap-2 text-xs font-bold text-ink/55">
+                  <ListChecks size={14} aria-hidden="true" />
+                  작업 로그
+                </div>
+                <div className="space-y-1">
+                  {automationLogs.slice(0, 18).map((log) => (
+                    <p
+                      key={log.id}
+                      className={`text-xs font-semibold leading-5 ${
+                        log.level === "fail"
+                          ? "text-coral"
+                          : log.level === "success"
+                            ? "text-moss"
+                            : log.level === "retry"
+                              ? "text-[#7a5a1e]"
+                              : "text-ink/60"
+                      }`}
+                    >
+                      <span className="text-ink/35">{log.time}</span> {log.message}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {mode === "manual" && (
           <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
                 <MessageSquare size={19} className="text-moss" aria-hidden="true" />
-                <h3 className="text-lg font-bold">댓글 직접 입력</h3>
+              <h3 className="text-lg font-bold">댓글 직접 입력</h3>
               </div>
               <button
                 type="button"
@@ -622,10 +2005,13 @@ export default function CommentReplyManager() {
             <textarea
               value={manualInput}
               onChange={(event) => setManualInput(event.target.value)}
-              rows={5}
+              rows={6}
               className="focus-ring mt-4 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-              placeholder={"작성자: 블링쮸\n댓글: 여기 관리 꼼꼼해 보여요"}
+              placeholder={"댓글만 입력해도 대댓글을 만들 수 있습니다.\n\n여기 관리 꼼꼼해 보여요\n\n예약 전에 확인할 포인트가 궁금해요\n\n직접 써본 후기라 더 믿음이 가네요\n\n작성자를 넣고 싶다면:\n작성자: 댓글작성자\n댓글: 여기 관리 꼼꼼해 보여요\n\n작성자: 이웃님\n댓글: 예약 전에 확인할 포인트가 궁금해요"}
             />
+            <p className="mt-2 text-xs font-semibold leading-5 text-ink/50">
+              작성자명은 선택입니다. 빈 줄 기준 또는 한 줄씩 댓글 카드로 나눌 수 있습니다.
+            </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -633,7 +2019,7 @@ export default function CommentReplyManager() {
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61]"
               >
                 <ListChecks size={16} aria-hidden="true" />
-                붙여넣기 반영
+                댓글 반영
               </button>
               <button
                 type="button"
@@ -642,7 +2028,7 @@ export default function CommentReplyManager() {
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
               >
                 <Sparkles size={16} aria-hidden="true" />
-                전체 생성
+                전체 상호대댓글 생성
               </button>
               <button
                 type="button"
@@ -655,6 +2041,7 @@ export default function CommentReplyManager() {
               </button>
             </div>
           </div>
+          )}
 
           <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -693,6 +2080,8 @@ export default function CommentReplyManager() {
                   : "없음";
                 const duplicateClass =
                   duplicateClassName[comment.duplicateRisk] || duplicateClassName["중복 위험 낮음"];
+                const displayName = getCommentDisplayName(comment, index);
+                const hasAuthor = !isMissingAuthor(comment.author);
 
                 return (
                   <article
@@ -702,15 +2091,34 @@ export default function CommentReplyManager() {
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs font-bold text-ink/45">댓글 {index + 1}</span>
-                          <input
-                            value={comment.author}
-                            onChange={(event) => updateComment(comment.id, "author", event.target.value)}
-                            className="focus-ring min-h-9 w-full rounded-md border border-line bg-white px-2 text-sm font-semibold sm:w-48"
-                            placeholder="작성자"
-                          />
+                          <span className="text-xs font-bold text-ink/45">{displayName}</span>
+                          <label className="inline-flex min-h-9 items-center gap-2 rounded-md border border-line bg-white px-2 text-xs font-bold text-ink/60">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(comment.selected)}
+                              onChange={(event) => toggleCommentSelected(comment.id, event.target.checked)}
+                              disabled={comment.status === "스킵 권장" || comment.hasOwnerReply || comment.isOwnerComment}
+                              className="h-4 w-4 accent-[#52796f]"
+                            />
+                            선택
+                          </label>
+                          <details className="rounded-md border border-line bg-white px-2 py-1 text-xs font-bold text-ink/55">
+                            <summary className="cursor-pointer">
+                              {hasAuthor ? `작성자: ${comment.author}` : "작성자 추가"}
+                            </summary>
+                            <input
+                              value={isMissingAuthor(comment.author) ? "" : comment.author}
+                              onChange={(event) => updateComment(comment.id, "author", event.target.value)}
+                              className="focus-ring mt-2 min-h-9 w-44 rounded-md border border-line bg-paper px-2 text-sm font-semibold"
+                              placeholder="선택 입력"
+                            />
+                          </details>
+                          <SmallBadge>
+                            {comment.source === "url" ? "URL 수집" : comment.source === "capture" ? "캡처 추출" : "수동"}
+                          </SmallBadge>
                           <SmallBadge>{comment.type || "대기"}</SmallBadge>
                           <StatusPill status={comment.status} />
+                          {comment.registerStatus && <SmallBadge>{comment.registerStatus}</SmallBadge>}
                           {comment.reviewed && (
                             <span className="inline-flex rounded-md bg-moss px-2.5 py-1 text-xs font-bold text-white">
                               검토 완료
@@ -726,6 +2134,12 @@ export default function CommentReplyManager() {
                           />
                           기존 내 답글 있음
                         </label>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-ink/45">
+                          {comment.commentId && <span>식별값: {comment.commentId}</span>}
+                          {comment.createdAt && <span>작성시간: {comment.createdAt}</span>}
+                          {comment.isOwnerComment && <span className="text-coral">내 계정 원댓글</span>}
+                          {comment.existingReplies?.length > 0 && <span>기존 대댓글 {comment.existingReplies.length}개</span>}
+                        </div>
                       </div>
 
                       <div className="flex flex-wrap gap-2">
@@ -733,13 +2147,13 @@ export default function CommentReplyManager() {
                           icon={Sparkles}
                           label="생성"
                           onClick={() => generateOne(comment.id)}
-                          disabled={!ready || !comment.content.trim() || status === "generating"}
+                          disabled={!comment.content.trim() || status === "generating" || (comment.source !== "capture" && !ready)}
                         />
                         <ActionButton
                           icon={RefreshCw}
                           label="다시 생성"
                           onClick={() => generateOne(comment.id, { regenerate: true })}
-                          disabled={!ready || !comment.content.trim() || status === "generating"}
+                          disabled={!comment.content.trim() || status === "generating" || (comment.source !== "capture" && !ready)}
                         />
                         <ActionButton
                           icon={Copy}
@@ -794,6 +2208,9 @@ export default function CommentReplyManager() {
                       </span>
                       <InfoChip label="감정" value={comment.sentiment || "-"} />
                       <InfoChip label="의도" value={comment.intent || "-"} />
+                      {comment.processStatus && <InfoChip label="처리" value={comment.processStatus} />}
+                      {comment.retryCount > 0 && <InfoChip label="재시도" value={`${comment.retryCount}회`} />}
+                      {comment.errorMessage && <InfoChip label="오류" value={comment.errorMessage} danger />}
                       {(comment.coreKeywords || []).length > 0 ? (
                         comment.coreKeywords.map((keyword) => (
                           <span
@@ -845,6 +2262,42 @@ function StatusBadge({ label, status }) {
     <span className={`inline-flex min-h-8 items-center rounded-md border px-3 text-sm font-semibold ${className}`}>
       {label}
     </span>
+  );
+}
+
+function ReportGrid({ report }) {
+  const items = [
+    ["총 댓글", report.totalComments],
+    ["처리 대상", report.targetComments],
+    ["스킵", report.skippedCount],
+    ["생성", report.generatedCount],
+    ["등록 성공", report.registeredCount],
+    ["실패", report.failedCount],
+    ["보류/재시도", report.retryCount],
+    ["종료 사유", report.exitReason || "-"]
+  ];
+
+  return (
+    <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {items.map(([label, value]) => (
+        <div key={label} className="rounded-md border border-line bg-paper px-3 py-2">
+          <p className="text-[11px] font-bold text-ink/45">{label}</p>
+          <p className="mt-1 break-words text-sm font-bold text-ink">{value}</p>
+        </div>
+      ))}
+      {report.failedComments?.length > 0 && (
+        <div className="rounded-md border border-coral/30 bg-coral/10 px-3 py-2 sm:col-span-2 xl:col-span-4">
+          <p className="text-[11px] font-bold text-coral">실패 댓글 목록</p>
+          <div className="mt-1 space-y-1">
+            {report.failedComments.slice(0, 4).map((item) => (
+              <p key={`${item.id}-${item.reason}`} className="text-xs font-semibold text-coral">
+                {item.author || "작성자 미입력"}: {item.reason}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -89,6 +89,120 @@ https://a-blog-allinone.onrender.com/api/health
 
 `/`에서 블로그 올인원 앱 화면이 뜨고, `/comment-replies`에서 댓글 응답 관리 화면이 뜨면 React 정적 파일 서빙이 정상입니다. `/api/health`에서 `{"ok":true}`가 보이면 백엔드 API도 정상입니다.
 
+## 지인 테스트용 정적 베타 배포
+
+지인 테스트처럼 빠르게 열리는 URL이 필요할 때는 Cloudflare Pages 또는 Vercel에 `frontend/dist`만 올리는 정적 베타 모드를 사용합니다. 이 모드는 기존 Render 배포와 로컬 개발 구조를 삭제하지 않고, 프론트 앱만 별도로 배포합니다.
+
+정적 베타에서 사용할 수 있는 기능은 아래와 같습니다.
+
+- 콘텐츠 메이커: 주제, 제목, 개요, 본문, 해시태그 그룹, SEO 체크 생성
+- 업체 기본값 저장/불러오기와 초안 `localStorage` 저장
+- 댓글 응답 관리: 수동 댓글 입력, 캡처 이미지 Ctrl+V 붙여넣기, 캡처 이미지 업로드, 이미지 미리보기, OCR/수동 보정
+- 추출 댓글 카드 반영, 개별/전체 대댓글 생성, 개별/전체 복사
+
+정적 베타에서 비활성화되는 기능은 아래와 같습니다.
+
+- URL에서 네이버 댓글 자동 불러오기
+- 선택 댓글 자동 등록
+- 전체 자동 등록
+- 로컬 `blog-automation` 브리지 연결
+- Express 백엔드 `/api/...` 의존 기능
+
+앱은 Cloudflare Pages, Vercel, GitHub Pages 빌드 환경을 감지하면 화면 상단에 `정적 베타 모드`를 표시합니다. 이때 안내 문구는 다음처럼 표시됩니다.
+
+```text
+현재 베타 URL에서는 콘텐츠 생성, 캡처 업로드, 수동 댓글 응답 초안 생성을 테스트할 수 있습니다.
+네이버 댓글 자동 수집/자동 등록은 로컬 blog-automation 브리지 연결 시 사용할 수 있습니다.
+```
+
+### 추천 플랫폼
+
+지인 테스트용으로는 Cloudflare Pages를 먼저 추천합니다. 무료 정적 호스팅이 빠르고, 이 저장소에는 SPA 새로고침 404를 막기 위한 `frontend/public/_redirects` 파일이 포함되어 있습니다.
+
+### Cloudflare Pages 설정
+
+1. Cloudflare Dashboard에서 Workers & Pages로 이동합니다.
+2. Create application 또는 Create project를 누릅니다.
+3. Pages 탭에서 GitHub 저장소를 연결합니다.
+4. 저장소 `mrsweet0519/a-blog-allinone`을 선택합니다.
+5. Build settings에 아래 값을 넣습니다.
+
+```text
+Framework preset: None 또는 Vite
+Build command: npm install --prefix frontend && npm run build --prefix frontend
+Output directory: frontend/dist
+```
+
+6. Environment variables는 없어도 됩니다. 자동 감지가 안 되는 경우에만 아래 값을 추가합니다.
+
+```text
+VITE_DEPLOY_TARGET=static
+```
+
+7. Save and Deploy를 누릅니다.
+8. 배포가 끝나면 Cloudflare Pages가 보여주는 `https://프로젝트명.pages.dev` 주소로 접속합니다.
+9. `/`, `/app`, `/comment-replies`, `/storage`, `/settings`가 새로고침해도 열리면 정상입니다.
+
+### Vercel 설정
+
+Vercel은 아래 방식 중 하나로 설정할 수 있습니다. 초보자에게는 Root Directory를 `frontend`로 지정하는 방식을 추천합니다.
+
+```text
+Root Directory: frontend
+Framework Preset: Vite
+Build Command: npm install && npm run build
+Output Directory: dist
+```
+
+저장소 루트를 Root Directory로 유지한다면 아래처럼 설정합니다.
+
+```text
+Build Command: npm install --prefix frontend && npm run build --prefix frontend
+Output Directory: frontend/dist
+```
+
+Vercel에서 직접 `/comment-replies`를 새로고침할 때 404가 나지 않도록 `frontend/vercel.json`에 SPA rewrite 설정을 넣어두었습니다. 배포 후 Vercel 프로젝트 화면의 Domains 또는 Deployment URL에서 테스트 주소를 확인하면 됩니다.
+
+자동 감지가 안 되는 경우 Vercel Environment Variables에 아래 값을 추가합니다.
+
+```text
+VITE_DEPLOY_TARGET=static
+```
+
+### GitHub Pages 설정
+
+GitHub Pages도 가능합니다. 다만 GitHub Pages는 정적 파일만 서빙하므로 backend/API/자동화 브리지는 작동하지 않습니다. 네이버 댓글 자동 수집/자동 등록은 로컬 `blog-automation` 브리지 또는 Render 백엔드 포함 배포에서만 테스트합니다.
+
+GitHub Pages는 프로젝트 경로가 `/저장소명/`으로 붙기 때문에 base 경로와 라우터 설정을 맞춰야 합니다. GitHub Actions로 배포한다면 빌드 환경변수에 아래 값을 넣는 방식을 권장합니다.
+
+```text
+VITE_DEPLOY_TARGET=github-pages
+VITE_ROUTER_MODE=hash
+VITE_BASE_PATH=/a-blog-allinone/
+```
+
+이 설정을 쓰면 접속 URL은 보통 아래 형태가 됩니다.
+
+```text
+https://사용자명.github.io/a-blog-allinone/#/comment-replies
+```
+
+HashRouter를 사용하면 GitHub Pages에서 새로고침해도 404가 나지 않습니다.
+
+### 정적 베타 접속 확인 경로
+
+정적 베타 배포 후 아래 경로를 차례로 확인합니다.
+
+```text
+/
+/app
+/comment-replies
+/storage
+/settings
+```
+
+Cloudflare Pages와 Vercel은 SPA fallback 설정이 포함되어 있어 일반 경로로 열 수 있습니다. GitHub Pages는 HashRouter 설정을 사용할 때 `/#/comment-replies`처럼 `#` 뒤 경로로 접속합니다.
+
 ### 로컬 환경변수 예시
 
 예시 파일은 아래에 있습니다.
@@ -176,11 +290,30 @@ a-blog-allinone
 1. `블로그 포스팅 URL`과 `포스팅 제목`을 입력합니다.
 2. `메인 키워드`를 비워두면 포스팅 제목에서 후보를 자동 추출합니다. 예를 들어 `강남 피부관리샵 리프팅 처음 방문 전 확인할 기준`에서는 `강남 피부관리샵`, `피부관리샵 리프팅`, `리프팅 관리` 같은 후보를 제안합니다.
 3. 브랜드명/매장명, 지역, 사용자 유형, 말투, 금지어, CTA 톤, 내 블로그 닉네임, owner aliases를 필요에 맞게 입력합니다.
-4. 댓글은 수동 입력 모드로 붙여넣거나 `댓글 추가`로 카드형 입력을 추가합니다.
-5. `전체 생성` 또는 행별 `생성`을 누르면 댓글 유형, 감정/의도, 핵심 키워드, 대댓글 초안, 메인 키워드 반영 여부, 금지어 포함 여부, 중복 위험도를 함께 표시합니다.
-6. 결과는 개별 대댓글 복사, 전체 대댓글 목록 복사, 원댓글 + 대댓글 세트 복사를 지원합니다.
-7. 검토가 끝난 행은 `검토` 버튼으로 표시하고, 답변하지 않을 댓글은 `스킵`으로 구분합니다.
-8. 현재 작업은 브라우저 `localStorage`에 임시 저장, 불러오기, 초기화할 수 있습니다.
+4. 댓글은 `수동 댓글 입력` 탭에서 붙여넣거나 `댓글 추가`로 카드형 입력을 추가합니다.
+5. `캡처 이미지 업로드` 탭에서는 네이버 블로그 댓글 화면 캡처를 파일로 올리거나, 파일 저장 없이 붙여넣기 영역을 클릭한 뒤 `Ctrl+V`로 바로 붙여넣을 수 있습니다.
+6. 이미지 미리보기와 OCR 추출 텍스트를 보며 내용을 보정합니다. OCR이 실패하면 샘플 댓글을 넣지 않고 직접 수정 안내만 표시합니다.
+7. `추출 결과 반영`을 누르면 작성자와 댓글 내용이 댓글 카드 목록으로 들어가며, OCR이 틀린 부분은 카드에서 다시 수정할 수 있습니다.
+8. `전체 생성` 또는 행별 `생성`을 누르면 댓글 유형, 감정/의도, 핵심 키워드, 대댓글 초안, 메인 키워드 반영 여부, 금지어 포함 여부, 중복 위험도를 함께 표시합니다.
+9. 결과는 개별 대댓글 복사, 전체 대댓글 목록 복사, 원댓글 + 대댓글 세트 복사를 지원합니다.
+10. 검토가 끝난 행은 `검토` 버튼으로 표시하고, 답변하지 않을 댓글은 `스킵`으로 구분합니다.
+11. 현재 작업은 브라우저 `localStorage`에 임시 저장, 불러오기, 초기화할 수 있습니다.
+
+### 댓글 캡처 이미지 붙여넣기
+
+댓글 캡처 이미지는 파일로 저장하지 않고 바로 붙여넣을 수 있습니다.
+
+1. 네이버 블로그 댓글 영역을 `Win + Shift + S`로 캡처합니다.
+2. 댓글 응답 관리의 `캡처 이미지 업로드` 탭을 엽니다.
+3. 붙여넣기 영역을 클릭합니다.
+4. `Ctrl+V`로 캡처 이미지를 붙여넣습니다.
+5. 이미지 미리보기와 추출 결과를 확인합니다.
+6. 필요하면 추출 텍스트나 댓글 카드를 수정합니다.
+7. `전체 생성` 또는 댓글별 `생성`으로 대댓글 초안을 만듭니다.
+
+붙여넣기 영역은 `image/png`, `image/jpeg`, `image/webp` 형식을 지원합니다. 기존처럼 이미지 파일 선택 업로드도 계속 사용할 수 있습니다.
+
+OCR은 캡처 품질, 글자 크기, 배경색에 따라 틀릴 수 있습니다. 그래서 앱은 이미지에서 읽은 원문 텍스트와 자동 분리된 댓글 카드를 먼저 보여주고, 사용자가 작성자명과 댓글 내용을 수정한 뒤 `댓글 카드로 반영`하도록 구성되어 있습니다. 정적 베타 URL에서는 자동등록이 아니라 대댓글 초안 생성과 복사 테스트에 집중합니다.
 
 ### 댓글 유형 분류 기준
 

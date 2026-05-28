@@ -9,8 +9,12 @@ export {
   createCommentReplyBatch,
   createCommentReplyForOne,
   createMainKeywordCandidates,
+  generateContextualCaptureReplies,
+  generateContextualCaptureReply,
   findForbiddenWords,
   normalizeComment,
+  parseCapturedComments,
   parseManualComments,
+  parseNaverCommentsFromText,
   resolveMainKeyword
 } from "@shared/commentReplyGenerator.js";

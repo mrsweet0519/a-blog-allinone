@@ -84,8 +84,8 @@ const FIELD_TOOLTIPS = {
   keyword: {
     title: "키워드",
     description:
-      "검색되고 싶은 핵심 단어를 입력하세요. 지역명, 서비스명, 후기/비교 표현을 함께 넣으면 좋습니다.",
-    example: "강남 피부관리샵, 물방울리프팅 후기, 육아서적 추천, 무료보호대 비교"
+      "검색되고 싶은 핵심 키워드를 입력하세요. 1개만 입력해도 되고, 쉼표로 2~3개까지 입력할 수 있습니다. 첫 번째 키워드는 메인 키워드로, 나머지는 보조 키워드로 활용됩니다.",
+    example: "피부톤업 글루타치온 / 피부톤업, 글루타치온, 줄리스초이스 / 강남 피부관리샵, 리프팅 관리, 피부탄력"
   },
   category: {
     title: "업종/주제",
@@ -149,7 +149,7 @@ const FIELD_TOOLTIPS = {
   }
 };
 
-const TITLE_TYPES = ["정보형", "지역형", "비교형", "클릭형"];
+const TITLE_TYPES = ["정보형", "지역/선택형", "비교형", "클릭형"];
 const TITLE_CANDIDATE_LABELS = TITLE_TYPES.map((type) => `${type} 제목`);
 
 const inferTitleType = (titles = [], selectedTitle = "") => {
@@ -829,8 +829,12 @@ export default function ContentMaker() {
                   value={form.keyword}
                   onChange={(event) => updateForm("keyword", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 피부관리샵 리프팅"
+                  placeholder="예: 피부톤업, 글루타치온, 줄리스초이스"
                 />
+                <p className="mt-2 text-xs leading-5 text-ink/55">
+                  검색되고 싶은 핵심 키워드를 1개 입력하거나, 쉼표로 2~3개까지 입력할 수 있습니다.
+                  첫 번째 키워드는 메인 키워드로, 나머지는 보조 키워드로 활용됩니다.
+                </p>
               </label>
 
               <label className="block">
@@ -1062,7 +1066,7 @@ export default function ContentMaker() {
               className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
             >
               <Sparkles size={18} aria-hidden="true" />
-              주제 생성
+              글 방향 생성
             </button>
             <button
               type="button"
@@ -1076,7 +1080,7 @@ export default function ContentMaker() {
           </div>
           {result.topicRegenerationCount > 0 && (
             <p className="mt-2 text-xs font-semibold text-ink/55">
-              이전 주제와 겹치지 않도록 새로운 관점으로 {result.topicRegenerationCount + 1}번째 후보를 만들었습니다.
+              이전 글 방향과 겹치지 않도록 새로운 관점으로 {result.topicRegenerationCount + 1}번째 후보를 만들었습니다.
             </p>
           )}
         </section>
@@ -1138,16 +1142,16 @@ export default function ContentMaker() {
 
           <div className="mt-5 space-y-6">
             <SelectableList
-              title="1. 추천 주제 3개"
+              title="1. 글 방향 3개"
               items={result.topics}
               selected={result.selectedTopic}
-              emptyText="입력값을 채우고 주제 생성을 누르면 후보가 표시됩니다."
+              emptyText="입력값을 채우고 글 방향 생성을 누르면 후보가 표시됩니다."
               onSelect={selectTopic}
             />
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">2. 선택 주제 기준 제목 4개</h4>
+                <h4 className="text-sm font-bold text-ink/70">2. 선택한 글 방향 기준 제목 4개</h4>
                 <button
                   type="button"
                   onClick={generateTitles}
@@ -1162,14 +1166,14 @@ export default function ContentMaker() {
                 selected={result.selectedTitle}
                 itemTypes={TITLE_TYPES}
                 itemLabels={TITLE_CANDIDATE_LABELS}
-                emptyText="주제를 하나 선택한 뒤 제목 생성을 누르세요."
+                emptyText="글 방향을 하나 선택한 뒤 제목 생성을 누르세요."
                 onSelect={selectTitle}
               />
             </div>
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">3. 개요 소제목 3~6개</h4>
+                <h4 className="text-sm font-bold text-ink/70">3. 목표 글자수 맞춤 개요 소제목</h4>
                 <button
                   type="button"
                   onClick={generateOutline}
@@ -1406,8 +1410,13 @@ function HashtagGroupCards({ groups = [], fallbackTags = [] }) {
 }
 
 const SEO_CHECK_LABELS = {
-  "first-sentence-keyword": "첫 문장 키워드 반영",
-  "total-keyword-count": "키워드 자연 분산",
+  "title-main-keyword": "메인 키워드 제목 반영",
+  "first-paragraph-keyword": "메인 키워드 첫 문단 반영",
+  "secondary-keywords": "보조 키워드 자연 반영",
+  "outline-count": "목표 글자수별 소제목 수",
+  "keyword-overuse": "키워드 과다 반복 없음",
+  "search-intent-title": "검색 의도 제목 유형",
+  "faq-question": "FAQ/질문형 문장 포함",
   region: "지역명 반영",
   cta: "CTA 반영",
   avoid: "금지어 없음"
@@ -1435,8 +1444,10 @@ function StrategyMemo({ result, range }) {
   if (!memo && !keyword && !seoCheck) return null;
 
   const summaryItems = [
-    ["선택 주제", memo?.selectedTopic || result.selectedTopic],
+    ["글 방향", memo?.selectedTopic || result.selectedTopic],
     ["선택 제목", memo?.selectedTitle || result.selectedTitle],
+    ["메인 키워드", keyword?.mainKeyword],
+    ["보조 키워드", (keyword?.secondaryKeywords || []).join(", ")],
     ["목표 글자수", `${range?.target || keyword?.targetLength || ""}자`],
     ["사용자 유형", memo?.audienceType]
   ].filter(([, value]) => value && value !== "자");

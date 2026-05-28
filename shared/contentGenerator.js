@@ -69,6 +69,81 @@ const splitList = (value) =>
     .filter(Boolean)
     .slice(0, 3);
 
+const uniqueText = (items = []) =>
+  Array.from(new Set(items.map(text).filter(Boolean)));
+
+const splitKeywordInput = (value) =>
+  text(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+
+const BRAND_KEYWORD_HINTS = [
+  "초이스",
+  "choice",
+  "코스",
+  "랩",
+  "몰",
+  "샵",
+  "클리닉",
+  "스튜디오",
+  "센터",
+  "브랜드",
+  "제품",
+  "공구",
+  "올영"
+];
+
+const isBrandLikeKeyword = (keyword, index, total) => {
+  const value = text(keyword);
+  const lower = value.toLowerCase();
+
+  return (
+    index >= 2 ||
+    /[a-z]/iu.test(value) ||
+    BRAND_KEYWORD_HINTS.some((hint) => lower.includes(hint))
+  ) && total > 1;
+};
+
+export const parseKeywordInput = (value = "") => {
+  const keywords = splitKeywordInput(value);
+
+  if (keywords.length === 0) {
+    return {
+      rawKeywords: [],
+      mainKeyword: "",
+      secondaryKeywords: [],
+      brandKeywords: []
+    };
+  }
+
+  const mainKeyword = keywords.length >= 2 ? `${keywords[0]} ${keywords[1]}` : keywords[0];
+  const baseSecondary = keywords.length >= 2 ? keywords.slice(2) : [];
+  const derivedSecondary =
+    keywords.length >= 2
+      ? [`${keywords[0]} 관리`, `${keywords[1]} 후기`]
+      : [`${keywords[0]} 선택 기준`, `${keywords[0]} 후기`];
+  const brandKeywords = uniqueText(
+    keywords.filter((keyword, index) => isBrandLikeKeyword(keyword, index, keywords.length))
+  );
+  const secondaryKeywords = uniqueText([...baseSecondary, ...derivedSecondary]).filter(
+    (keyword) => compact(keyword) !== compact(mainKeyword)
+  );
+
+  return {
+    rawKeywords: keywords,
+    mainKeyword,
+    secondaryKeywords,
+    brandKeywords
+  };
+};
+
+const getKeywordContext = (form = {}) => parseKeywordInput(form.keyword);
+const getMainKeyword = (form = {}) => getKeywordContext(form).mainKeyword || text(form.keyword);
+const getSecondaryKeywords = (form = {}) => getKeywordContext(form).secondaryKeywords;
+const getBrandKeywords = (form = {}) => getKeywordContext(form).brandKeywords;
+
 const applyAvoidWords = (value, avoidWords) =>
   avoidWords.reduce((result, word) => result.replaceAll(word, "해당 표현"), value);
 
@@ -87,12 +162,13 @@ const resolveKeywordOccurrenceRange = (targetLength) =>
   INTERNAL_KEYWORD_OPTIMIZATION.targetRanges.find((range) => targetLength <= range.maxLength) ??
   INTERNAL_KEYWORD_OPTIMIZATION.targetRanges.at(-1);
 
-const createKeywordVariants = (keyword, category) =>
+const createKeywordVariants = (keyword, category, secondaryKeywords = []) =>
   Array.from(
     new Set([
       `${keyword} 선택 기준`,
       `${keyword} 활용 포인트`,
       `${keyword} 체크리스트`,
+      ...secondaryKeywords,
       `${category} 고객 관점`,
       "고객 판단 기준",
       "실전 체크포인트",
@@ -100,7 +176,8 @@ const createKeywordVariants = (keyword, category) =>
     ].filter(Boolean))
   );
 
-const getBrandLabel = (form) => text(form.brandName) || text(form.category) || "이곳";
+const getBrandLabel = (form) =>
+  text(form.brandName) || getBrandKeywords(form)[0] || text(form.category) || "이곳";
 
 const getRegionPhrase = (form) => {
   const region = text(form.region);
@@ -187,7 +264,7 @@ const createSentence = (value) => {
 export const createCtaCandidates = (form = {}) => {
   const audienceType = getAudienceType(form);
   const brand = getBrandLabel(form);
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const region = text(form.region);
   const direction = text(form.ctaDirection);
   const wantsBooking = direction.includes("예약");
@@ -233,7 +310,7 @@ const createCtaSentence = (form, selectedCtaSentence = "") => {
 };
 
 const createReaderCue = (form) => {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const region = text(form.region);
 
   return region ? `${region}에서 ${asObject(keyword)} 알아보고 계신다면` : `${asObject(keyword)} 알아보고 계신다면`;
@@ -431,7 +508,9 @@ const stripMainKeyword = (value, keyword, replacement = "이 기준") => {
 };
 
 export const createOpeningSentenceCandidates = (form = {}) => {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
+  const secondaryKeywords = getSecondaryKeywords(form);
+  const secondaryCue = secondaryKeywords[0] || "비교 기준";
   const tone = text(form.tone);
   const audienceType = getAudienceType(form);
   const region = text(form.region);
@@ -439,17 +518,17 @@ export const createOpeningSentenceCandidates = (form = {}) => {
 
   if (audienceType === "인플루언서/수익형") {
     return [
-      `${asObject(keyword)} 알아볼 때 가장 고민되는 부분은 실제 경험에 가까운 정보인지 구분하기 어렵다는 점입니다.`,
-      `${asObject(keyword)} 찾아보다 보면 여러 후기가 보여도 나에게 맞는 이야기인지 천천히 구분하게 됩니다.`,
-      `${asObject(keyword)} 콘텐츠로 살펴볼 때 중요한 것은 장점보다 비교 기준과 경험 맥락이 함께 보이는지입니다.`
+      `${asObject(keyword)} 처음 본다면 실제로 꾸준히 활용할 수 있는 조건인지 먼저 확인하는 것이 좋습니다.`,
+      `${asObject(keyword)} 찾아볼 때는 ${asObject(secondaryCue)} 함께 보면 내 상황에 맞는 후기인지 구분하기 쉽습니다.`,
+      `${asObject(keyword)} 콘텐츠는 장점보다 경험, 비교 기준, 사용 맥락이 함께 보일 때 더 오래 읽힙니다.`
     ];
   }
 
   const toneMatched = {
-    친근한: `${asObject(keyword)} 알아볼 때 가장 고민되는 부분은 어디가 내 상황에 맞는지 판단하기 어렵다는 점입니다.`,
-    전문적인: `${asObject(keyword)} 검토할 때 먼저 확인해야 할 부분은 가격보다 실제 기준이 내 상황과 맞는지입니다.`,
-    차분한: `${asObject(keyword)} 찾아보다 보면 정보는 많지만 지금 내게 맞는 기준이 무엇인지 정리하기 어려울 때가 있습니다.`,
-    활기찬: `${asObject(keyword)} 빠르게 비교하려면 처음부터 확인 기준을 잡아두는 편이 좋습니다.`
+    친근한: `${asObject(keyword)} 처음 알아본다면 가격보다 내 상황에 맞는 선택 기준부터 잡는 것이 좋습니다.`,
+    전문적인: `${asObject(keyword)} 검토할 때는 가격보다 사용 목적과 확인 기준이 먼저 정리되어야 합니다.`,
+    차분한: `${asObject(keyword)} 정보가 많을수록 처음에는 필요한 기준부터 차분히 확인하는 것이 좋습니다.`,
+    활기찬: `${asObject(keyword)} 빠르게 비교하려면 처음부터 선택 기준과 체크포인트를 나눠보는 편이 좋습니다.`
   };
 
   return [
@@ -460,7 +539,7 @@ export const createOpeningSentenceCandidates = (form = {}) => {
 };
 
 const createOpeningParagraph = (form, selectedOpeningSentence = "") => {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const brand = getBrandLabel(form);
   const region = text(form.region);
   const category = text(form.category);
@@ -481,7 +560,7 @@ const createOpeningParagraph = (form, selectedOpeningSentence = "") => {
 };
 
 const createTopicBridgeParagraph = (form, selectedTopic, selectedTitle, titleAngle) => {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const audienceType = getAudienceType(form);
   const topicCue = stripMainKeyword(selectedTopic || selectedTitle || titleAngle, keyword, "") || "확인 기준";
 
@@ -489,7 +568,19 @@ const createTopicBridgeParagraph = (form, selectedTopic, selectedTitle, titleAng
     return `${asObject(topicCue)} 중심으로 보면 장점을 나열하기보다 경험, 비교 기준, 확인할 포인트가 자연스럽게 이어지는지가 중요합니다. 그래서 아래 내용은 후기처럼 읽히면서도 필요할 때 다시 꺼내볼 수 있게 정리했습니다.`;
   }
 
-  return `${asObject(topicCue)} 중심으로 보면 선택지를 많이 보는 것보다 내 상황에서 필요한 기준을 차례대로 확인하는 것이 더 중요합니다. 아래 내용은 문의나 방문 전에 바로 참고할 수 있도록 공감, 상황, 기준, 판단, 행동 순서로 정리했습니다.`;
+  return `${asObject(topicCue)} 중심으로 보면 선택지를 많이 보는 것보다 내 상황에서 필요한 기준을 차례대로 확인하는 것이 더 중요합니다. 아래 내용은 각 항목마다 먼저 결론을 짚고, 문의나 구매 전에 바로 참고할 수 있는 기준으로 정리했습니다.`;
+};
+
+const createFaqAnswerParagraph = (form) => {
+  const keyword = getMainKeyword(form);
+  const secondaryCue = getSecondaryKeywords(form)[0] || "후기와 비교 기준";
+  const audienceType = getAudienceType(form);
+
+  if (audienceType === "인플루언서/수익형") {
+    return `자주 묻는 질문처럼 "${keyword}는 어떤 사람에게 맞나요?"라고 본다면, ${secondaryCue}를 함께 확인했을 때 내 루틴과 부담 없이 이어질 수 있는지가 가장 현실적인 기준입니다.`;
+  }
+
+  return `자주 묻는 질문처럼 "${keyword}는 무엇을 먼저 확인해야 하나요?"라고 본다면, 가격보다 내 상황에 맞는 기준과 ${secondaryCue}를 함께 보는 것이 좋습니다.`;
 };
 
 const getToneNudge = (tone) =>
@@ -501,7 +592,7 @@ const getToneNudge = (tone) =>
   })[tone] ?? "필요한 기준부터 차근차근 확인해보면 됩니다.";
 
 const createFlowBlocks = ({ form, cta }) => {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const category = text(form.category);
   const brand = getBrandLabel(form);
   const region = text(form.region);
@@ -575,98 +666,83 @@ const normalizeOutlineSections = (outlineSections = []) =>
     .filter(Boolean)
     .slice(0, 6);
 
+export function getOutlineSectionCount(form = {}) {
+  const target = resolveTargetLength(form);
+
+  if (target < 1400) return 3;
+  if (target < 1800) return 4;
+  if (target < 2300) return 5;
+
+  return 6;
+}
+
+const OUTLINE_ROLES_BY_COUNT = {
+  3: ["핵심 기준", "선택 포인트", "마무리 정리"],
+  4: ["공감/문제", "선택 기준", "비교 포인트", "마무리"],
+  5: ["공감/문제", "핵심 기준", "비교/주의점", "실제 활용 포인트", "마무리 CTA"],
+  6: ["공감/문제", "기본 개념", "선택 기준", "비교 포인트", "자주 묻는 질문", "마무리 CTA"]
+};
+
+const createOutlineHeading = ({ role, keyword, secondaryCue, brand, audienceLabel, goal, titleAngle }) => {
+  const isInfluencer = audienceLabel === "인플루언서/수익형";
+
+  switch (role) {
+    case "공감/문제":
+      return isInfluencer
+        ? `${keyword}, 직접 보기 전 헷갈리는 부분`
+        : `${keyword}, 처음 찾는 고객이 헷갈리는 부분`;
+    case "기본 개념":
+      return `${keyword}를 볼 때 먼저 알아둘 기본 흐름`;
+    case "핵심 기준":
+      return `${keyword}, 처음이라면 먼저 확인할 핵심 기준`;
+    case "선택 기준":
+      return `${keyword} 선택 전 먼저 볼 기준`;
+    case "선택 포인트":
+      return `${secondaryCue || keyword}까지 함께 보는 선택 포인트`;
+    case "비교 포인트":
+      return `${secondaryCue || brand}와 함께 비교할 포인트`;
+    case "비교/주의점":
+      return `${secondaryCue || titleAngle} 비교할 때 주의할 점`;
+    case "실제 활용 포인트":
+      return isInfluencer
+        ? `후기처럼 풀어내기 좋은 실제 활용 포인트`
+        : `문의나 구매 전 확인하면 좋은 실제 활용 포인트`;
+    case "자주 묻는 질문":
+      return `${keyword}를 보기 전 자주 묻는 질문`;
+    case "마무리 CTA":
+      return goal === "방문 유도" ? `방문 전 확인할 마지막 체크` : `마무리 정리와 다음 확인 포인트`;
+    case "마무리":
+    case "마무리 정리":
+    default:
+      return `마무리 정리와 다음 확인 포인트`;
+  }
+};
+
 export function createOutlineSections(form, selectedTopic, selectedTitle) {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const goal = text(form.goal);
   const brand = getBrandLabel(form);
-  const emphasis = getEmphasis(form);
-  const emphasisHeading = cleanHeadingText(emphasis);
   const audienceProfile = getAudienceProfile(form);
   const titleAngle = createTitleAngle(selectedTitle, keyword, goal);
-  const topic = text(selectedTopic);
   const avoidWords = splitAvoidWords(form.avoid);
-  const base = [
-    `${keyword}, 처음 알아볼 때 가장 먼저 볼 기준`,
-    audienceProfile.situationHeading,
-    audienceProfile.criteriaHeading,
-    `${brand}의 강점이 실제로 필요한 순간`,
-    audienceProfile.judgmentHeading,
-    audienceProfile.actionHeading
-  ];
+  const secondaryCue = getSecondaryKeywords(form)[0] || stripMainKeyword(selectedTopic, keyword, "") || "";
+  const count = getOutlineSectionCount(form);
+  const roles = OUTLINE_ROLES_BY_COUNT[count] ?? OUTLINE_ROLES_BY_COUNT[4];
 
-  const outlineByGoal = {
-    "정보 전달": [
-      `${keyword}, 처음 알아볼 때 가장 먼저 볼 기준`,
-      `비슷한 설명 사이에서 놓치기 쉬운 포인트`,
-      `${asActor(emphasisHeading)} 만족도에 영향을 주는 이유`,
-      `비교가 길어질수록 다시 봐야 할 실제 흐름`,
-      `결정 전 부담 없이 확인해볼 질문`
-    ],
-    "신뢰 형성": [
-      `${keyword} 맡기기 전 꼭 확인해야 할 신뢰 기준`,
-      `처음 상담에서 안심되는 곳의 공통점`,
-      `${brand}가 중요하게 보는 진행 방식`,
-      `후기보다 상담 흐름을 먼저 봐야 하는 이유`,
-      `문의 전 부담을 줄이는 마지막 체크`
-    ],
-    "상품 홍보": [
-      `${keyword}, 다 비슷해 보일 때 구분하는 법`,
-      `${brand}의 장점이 필요한 순간`,
-      `${asActor(emphasisHeading)} 만족도로 이어지는 이유`,
-      `${stripMainKeyword(titleAngle, keyword, "") || "장점과 실제 활용 포인트"}, 이렇게 비교해보세요`,
-      `궁금할 때 바로 문의하기 좋은 마무리`
-    ],
-    "방문 유도": [
-      `${keyword} 방문 전 꼭 확인해야 할 3가지`,
-      `가기 전에 정리하면 좋은 질문`,
-      `${brand}에서 먼저 확인할 수 있는 안내 방식`,
-      `방문 후 만족도는 여기서 갈립니다`,
-      `부담 없이 예약하거나 문의하기 전 체크`
-    ]
-  };
-
-  const influencerOutlineByGoal = {
-    "정보 전달": [
-      `${keyword}, 저장하고 싶게 만드는 첫 기준`,
-      `읽다가 멈추는 경험 포인트`,
-      `${asObject(emphasisHeading)} 쉽게 보여주는 방법`,
-      `댓글과 클릭을 부르는 비교 포인트`,
-      `다시 확인하고 싶게 마무리하는 방법`
-    ],
-    "신뢰 형성": [
-      `${keyword}, 광고처럼 보이지 않게 전하는 법`,
-      `경험담처럼 읽히는 설명의 흐름`,
-      `${brand}의 강점을 자연스럽게 보여주는 법`,
-      `독자가 직접 판단할 수 있는 근거`,
-      `저장과 클릭으로 이어지는 마지막 한 줄`
-    ],
-    "상품 홍보": [
-      `${keyword}, 스크롤을 멈추게 하는 첫 문장`,
-      `${brand}의 장점을 경험처럼 보여주는 순간`,
-      `${asObject(emphasisHeading)} 자연스럽게 보여주는 방법`,
-      `${stripMainKeyword(titleAngle, keyword, "") || "비교 포인트"}, 콘텐츠 안에서 풀어내기`,
-      `필요할 때 다시 찾게 만드는 마무리`
-    ],
-    "방문 유도": [
-      `${keyword}, 방문 전에 저장해둘 장면`,
-      `후기처럼 읽히는 방문 전 정보`,
-      `${brand}의 안내 방식을 자연스럽게 보여주는 법`,
-      `문의 전 부담을 낮추는 포인트`,
-      `직접 확인해보고 싶게 만드는 마무리`
-    ]
-  };
-
-  const sections =
-    audienceProfile.label === "인플루언서/수익형"
-      ? influencerOutlineByGoal[goal] ?? outlineByGoal[goal] ?? base
-      : outlineByGoal[goal] ?? base;
-  const topicAwareSections = topic
-    ? sections.map((section, index) =>
-        index === 0 && !section.includes(keyword) ? `${keyword}, 지금 가장 먼저 볼 부분` : section
-      )
-    : sections;
-
-  return topicAwareSections.map((section) => applyAvoidWords(section, avoidWords)).slice(0, 6);
+  return roles
+    .map((role) =>
+      createOutlineHeading({
+        role,
+        keyword,
+        secondaryCue,
+        brand,
+        audienceLabel: audienceProfile.label,
+        goal,
+        titleAngle
+      })
+    )
+    .map((section) => applyAvoidWords(section, avoidWords))
+    .slice(0, count);
 }
 
 const formatHeading = (heading) => {
@@ -692,7 +768,7 @@ const createReaderFacingPostBody = (
   writingChoices = {}
 ) => {
   const range = getTargetLengthRange(form);
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const goal = text(form.goal);
   const selectedOpeningSentence =
     text(writingChoices.selectedOpeningSentence) || text(form.selectedOpeningSentence);
@@ -731,6 +807,11 @@ const createReaderFacingPostBody = (
           `원하는 결과와 궁금한 점만 간단히 남겨도 필요한 안내를 받기 쉽습니다.`
         ];
 
+  const faqTargetIndex = sectionBlocks.findIndex((section) => text(section.heading).includes("자주 묻는 질문"));
+  sectionBlocks[faqTargetIndex >= 0 ? faqTargetIndex : Math.max(0, sectionBlocks.length - 2)]?.paragraphs.push(
+    createFaqAnswerParagraph(form)
+  );
+
   if (
     [...intro, ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs))].join("\n\n")
       .length < range.min
@@ -766,7 +847,8 @@ export function getTargetLengthRange(form = {}) {
 }
 
 export function createKeywordOptimizationPlan(form = {}) {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
+  const keywordContext = getKeywordContext(form);
   const category = text(form.category);
   const targetLength = resolveTargetLength(form);
   const targetOccurrences = resolveKeywordOccurrenceRange(targetLength);
@@ -779,7 +861,9 @@ export function createKeywordOptimizationPlan(form = {}) {
       min: targetOccurrences.min,
       max: targetOccurrences.max
     },
-    relatedExpressions: createKeywordVariants(keyword, category),
+    secondaryKeywords: keywordContext.secondaryKeywords,
+    brandKeywords: keywordContext.brandKeywords,
+    relatedExpressions: createKeywordVariants(keyword, category, keywordContext.secondaryKeywords),
     semanticExpressions: ["선택 기준", "활용 포인트", "실전 체크포인트", "고객 판단 기준"],
     placementHints: INTERNAL_KEYWORD_OPTIMIZATION.placementHints
   };
@@ -788,7 +872,10 @@ export function createKeywordOptimizationPlan(form = {}) {
 const getTopicVariationOffset = (form, total) => {
   if (!total) return 0;
 
-  const regenerationCount = Number.parseInt(form?.regenerationCount ?? 0, 10);
+  const regenerationCount = Number.parseInt(
+    form?.regenerationCount ?? form?.topicRegenerationCount ?? 0,
+    10
+  );
   const seed = text(form?.variationSeed);
   const seedOffset = Array.from(seed).reduce((sum, char) => sum + char.charCodeAt(0), 0);
 
@@ -806,62 +893,114 @@ const getPreviousTopicSet = (form = {}) =>
   );
 
 export function createTopicRecommendations(form = {}) {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const category = text(form.category);
   const goal = text(form.goal);
   const brand = getBrandLabel(form);
   const region = getRegionPhrase(form);
   const audienceProfile = getAudienceProfile(form);
+  const secondaryKeywords = getSecondaryKeywords(form);
+  const secondaryCue = secondaryKeywords[0] || `${keyword} 후기`;
+  const brandCue = getBrandKeywords(form)[0] || brand;
   const avoidWords = splitAvoidWords(form.avoid);
   const previousTopics = getPreviousTopicSet(form);
 
-  const topicsByGoal = {
+  const businessTopicsByGoal = {
     "정보 전달": [
-      `${asObject(keyword)} 처음 알아볼 때 놓치기 쉬운 기준`,
-      `${region}${asObject(keyword)} 비교하기 전에 확인하면 좋은 흐름`,
-      `${audienceProfile.readerLabel}이 ${asObject(keyword)} 고를 때 자주 묻는 질문`,
-      `${keyword} 상담 전에 알아두면 좋은 질문`,
-      `${keyword} 필요한 순간과 선택 기준`,
-      `처음 보는 고객을 위한 ${keyword} 체크리스트`,
-      `${keyword} 결정 전 확인하면 좋은 실제 포인트`,
-      `${category} 관점에서 보는 ${keyword} 비교 방법`,
-      `${keyword} 정보를 볼 때 헷갈리기 쉬운 표현 정리`
+      `${asObject(keyword)} 처음 찾는 고객이 먼저 확인하는 선택 기준`,
+      `${secondaryCue}까지 비교하기 전 헷갈리는 체크포인트`,
+      `${brandCue}를 보기 전 ${keyword} 정보를 읽는 순서`,
+      `${category} 고객이 ${asObject(keyword)} 고를 때 자주 묻는 질문`,
+      `${region}${asObject(keyword)} 살펴볼 때 놓치기 쉬운 기준`,
+      `후기보다 먼저 보면 좋은 ${keyword} 판단 흐름`,
+      `${keyword} 선택 전 초보자가 구분해야 할 표현`,
+      `${secondaryCue}와 ${asObject(keyword)} 함께 볼 때 필요한 기준`,
+      `${asSubject(keyword)} 필요한 순간과 실제 확인할 포인트`
     ],
     "신뢰 형성": [
-      `${asActor(brand)} ${asObject(keyword)} 꼼꼼하게 안내하는 방식`,
-      `${keyword} 선택 전 신뢰할 수 있는 곳을 알아보는 방법`,
-      `${region}${asObject(keyword)} 안심하고 문의하기 위한 체크 포인트`,
-      `${keyword} 상담 흐름으로 판단하는 신뢰 기준`,
-      `${brand}를 처음 알아볼 때 확인하면 좋은 안내 방식`,
-      `${keyword} 후기보다 먼저 살펴볼 응대 포인트`,
-      `${audienceProfile.readerLabel}이 불안을 줄이는 확인 질문`,
-      `${keyword} 문의 전 믿을 만한 설명을 구분하는 법`,
-      `${region}${keyword} 알아볼 때 편하게 비교하는 기준`
+      `${keyword} 선택 전 믿을 수 있는 안내를 구분하는 법`,
+      `${brandCue}를 처음 알아볼 때 확인하면 좋은 신뢰 요소`,
+      `${region}${asObject(keyword)} 문의 전 불안을 줄이는 질문`,
+      `${keyword} 후기보다 상담 흐름을 먼저 봐야 하는 이유`,
+      `${category} 고객이 안심하는 ${keyword} 설명 방식`,
+      `${keyword} 선택 기준에서 과장 표현을 걸러내는 방법`,
+      `${brandCue}의 안내가 실제 고객에게 편하게 느껴지는 지점`,
+      `${keyword} 상담 전 많이 묻는 질문과 답변 흐름`,
+      `${secondaryCue}를 볼 때 신뢰를 판단하는 세부 기준`
     ],
     "상품 홍보": [
-      `${asObject(keyword)} 찾는 분들이 ${asObject(brand)} 살펴보는 이유`,
-      `${brand}의 ${keyword} 강점을 자연스럽게 보여주는 이야기`,
-      `${audienceProfile.readerLabel}에게 필요한 ${keyword} 활용 장면`,
-      `${keyword} 장점을 비교할 때 먼저 볼 포인트`,
-      `${brand}의 차이를 부담 없이 이해하는 방법`,
+      `${asObject(keyword)} 찾는 고객이 ${brandCue}를 살펴보는 이유`,
+      `${brandCue}의 장점을 고객 고민과 연결해 보여주는 방법`,
+      `${secondaryCue}를 활용해 ${keyword} 선택 이유를 설명하는 글 방향`,
+      `${keyword} 구매 전 확인하면 좋은 제품 장점과 사용 상황`,
+      `${category} 고객에게 ${keyword}가 필요한 순간`,
+      `${keyword} 장점을 과장 없이 전달하는 비교 포인트`,
+      `${brandCue}를 처음 보는 고객이 궁금해할 이점 정리`,
       `${keyword} 선택 전 놓치면 아쉬운 활용 기준`,
-      `${category} 고객에게 ${keyword}가 필요한 상황`,
-      `${keyword} 처음 고민하는 분을 위한 장점 정리`,
-      `${brand}를 다시 떠올리게 만드는 ${keyword} 포인트`
+      `${secondaryCue}로 자연스럽게 이어지는 제품 소개 흐름`
     ],
     "방문 유도": [
-      `${region}${asObject(keyword)} 찾는 분들이 방문 전 확인하면 좋은 것들`,
-      `${brand} 방문 전에 알아두면 편한 ${keyword} 안내`,
-      `${category} 고객이 부담 없이 들를 수 있는 ${keyword} 이야기`,
-      `${keyword} 방문 상담 전에 준비하면 좋은 질문`,
-      `${region}${keyword} 처음 방문할 때 확인할 체크리스트`,
-      `${brand}에 문의하기 전 부담을 줄이는 방법`,
-      `${keyword} 방문이 필요한 순간과 선택 기준`,
-      `${category} 이용 전 알아두면 편한 상담 흐름`,
-      `${region}${keyword} 알아볼 때 이동 전 확인할 포인트`
+      `${region}${asObject(keyword)} 찾는 고객이 방문 전 확인하는 기준`,
+      `${brandCue} 방문 또는 문의 전에 자주 묻는 질문 정리`,
+      `${keyword} 상담 전 준비하면 좋은 체크포인트`,
+      `${category} 고객이 부담 없이 문의하도록 돕는 정보 흐름`,
+      `${region}${keyword} 처음 방문할 때 헷갈리는 부분`,
+      `${keyword}가 필요한 순간과 예약 전 확인 기준`,
+      `${brandCue}에 문의하기 전 불안을 줄이는 안내 방식`,
+      `${secondaryCue}를 본 뒤 실제 상담으로 이어지는 흐름`,
+      `${keyword} 방문 전 움직이기 쉬워지는 비교 기준`
     ]
   };
 
+  const influencerTopicsByGoal = {
+    "정보 전달": [
+      `${asObject(keyword)} 직접 챙기기 전 알아둔 선택 기준`,
+      `${secondaryCue}까지 비교하며 헷갈렸던 포인트`,
+      `${brandCue}를 고를 때 저장해두면 좋은 체크리스트`,
+      `${keyword} 루틴에 더하기 전 먼저 본 정보`,
+      `${keyword} 후기를 읽을 때 실제로 도움 된 기준`,
+      `${secondaryCue}를 자연스럽게 이해하는 초보자 관점`,
+      `${asObject(keyword)} 볼 때 나에게 맞는지 판단하는 방법`,
+      `비슷한 후기 사이에서 ${asObject(keyword)} 구분한 기준`,
+      `${brandCue}를 처음 볼 때 놓치기 쉬운 정보`
+    ],
+    "신뢰 형성": [
+      `${keyword} 후기에서 진짜 참고한 부분과 아쉬웠던 부분`,
+      `${brandCue}를 광고처럼 보이지 않게 비교해본 기준`,
+      `${secondaryCue}를 직접 확인하며 신뢰가 생긴 포인트`,
+      `${asObject(keyword)} 고르기 전 독자가 궁금해할 질문`,
+      `${keyword} 경험담처럼 자연스럽게 정리하는 흐름`,
+      `${brandCue}를 다시 찾아보게 만든 설명 포인트`,
+      `${keyword} 선택 전 내가 먼저 확인한 주의점`,
+      `${secondaryCue} 후기를 읽을 때 과장 없이 보는 법`,
+      `${keyword} 정보가 오래 남는 글 구성`
+    ],
+    "상품 홍보": [
+      `${brandCue}의 ${keyword} 장점을 경험처럼 풀어내는 방향`,
+      `${asObject(keyword)} 써보고 싶게 만드는 사용 상황`,
+      `${secondaryCue}와 함께 보여주면 좋은 비교 포인트`,
+      `${keyword} 선택 이유를 독자 공감으로 연결하는 글`,
+      `${brandCue}를 자연스럽게 떠올리게 하는 후기형 구성`,
+      `${keyword} 장점을 루틴과 사용감 중심으로 보여주는 방법`,
+      `${secondaryCue}를 통해 구매 전 확인할 부분 정리`,
+      `${asObject(keyword)} 저장하고 싶게 만드는 정보 흐름`,
+      `${brandCue}의 차이를 과장 없이 전달하는 포인트`
+    ],
+    "방문 유도": [
+      `${keyword} 방문 전 저장해둘 실제 체크 포인트`,
+      `${brandCue}를 직접 확인하고 싶게 만드는 후기 흐름`,
+      `${secondaryCue}를 보고 문의 전 궁금했던 부분`,
+      `${asObject(keyword)} 보러 가기 전 비교한 기준`,
+      `${region}${asObject(keyword)} 찾는 독자가 확인할 정보`,
+      `${keyword} 방문 고민을 줄여주는 경험형 정리`,
+      `${brandCue} 문의 전 부담을 낮추는 체크리스트`,
+      `${asObject(keyword)} 직접 확인해보고 싶게 만드는 포인트`,
+      `${secondaryCue}에서 방문 결정까지 이어지는 흐름`
+    ]
+  };
+
+  const topicsByGoal =
+    audienceProfile.label === "인플루언서/수익형" ? influencerTopicsByGoal : businessTopicsByGoal;
   const pool = topicsByGoal[goal] ?? topicsByGoal["정보 전달"];
   const offset = getTopicVariationOffset(form, pool.length);
   const rotated = [...pool.slice(offset), ...pool.slice(0, offset)];
@@ -875,12 +1014,15 @@ export function createTopicRecommendations(form = {}) {
 }
 
 export function createTitleCandidates(form, selectedTopic) {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const goal = text(form.goal);
   const brand = getBrandLabel(form);
   const region = text(form.region);
   const regionPhrase = getRegionPhrase(form);
   const audienceType = getAudienceType(form);
+  const secondaryKeywords = getSecondaryKeywords(form);
+  const secondaryCue = secondaryKeywords[0] || "선택 기준";
+  const brandCue = getBrandKeywords(form)[0] || brand;
   const avoidWords = splitAvoidWords(form.avoid);
   const infoTitle =
     goal === "신뢰 형성"
@@ -888,23 +1030,23 @@ export function createTitleCandidates(form, selectedTopic) {
       : `${keyword} 처음 알아볼 때 먼저 확인할 기준`;
   const localTitle = region
     ? `${regionPhrase}${keyword} 찾는다면 방문 전 확인할 것`
-    : `${keyword} 가까운 곳 찾을 때 놓치기 쉬운 기준`;
+    : `${keyword} 선택 전 ${secondaryCue}까지 확인할 부분`;
   const comparisonTitle =
     goal === "상품 홍보"
-      ? `${brand}의 ${keyword} 장점 비교할 때 볼 포인트`
-      : `${keyword} 여러 곳 비교할 때 달라지는 포인트`;
+      ? `${brandCue}의 ${keyword} 장점 비교할 때 볼 포인트`
+      : `${keyword} 고르기 전 비교해야 할 포인트`;
   const clickTitle =
     audienceType === "인플루언서/수익형"
       ? goal === "방문 유도"
         ? `${keyword} 방문 전 저장해둘 실제 체크 포인트`
         : goal === "상품 홍보"
-          ? `${keyword} 스크롤을 멈추게 하는 차이`
-          : `${keyword} 비교할 때 오래 남는 기준`
+          ? `${keyword}, 다 비슷해 보여도 사용감은 다릅니다`
+          : `${keyword}, 다 비슷해 보여도 확인할 부분은 다릅니다`
       : goal === "방문 유도"
         ? `${regionPhrase}${keyword} 방문 전 꼭 확인해야 할 3가지`
         : goal === "상품 홍보"
           ? `${keyword} 선택 전 놓치면 아쉬운 차이`
-          : `${keyword} 처음이라면 꼭 봐야 할 기준`;
+          : `${keyword}, 처음이라면 꼭 봐야 할 기준`;
 
   return Array.from(new Set([infoTitle, localTitle, comparisonTitle, clickTitle]))
     .map((title) => applyAvoidWords(title, avoidWords))
@@ -981,7 +1123,7 @@ const getImageQueryPreset = (category) =>
   IMAGE_QUERY_PRESETS[text(category)] ?? IMAGE_QUERY_PRESETS.기타;
 
 export function createImageSuggestions(form, selectedTopic, selectedTitle) {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const brand = getBrandLabel(form);
   const category = text(form.category);
   const strengths = getStrengths(form);
@@ -1113,9 +1255,11 @@ const getServiceTagPreset = (keyword, category) => {
 };
 
 const createHashtagGroups = (form) => {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
+  const secondaryKeywords = getSecondaryKeywords(form);
+  const brandKeywords = getBrandKeywords(form);
   const category = text(form.category);
-  const brand = text(form.brandName);
+  const brand = text(form.brandName) || brandKeywords[0] || "";
   const region = text(form.region);
   const goal = text(form.goal);
   const regionTokens = getRegionTokens(region);
@@ -1132,6 +1276,8 @@ const createHashtagGroups = (form) => {
   const longTailTags = [
     `${keyword}선택기준`,
     `${keyword}방문전확인`,
+    secondaryKeywords[0] || "",
+    secondaryKeywords[1] || "",
     brand ? `${brand}${keyword}` : `${keyword}상담`
   ];
 
@@ -1196,47 +1342,87 @@ const getFirstSentence = (body) =>
     .replace(/^✨\s*/u, "")
     .split(/(?<=[.!?요다])\s+/u)[0] || "";
 
-const createSeoCheck = (form, body, outlineSections, hashtags, selectedCtaSentence) => {
-  const keyword = text(form.keyword);
+const inferSearchIntentTitleType = (title, region) => {
+  const source = text(title);
+
+  if (region && source.includes(region)) return "지역형";
+  if (source.includes("비교")) return "비교형";
+  if (source.includes("처음") || source.includes("기준") || source.includes("확인")) return "정보형";
+  if (source.includes("다릅니다") || source.includes("놓치")) return "클릭형";
+
+  return "";
+};
+
+const createSeoCheck = (form, body, outlineSections, hashtags, selectedCtaSentence, selectedTitle = "") => {
+  const keyword = getMainKeyword(form);
+  const secondaryKeywords = getSecondaryKeywords(form);
   const region = text(form.region);
   const avoidWords = splitAvoidWords(form.avoid);
-  const firstSentence = getFirstSentence(body);
   const firstParagraph = getFirstParagraph(body);
-  const firstSentenceCount = countKeywordOccurrences(firstSentence, keyword);
+  const title = text(selectedTitle);
   const firstParagraphCount = countKeywordOccurrences(firstParagraph, keyword);
   const actualOccurrences = countKeywordOccurrences(body, keyword);
+  const targetOccurrences = resolveKeywordOccurrenceRange(resolveTargetLength(form));
   const regionTokens = getRegionTokens(region);
   const combinedForChecks = [body, ...hashtags].join(" ");
+  const compactCombined = compact(combinedForChecks);
+  const outlineCount = normalizeOutlineSections(outlineSections).length;
+  const expectedOutlineCount = getOutlineSectionCount(form);
+  const secondaryMatches = secondaryKeywords.filter((keywordItem) =>
+    compactCombined.includes(compact(keywordItem))
+  );
+  const hasFaqQuestion = /무엇을|어떤 사람|어떻게|확인해야 하나요|맞나요|좋나요|\?/u.test(body);
   const forbiddenFound = avoidWords.filter((word) => combinedForChecks.includes(word));
   const items = [
     {
-      id: "first-sentence-keyword",
-      label: "첫 문장 메인 키워드 포함",
-      passed: firstSentenceCount === 1,
-      detail: `첫 문장 ${firstSentenceCount}회`
+      id: "title-main-keyword",
+      label: "메인 키워드 제목 반영",
+      passed: Boolean(title && title.includes(keyword)),
+      detail: title || "선택 제목 없음"
     },
     {
       id: "first-paragraph-keyword",
-      label: "첫 문단 키워드 자연 반복",
-      passed: firstParagraphCount >= 2 && firstParagraphCount <= 3,
+      label: "메인 키워드 첫 문단 반영",
+      passed: firstParagraphCount >= 1,
       detail: `첫 문단 ${firstParagraphCount}회`
     },
     {
-      id: "total-keyword-count",
-      label: "전체 키워드 반복 수",
-      passed: actualOccurrences >= 5 && actualOccurrences <= 7,
-      detail: `전체 ${actualOccurrences}회 / 목표 5-7회`
+      id: "secondary-keywords",
+      label: "보조 키워드 자연 반영",
+      passed: secondaryKeywords.length === 0 || secondaryMatches.length > 0,
+      detail:
+        secondaryKeywords.length === 0
+          ? "보조 키워드 없음"
+          : `${secondaryMatches.length}/${secondaryKeywords.length}개 반영`
     },
     {
-      id: "heading-keyword",
-      label: "소제목 키워드 반영",
-      passed: outlineSections.some((heading) => text(heading).includes(keyword)),
-      detail: "소제목 중 메인 키워드 포함 여부"
+      id: "outline-count",
+      label: "목표 글자수에 맞는 소제목 수",
+      passed: outlineCount === expectedOutlineCount,
+      detail: `${outlineCount}개 / 목표 ${expectedOutlineCount}개`
+    },
+    {
+      id: "keyword-overuse",
+      label: "동일 키워드 과다 반복 없음",
+      passed: actualOccurrences >= 2 && actualOccurrences <= targetOccurrences.max + 2,
+      detail: `전체 ${actualOccurrences}회 / 권장 ${targetOccurrences.min}-${targetOccurrences.max}회`
+    },
+    {
+      id: "search-intent-title",
+      label: "검색 의도에 맞는 제목 유형",
+      passed: Boolean(inferSearchIntentTitleType(title, region)),
+      detail: inferSearchIntentTitleType(title, region) || "제목 유형 확인 필요"
+    },
+    {
+      id: "faq-question",
+      label: "FAQ/질문형 문장 포함",
+      passed: hasFaqQuestion,
+      detail: hasFaqQuestion ? "질문에 답하는 문장 포함" : "질문형 문장 없음"
     },
     {
       id: "region",
       label: "지역명 반영",
-      passed: !region || regionTokens.some((token) => compact(combinedForChecks).includes(token)),
+      passed: !region || regionTokens.some((token) => compactCombined.includes(token)),
       detail: region ? `${region} 반영 확인` : "지역 입력값 없음"
     },
     {
@@ -1261,7 +1447,7 @@ const createSeoCheck = (form, body, outlineSections, hashtags, selectedCtaSenten
 };
 
 const createGoalBlocks = (form, selectedTopic, selectedTitle) => {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const category = text(form.category);
   const goal = text(form.goal);
   const brand = getBrandLabel(form);
@@ -1389,6 +1575,8 @@ const createStrategyMemo = (
   },
   keywordMemo: {
     mainKeyword: keywordOptimization.mainKeyword,
+    secondaryKeywords: keywordOptimization.secondaryKeywords,
+    brandKeywords: keywordOptimization.brandKeywords,
     actualOccurrences: keywordOptimization.actualOccurrences,
     targetOccurrences: keywordOptimization.targetOccurrences,
     relatedExpressions: keywordOptimization.relatedExpressions,
@@ -1414,7 +1602,7 @@ export function createFinalContent(
   outlineSections = [],
   writingChoices = {}
 ) {
-  const keyword = text(form.keyword);
+  const keyword = getMainKeyword(form);
   const category = text(form.category);
   const goal = text(form.goal);
   const tone = text(form.tone);
@@ -1447,7 +1635,7 @@ export function createFinalContent(
     selectedOpeningSentence,
     selectedCtaSentence
   };
-  const seoCheck = createSeoCheck(form, postBody, finalOutline, hashtags, selectedCtaSentence);
+  const seoCheck = createSeoCheck(form, postBody, finalOutline, hashtags, selectedCtaSentence, selectedTitle);
   const strategyMemo = createStrategyMemo(
     form,
     selectedTopic,

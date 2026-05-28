@@ -11,6 +11,7 @@ export default function App() {
     <AppLayout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/app" element={<ContentMaker />} />
         <Route path="/maker" element={<ContentMaker />} />
         <Route path="/comment-replies" element={<CommentReplyManager />} />
         <Route path="/storage" element={<Storage />} />
