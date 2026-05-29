@@ -1880,25 +1880,41 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
   );
 }
 
-function ImageSuggestionList({ items, editing, onChange }) {
+function ImageSuggestionList({ items = [], editing, onChange }) {
+  const [copiedKeywordId, setCopiedKeywordId] = useState("");
+
+  const copyKeyword = async (id, keyword) => {
+    const normalizedKeyword = String(keyword || "").trim();
+    if (!normalizedKeyword) return;
+
+    await navigator.clipboard.writeText(normalizedKeyword);
+    setCopiedKeywordId(id);
+    window.setTimeout(() => setCopiedKeywordId((currentId) => (currentId === id ? "" : currentId)), 1600);
+  };
+
   return (
     <div>
       <div className="flex items-center gap-2">
         <Image size={17} className="text-moss" aria-hidden="true" />
         <h5 className="text-sm font-bold text-ink/70">이미지 삽입 추천 3개</h5>
       </div>
-      <div className="mt-2 grid gap-2">
+      <p className="mt-2 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm leading-6 text-ink/70">
+        아래 추천 키워드를 Pexels, Unsplash, Canva, 미리캔버스 등의 이미지 검색창에 넣어 관련 이미지를 찾아보세요.
+      </p>
+      <div className="mt-3 grid gap-2">
         {items.map((item) => {
           const imageUrl =
             item.previewUrl || item.imageSearch?.thumbnailUrl || item.imageSearch?.imageUrl || "";
           const searchKeyword = item.searchKeyword || item.query || item.imageSearch?.query || "";
           const pexelsQuery = item.query || item.imageSearch?.query || searchKeyword;
+          const displayKeyword = searchKeyword || pexelsQuery;
+          const isKeywordCopied = copiedKeywordId === item.id;
 
           return (
             <div key={item.id} className="rounded-md border border-line bg-paper p-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs font-bold text-moss">{item.label}</p>
-                <p className="text-xs font-semibold text-ink/50">{item.insertAfter}</p>
+                <p className="text-sm font-bold text-ink/75">{item.title}</p>
               </div>
 
               <div className="mt-3 overflow-hidden rounded-md border border-line bg-white">
@@ -1912,40 +1928,85 @@ function ImageSuggestionList({ items, editing, onChange }) {
                 ) : (
                   <div className="flex min-h-24 items-center gap-3 px-3 py-4 text-sm text-ink/55">
                     <Image size={18} className="shrink-0 text-moss" aria-hidden="true" />
-                    <span>이미지 검색어: {pexelsQuery}</span>
+                    <span>이미지 검색 키워드: {displayKeyword}</span>
                   </div>
                 )}
               </div>
 
               {editing ? (
                 <div className="mt-2 space-y-2">
-                  <input
-                    value={item.title}
-                    onChange={(event) => onChange(item.id, "title", event.target.value)}
-                    className="focus-ring min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-semibold"
-                  />
-                  <input
-                    value={searchKeyword}
-                    onChange={(event) => onChange(item.id, "searchKeyword", event.target.value)}
-                    className="focus-ring min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm"
-                    placeholder="이미지 검색 키워드"
-                  />
-                  <textarea
-                    value={item.description}
-                    onChange={(event) => onChange(item.id, "description", event.target.value)}
-                    rows={2}
-                    className="focus-ring w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
-                  />
+                  <label className="block">
+                    <span className="text-xs font-bold text-ink/55">카드 제목</span>
+                    <input
+                      value={item.title}
+                      onChange={(event) => onChange(item.id, "title", event.target.value)}
+                      className="focus-ring mt-1 min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm font-semibold"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-bold text-ink/55">이미지 추천 위치</span>
+                    <input
+                      value={item.insertAfter}
+                      onChange={(event) => onChange(item.id, "insertAfter", event.target.value)}
+                      className="focus-ring mt-1 min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-bold text-ink/55">이미지 컨셉</span>
+                    <textarea
+                      value={item.description}
+                      onChange={(event) => onChange(item.id, "description", event.target.value)}
+                      rows={2}
+                      className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-bold text-ink/55">이미지 검색 키워드</span>
+                    <input
+                      value={searchKeyword}
+                      onChange={(event) => onChange(item.id, "searchKeyword", event.target.value)}
+                      className="focus-ring mt-1 min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm"
+                      placeholder="이미지 검색 키워드"
+                    />
+                  </label>
                 </div>
               ) : (
-                <>
-                  <p className="mt-2 font-semibold">{item.title}</p>
-                  <p className="mt-1 text-sm leading-6 text-ink/65">{item.description}</p>
-                  <p className="mt-2 text-xs font-semibold text-ink/50">
-                    검색 키워드: {searchKeyword}
-                    {pexelsQuery && pexelsQuery !== searchKeyword ? ` / 보조 검색어: ${pexelsQuery}` : ""}
-                  </p>
-                </>
+                <dl className="mt-3 grid gap-3 text-sm">
+                  <div>
+                    <dt className="text-xs font-bold text-ink/50">이미지 추천 위치</dt>
+                    <dd className="mt-1 font-semibold text-ink/75">{item.insertAfter}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-bold text-ink/50">이미지 컨셉</dt>
+                    <dd className="mt-1 leading-6 text-ink/70">{item.description}</dd>
+                  </div>
+                  <div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <dt className="text-xs font-bold text-ink/50">이미지 검색 키워드</dt>
+                      <button
+                        type="button"
+                        onClick={() => copyKeyword(item.id, displayKeyword)}
+                        disabled={!displayKeyword}
+                        className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-3 text-xs font-bold text-ink/60 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:opacity-45 sm:w-28"
+                      >
+                        {isKeywordCopied ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+                        {isKeywordCopied ? "복사됨" : "키워드 복사"}
+                      </button>
+                    </div>
+                    <dd className="mt-1 break-words rounded-md border border-line bg-white px-3 py-2 font-semibold text-ink/75">
+                      {displayKeyword}
+                      {pexelsQuery && pexelsQuery !== searchKeyword ? (
+                        <span className="block pt-1 text-xs font-semibold text-ink/45">보조 검색어: {pexelsQuery}</span>
+                      ) : null}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-bold text-ink/50">활용 안내</dt>
+                    <dd className="mt-1 leading-6 text-ink/65">
+                      이 키워드를 Pexels나 Canva 이미지 검색창에 넣어 참고 이미지를 찾아보세요.
+                    </dd>
+                  </div>
+                </dl>
               )}
             </div>
           );
