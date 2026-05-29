@@ -80,8 +80,6 @@ const splitKeywordInput = (value) =>
     .slice(0, 3);
 
 const BRAND_KEYWORD_HINTS = [
-  "초이스",
-  "choice",
   "코스",
   "랩",
   "몰",

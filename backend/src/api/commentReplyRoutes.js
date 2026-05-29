@@ -14,8 +14,6 @@ import {
 
 export const commentReplyRouter = Router();
 
-const hasRequiredPostFields = (body = {}) => Boolean(body.postTitle);
-
 commentReplyRouter.post("/parse", (req, res) => {
   return res.json({
     comments: parseManualComments(req.body?.raw || "")
@@ -41,9 +39,9 @@ commentReplyRouter.post("/generate-one", (req, res) => {
   const { form = {}, comment = {}, previousReplies = [] } = req.body ?? {};
   const options = req.body?.options || {};
 
-  if (!hasRequiredPostFields(form) || !comment.content) {
+  if (!comment.content) {
     return res.status(400).json({
-      message: "form.postTitle and comment.content are required."
+      message: "comment.content is required."
     });
   }
 
@@ -59,9 +57,9 @@ commentReplyRouter.post("/generate", (req, res) => {
   const { form = {}, comments = [] } = req.body ?? {};
   const options = req.body?.options || {};
 
-  if (!hasRequiredPostFields(form) || !Array.isArray(comments)) {
+  if (!Array.isArray(comments)) {
     return res.status(400).json({
-      message: "form.postTitle and comments[] are required."
+      message: "comments[] are required."
     });
   }
 

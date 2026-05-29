@@ -97,10 +97,24 @@ const bridgeStatusClassName = {
 };
 
 const supportedCaptureImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
+const supportedCaptureImageExtensions = new Set(["png", "jpg", "jpeg", "webp"]);
+const MAX_CAPTURE_IMAGE_SIZE = 12 * 1024 * 1024;
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const isSupportedCaptureImage = (file) => supportedCaptureImageTypes.has(String(file?.type || "").toLowerCase());
+const getSupportedCaptureImageType = (file) => {
+  const type = String(file?.type || "").toLowerCase();
+  if (supportedCaptureImageTypes.has(type)) return type;
+
+  const extension = String(file?.name || "").split(".").pop()?.toLowerCase();
+  if (supportedCaptureImageExtensions.has(extension)) {
+    return extension === "jpg" ? "image/jpeg" : `image/${extension}`;
+  }
+
+  return "";
+};
+
+const isSupportedCaptureImage = (file) => Boolean(getSupportedCaptureImageType(file));
 
 const getCaptureImageFromTransfer = (dataTransfer) => {
   if (!dataTransfer) return { file: null, unsupported: false };
@@ -389,7 +403,7 @@ export default function CommentReplyManager() {
       : automationBusy
         ? "이미지 처리 또는 댓글 추출이 끝나면 생성할 수 있습니다."
         : captureReviewValidCount === 0
-          ? "추출된 댓글이 없습니다. 먼저 댓글 추출을 눌러주세요."
+          ? "추출된 댓글이 없습니다. 이미지에서 댓글 추출을 누르거나 빈 댓글을 직접 추가해주세요."
           : replyContextReady
             ? "추출된 댓글 전체에 맞춤 대댓글을 한 번에 생성합니다."
             : "포스팅 제목이나 메인 키워드를 넣으면 더 자연스럽지만, 지금도 생성할 수 있습니다.";
@@ -399,7 +413,7 @@ export default function CommentReplyManager() {
       : automationBusy
         ? "이미지 처리 또는 댓글 추출이 끝나면 생성할 수 있습니다."
         : captureReplyTargetCount === 0
-          ? "댓글 카드가 없습니다. 댓글 추출 후 카드로 반영하거나 위 생성 버튼을 눌러주세요."
+          ? "댓글 카드가 없습니다. 이미지에서 댓글 추출 후 카드로 반영하거나 직접 댓글을 추가해주세요."
           : replyContextReady
             ? "댓글 카드 전체에 맞춤 대댓글을 한 번에 생성합니다."
             : "포스팅 제목이나 메인 키워드를 넣으면 더 자연스럽지만, 지금도 생성할 수 있습니다.";
@@ -516,26 +530,29 @@ export default function CommentReplyManager() {
       }))
     ]);
     setManualInput("");
-    setStatus(ready ? "ready" : "idle");
+    setStatus("ready");
     setMessage(`${parsed.length}개 댓글을 목록에 추가했습니다.`);
   };
 
   const parseCaptureTextToReview = (rawText = captureOcrText, confidence = captureOcrMeta.confidence || 0) => {
     const parsed = parseCapturedComments(rawText);
-    const nextReviewComments = parsed.map((comment, index) =>
-      normalizeCaptureReviewComment(comment, index, confidence)
-    );
+    const nextReviewComments =
+      parsed.length > 0
+        ? parsed.map((comment, index) => normalizeCaptureReviewComment(comment, index, confidence))
+        : [createEmptyCaptureReviewComment()];
 
     setMode("capture");
     setCaptureReviewComments(nextReviewComments);
     setAutomationReport(
-      buildReportFromComments(nextReviewComments, { exitReason: parsed.length ? "capture_parsed" : "capture_needs_review" })
+      buildReportFromComments(parsed.length ? nextReviewComments : [], {
+        exitReason: parsed.length ? "capture_parsed" : "capture_needs_review"
+      })
     );
     setStatus(form.postTitle.trim() ? "ready" : "idle");
     setMessage(
       parsed.length
         ? `${parsed.length}개 댓글을 자동 분리했습니다. 아래 추출 결과를 확인한 뒤 댓글 카드로 반영해주세요.`
-        : "댓글을 찾지 못했습니다. 아래 텍스트를 직접 수정해주세요."
+        : "댓글을 자동 분리하지 못했습니다. 추출 결과 카드에 직접 입력하거나 OCR 원문을 수정한 뒤 다시 분리해주세요."
     );
 
     return nextReviewComments;
@@ -596,7 +613,10 @@ export default function CommentReplyManager() {
       setMessage("");
       await wait(250);
 
-      const generatedCaptureReplies = generateContextualCaptureReplies(targetComments, formPayload, { seed });
+      const generatedCaptureReplies = generateContextualCaptureReplies(targetComments, formPayload, {
+        seed,
+        regenerate: confirmRegenerate
+      });
       const generatedMap = new Map(generatedCaptureReplies.map((comment) => [comment.id, comment]));
       const generatedComments = replaceComments
         ? generatedCaptureReplies.map((comment) => ({ ...comment, reviewed: false }))
@@ -645,10 +665,18 @@ export default function CommentReplyManager() {
   };
 
   const processCaptureImage = async (file, source = "upload") => {
-    if (!file) return;
+    if (!file) {
+      setMessage("선택된 이미지 파일이 없습니다. PNG, JPG, WEBP 캡처 이미지를 선택해주세요.");
+      return;
+    }
 
     if (!isSupportedCaptureImage(file)) {
       setMessage("PNG, JPG, WEBP 형식의 이미지 캡처만 사용할 수 있습니다.");
+      return;
+    }
+
+    if (file.size > MAX_CAPTURE_IMAGE_SIZE) {
+      setMessage("이미지 용량이 너무 큽니다. 12MB 이하의 PNG, JPG, WEBP 파일을 사용해주세요.");
       return;
     }
 
@@ -657,15 +685,16 @@ export default function CommentReplyManager() {
 
     setMode("capture");
     setAutomationBusy(true);
-    setMessage("");
+    setMessage(`${sourceLabel} 이미지를 미리보기로 올렸습니다. 댓글을 추출하는 중입니다.`);
 
     const previewUrl = URL.createObjectURL(file);
+    const imageType = getSupportedCaptureImageType(file);
     setCaptureImage((current) => {
       if (current?.previewUrl) URL.revokeObjectURL(current.previewUrl);
       return {
         name: file.name,
         size: file.size,
-        type: file.type,
+        type: imageType,
         previewUrl
       };
     });
@@ -687,11 +716,12 @@ export default function CommentReplyManager() {
       );
 
       const nextReviewComments = parseCaptureTextToReview(extraction.text || "", extraction.confidence || 0);
+      const validCount = nextReviewComments.filter((comment) => comment.content.trim()).length;
       setStatus(form.postTitle.trim() ? "ready" : "idle");
       setMessage(
-        nextReviewComments.length
-          ? `${sourceLabel} 이미지에서 ${nextReviewComments.length}개 댓글을 분리했습니다. 추출 결과를 확인하고 댓글 카드로 반영해주세요.`
-          : `${sourceLabel} 이미지는 반영됐지만 댓글을 찾지 못했습니다. 오른쪽 텍스트 영역에 댓글을 붙여넣거나 직접 수정해주세요.`
+        validCount
+          ? `${sourceLabel} 이미지에서 ${validCount}개 댓글을 분리했습니다. 추출 결과를 확인하고 댓글 카드로 반영해주세요.`
+          : `${sourceLabel} 이미지는 반영됐지만 댓글을 찾지 못했습니다. 추출 결과 영역에 댓글을 붙여넣거나 직접 수정해주세요.`
       );
     } catch (error) {
       appendAutomationLogs(`캡처 이미지 처리 실패: ${error.message}`, "fail");
@@ -886,12 +916,17 @@ export default function CommentReplyManager() {
       return;
     }
 
-    if (!ready || validComments.length === 0) return;
+    if (validComments.length === 0) {
+      setMessage("전체 상호대댓글을 생성할 댓글 카드가 없습니다.");
+      return;
+    }
+    if (urlMode && !ready) return;
     if (confirmRegenerate && validComments.some((comment) => comment.reply)) {
       const ok = window.confirm("이미 생성된 대댓글이 있습니다. 전체 대댓글을 다시 생성할까요?");
       if (!ok) return;
     }
 
+    const missingContext = !replyContextReady;
     const formPayload = withResolvedKeyword(form);
     setStatus("generating");
     setMessage("");
@@ -902,10 +937,10 @@ export default function CommentReplyManager() {
       {
         form: formPayload,
         comments: validComments,
-        options: { seed }
+        options: { seed, regenerate: confirmRegenerate }
       },
       () => ({
-        comments: createCommentReplyBatch(formPayload, validComments, { seed })
+        comments: createCommentReplyBatch(formPayload, validComments, { seed, regenerate: confirmRegenerate })
       })
     );
     const generatedMap = new Map((data.comments || []).map((comment) => [comment.id, comment]));
@@ -919,22 +954,28 @@ export default function CommentReplyManager() {
     setAutomationReport(data.report || buildReportFromComments(data.comments || []));
     appendAutomationLogs(data.logs || `${data.comments?.length || 0}개 댓글의 대댓글 초안을 생성했습니다.`, "success");
     setStatus("generated");
-    setMessage(`${data.comments?.length || 0}개 댓글의 대댓글 초안을 만들었습니다.`);
+    setMessage(
+      `${data.comments?.length || 0}개 댓글의 대댓글 초안을 만들었습니다.${
+        missingContext ? " 포스팅 제목이나 메인 키워드를 넣으면 더 자연스럽지만, 지금도 생성할 수 있습니다." : ""
+      }`
+    );
   };
 
   const generateOne = async (id, { regenerate = false } = {}) => {
     const target = comments.find((comment) => comment.id === id);
     const captureTarget = mode === "capture" || target?.source === "capture";
+    const nextRegenerationCount = Number(target?.regenerationCount || 0) + (regenerate ? 1 : 0);
 
     if (!target?.content.trim()) return;
-    if (!captureTarget && !ready) return;
+    if (!captureTarget && urlMode && !ready) return;
 
     const formPayload = withResolvedKeyword(form);
     const previousReplies = comments
       .filter((comment) => comment.id !== id && comment.reply)
       .map((comment) => comment.reply);
+    if (regenerate && target.reply) previousReplies.unshift(target.reply);
     const sequence = Math.max(0, comments.findIndex((comment) => comment.id === id));
-    const seed = regenerate ? Date.now() % 11 : sequence;
+    const seed = regenerate ? Date.now() + nextRegenerationCount + sequence : sequence;
 
     setStatus("generating");
     setMessage("");
@@ -943,12 +984,14 @@ export default function CommentReplyManager() {
     if (captureTarget) {
       const generatedCaptureReply = generateContextualCaptureReply(target, formPayload, previousReplies, {
         sequence,
-        seed: regenerate ? Date.now() % 11 : 0
+        seed: regenerate ? seed : sequence,
+        regenerate,
+        regenerationCount: nextRegenerationCount
       });
 
       setComments((current) =>
         current.map((comment) =>
-          comment.id === id ? { ...comment, ...generatedCaptureReply, reviewed: false } : comment
+          comment.id === id ? { ...comment, ...generatedCaptureReply, reviewed: false, regenerationCount: nextRegenerationCount } : comment
         )
       );
       setStatus("generated");
@@ -962,16 +1005,21 @@ export default function CommentReplyManager() {
         form: formPayload,
         comment: target,
         previousReplies,
-        options: { sequence, seed }
+        options: { sequence, seed, regenerate, regenerationCount: nextRegenerationCount }
       },
       () => ({
-        comment: createCommentReplyForOne(formPayload, target, previousReplies, { sequence, seed })
+        comment: createCommentReplyForOne(formPayload, target, previousReplies, {
+          sequence,
+          seed,
+          regenerate,
+          regenerationCount: nextRegenerationCount
+        })
       })
     );
 
     setComments((current) =>
       current.map((comment) =>
-        comment.id === id ? { ...comment, ...data.comment, reviewed: false } : comment
+        comment.id === id ? { ...comment, ...data.comment, reviewed: false, regenerationCount: nextRegenerationCount } : comment
       )
     );
     setStatus("generated");
@@ -1269,7 +1317,7 @@ export default function CommentReplyManager() {
       )}
 
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)]">
-        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+        <section className="order-2 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft xl:order-1">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">기본 입력</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
@@ -1389,7 +1437,7 @@ export default function CommentReplyManager() {
                       value={form.brandName}
                       onChange={(event) => updateForm("brandName", event.target.value)}
                       className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
-                      placeholder="예: 엠고컴퍼니"
+                      placeholder="예: 우리 매장명"
                     />
                   </label>
 
@@ -1525,9 +1573,9 @@ export default function CommentReplyManager() {
           </div>
         </section>
 
-        <section className="min-w-0 space-y-5">
+        <section className="order-1 flex min-w-0 flex-col gap-5 xl:order-2">
           {mode === "capture" && (
-          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+          <div className="order-2 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2">
@@ -1562,7 +1610,7 @@ export default function CommentReplyManager() {
                   className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
                 >
                   <ListChecks size={16} aria-hidden="true" />
-                  댓글 추출
+                  OCR 텍스트 댓글 분리
                 </button>
               </div>
             </div>
@@ -1666,7 +1714,7 @@ export default function CommentReplyManager() {
                     className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
                   >
                     <ListChecks size={16} aria-hidden="true" />
-                    댓글 추출
+                    이미지에서 댓글 추출
                   </button>
                   <button
                     type="button"
@@ -1674,12 +1722,12 @@ export default function CommentReplyManager() {
                     className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss"
                   >
                     <Plus size={16} aria-hidden="true" />
-                    댓글 추가
+                    빈 댓글 직접 추가
                   </button>
                   <button
                     type="button"
                     onClick={() => applyCaptureReviewToComments()}
-                    disabled={captureReviewComments.length === 0}
+                    disabled={captureReviewValidCount === 0}
                     className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
                   >
                     <Check size={16} aria-hidden="true" />
@@ -1755,7 +1803,7 @@ export default function CommentReplyManager() {
                     ))
                   ) : (
                     <div className="rounded-md border border-dashed border-line bg-paper p-4 text-sm font-semibold leading-6 text-ink/55">
-                      댓글을 찾지 못했습니다. 아래 OCR 원문 영역에 댓글을 붙여넣거나 `댓글 추가`로 직접 입력해주세요.
+                      댓글을 찾지 못했습니다. 아래 OCR 원문 영역에 댓글을 붙여넣거나 `빈 댓글 직접 추가`로 직접 입력해주세요.
                     </div>
                   )}
                 </div>
@@ -1790,7 +1838,7 @@ export default function CommentReplyManager() {
                 onClick={() =>
                   handleGenerateAllContextualReplies({
                     confirmRegenerate: true,
-                    seed: comments.some((comment) => comment.reply) ? Date.now() % 17 : 0
+                    seed: comments.some((comment) => comment.reply) ? Date.now() : 0
                   })
                 }
                 disabled={captureReplyTargetCount === 0 || status === "generating" || automationBusy}
@@ -1823,7 +1871,7 @@ export default function CommentReplyManager() {
           </div>
           )}
 
-          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+          <div className="order-1 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div>
                 <div className="flex items-center gap-2">
@@ -1868,6 +1916,7 @@ export default function CommentReplyManager() {
                   <button
                     key={item.id}
                     type="button"
+                    aria-pressed={mode === item.id && !disabled}
                     onClick={() => {
                       if (disabled) {
                         setMessage(STATIC_BETA_NOTICE);
@@ -1887,6 +1936,7 @@ export default function CommentReplyManager() {
                     title={disabled ? "정적 베타에서는 로컬 브리지 기능이 비활성화됩니다." : item.label}
                   >
                     {item.label}
+                    {mode === item.id && !disabled && <span className="ml-2 text-[11px]">선택됨</span>}
                     {disabled && <span className="ml-2 text-[11px]">로컬 전용</span>}
                   </button>
                 );
@@ -1986,20 +2036,12 @@ export default function CommentReplyManager() {
           </div>
 
           {mode === "manual" && (
-          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+          <div className="order-2 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
                 <MessageSquare size={19} className="text-moss" aria-hidden="true" />
               <h3 className="text-lg font-bold">댓글 직접 입력</h3>
               </div>
-              <button
-                type="button"
-                onClick={() => addComment()}
-                className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss"
-              >
-                <Plus size={16} aria-hidden="true" />
-                댓글 추가
-              </button>
             </div>
 
             <textarea
@@ -2024,7 +2066,7 @@ export default function CommentReplyManager() {
               <button
                 type="button"
                 onClick={() => generateAll()}
-                disabled={!ready || validComments.length === 0 || status === "generating"}
+                disabled={validComments.length === 0 || status === "generating"}
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
               >
                 <Sparkles size={16} aria-hidden="true" />
@@ -2032,18 +2074,45 @@ export default function CommentReplyManager() {
               </button>
               <button
                 type="button"
-                onClick={() => generateAll({ seed: Date.now() % 17 })}
-                disabled={!ready || validComments.length === 0 || status === "generating"}
-                className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30"
+                onClick={() => copyText(toReplySetText(comments), "전체 댓글과 대댓글을 복사했습니다.")}
+                disabled={!comments.some((comment) => comment.reply || comment.status === "스킵 권장")}
+                className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
               >
-                <RotateCcw size={16} aria-hidden="true" />
-                전체 다시 생성
+                <Clipboard size={16} aria-hidden="true" />
+                전체 복사
               </button>
             </div>
+            {validComments.length > 0 && !replyContextReady && (
+              <p className="mt-2 text-xs font-semibold leading-5 text-ink/50">
+                포스팅 제목이나 메인 키워드를 넣으면 더 자연스럽지만, 댓글 내용만으로도 생성할 수 있습니다.
+              </p>
+            )}
+            <details className="mt-3 rounded-md border border-line bg-paper p-3">
+              <summary className="cursor-pointer text-sm font-bold text-ink/65">보조 작업</summary>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => addComment()}
+                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold transition hover:border-moss hover:text-moss"
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  빈 댓글 직접 추가
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generateAll({ seed: Date.now(), confirmRegenerate: true })}
+                  disabled={validComments.length === 0 || status === "generating"}
+                  className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30"
+                >
+                  <RotateCcw size={16} aria-hidden="true" />
+                  전체 다시 생성
+                </button>
+              </div>
+            </details>
           </div>
           )}
 
-          <div className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+          <div className="order-3 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <h3 className="text-lg font-bold">댓글 목록</h3>
@@ -2051,6 +2120,7 @@ export default function CommentReplyManager() {
                   메인 키워드: {form.mainKeyword.trim() || resolvedMainKeyword || "자동 추출 대기"}
                 </p>
               </div>
+              {mode !== "manual" && (
               <div className="grid grid-cols-2 gap-2 sm:flex">
                 <button
                   type="button"
@@ -2071,6 +2141,7 @@ export default function CommentReplyManager() {
                   세트 복사
                 </button>
               </div>
+              )}
             </div>
 
             <div className="mt-5 grid min-w-0 gap-4">
@@ -2092,16 +2163,18 @@ export default function CommentReplyManager() {
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-xs font-bold text-ink/45">{displayName}</span>
-                          <label className="inline-flex min-h-9 items-center gap-2 rounded-md border border-line bg-white px-2 text-xs font-bold text-ink/60">
-                            <input
-                              type="checkbox"
-                              checked={Boolean(comment.selected)}
-                              onChange={(event) => toggleCommentSelected(comment.id, event.target.checked)}
-                              disabled={comment.status === "스킵 권장" || comment.hasOwnerReply || comment.isOwnerComment}
-                              className="h-4 w-4 accent-[#52796f]"
-                            />
-                            선택
-                          </label>
+                          {urlMode && (
+                            <label className="inline-flex min-h-9 items-center gap-2 rounded-md border border-line bg-white px-2 text-xs font-bold text-ink/60">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(comment.selected)}
+                                onChange={(event) => toggleCommentSelected(comment.id, event.target.checked)}
+                                disabled={comment.status === "스킵 권장" || comment.hasOwnerReply || comment.isOwnerComment}
+                                className="h-4 w-4 accent-[#52796f]"
+                              />
+                              선택
+                            </label>
+                          )}
                           <details className="rounded-md border border-line bg-white px-2 py-1 text-xs font-bold text-ink/55">
                             <summary className="cursor-pointer">
                               {hasAuthor ? `작성자: ${comment.author}` : "작성자 추가"}
@@ -2142,18 +2215,18 @@ export default function CommentReplyManager() {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 sm:justify-end">
                         <ActionButton
                           icon={Sparkles}
                           label="생성"
                           onClick={() => generateOne(comment.id)}
-                          disabled={!comment.content.trim() || status === "generating" || (comment.source !== "capture" && !ready)}
+                          disabled={!comment.content.trim() || status === "generating" || (urlMode && comment.source !== "capture" && !ready)}
                         />
                         <ActionButton
                           icon={RefreshCw}
                           label="다시 생성"
                           onClick={() => generateOne(comment.id, { regenerate: true })}
-                          disabled={!comment.content.trim() || status === "generating" || (comment.source !== "capture" && !ready)}
+                          disabled={!comment.content.trim() || status === "generating" || (urlMode && comment.source !== "capture" && !ready)}
                         />
                         <ActionButton
                           icon={Copy}
@@ -2161,14 +2234,19 @@ export default function CommentReplyManager() {
                           onClick={() => copyText(comment.reply, "대댓글을 복사했습니다.")}
                           disabled={!comment.reply}
                         />
-                        <ActionButton icon={SkipForward} label="스킵" onClick={() => markSkip(comment.id)} />
-                        <ActionButton
-                          icon={Check}
-                          label="검토 완료"
-                          onClick={() => markReviewed(comment.id)}
-                          disabled={!comment.reply && comment.status !== "스킵 권장"}
-                        />
                         <ActionButton icon={Trash2} label="삭제" onClick={() => removeComment(comment.id)} />
+                        <details className="relative rounded-md border border-line bg-white px-2 py-1 text-xs font-bold text-ink/55">
+                          <summary className="cursor-pointer leading-7">더보기</summary>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <ActionButton icon={SkipForward} label="스킵" onClick={() => markSkip(comment.id)} />
+                            <ActionButton
+                              icon={Check}
+                              label="검토 완료"
+                              onClick={() => markReviewed(comment.id)}
+                              disabled={!comment.reply && comment.status !== "스킵 권장"}
+                            />
+                          </div>
+                        </details>
                       </div>
                     </div>
 

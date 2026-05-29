@@ -11,7 +11,7 @@ import {
   Sparkles,
   Trash2
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { makerOptions } from "@shared/mvpConfig.js";
 import StatusBadge from "../components/StatusBadge.jsx";
@@ -85,7 +85,7 @@ const FIELD_TOOLTIPS = {
     title: "키워드",
     description:
       "검색되고 싶은 핵심 키워드를 입력하세요. 1개만 입력해도 되고, 쉼표로 2~3개까지 입력할 수 있습니다. 첫 번째 키워드는 메인 키워드로, 나머지는 보조 키워드로 활용됩니다.",
-    example: "피부톤업 글루타치온 / 피부톤업, 글루타치온, 줄리스초이스 / 강남 피부관리샵, 리프팅 관리, 피부탄력"
+    example: "강남 피부관리샵, 리프팅 관리, 피부탄력 / 무릎보호대, 러닝용품, 착용감 / 육아서적 추천, 초등 독서, 부모 가이드"
   },
   category: {
     title: "업종/주제",
@@ -115,7 +115,7 @@ const FIELD_TOOLTIPS = {
   brandName: {
     title: "브랜드명/매장명",
     description: "매장명이나 브랜드명을 입력하세요. 모르면 비워도 됩니다.",
-    example: "엠고컴퍼니, 예진에스테틱"
+    example: "우리 매장명, 자체 브랜드명"
   },
   region: {
     title: "지역",
@@ -278,11 +278,13 @@ function resultToClipboard(form, result) {
 
 export default function ContentMaker() {
   const location = useLocation();
+  const finalResultRef = useRef(null);
   const [form, setForm] = useState(initialForm);
   const [result, setResult] = useState(emptyResult);
   const [status, setStatus] = useState("idle");
   const [editing, setEditing] = useState(false);
   const [draftId, setDraftId] = useState(null);
+  const [draftMessage, setDraftMessage] = useState("");
   const [defaultMessage, setDefaultMessage] = useState("");
   const [hasSavedDefaults, setHasSavedDefaults] = useState(() => Boolean(loadCompanyDefaults()));
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -343,6 +345,7 @@ export default function ContentMaker() {
       return nextForm;
     });
     setDraftId(null);
+    setDraftMessage("");
     setEditing(false);
 
     if (
@@ -568,6 +571,9 @@ export default function ContentMaker() {
         outlineSections: current.outlineSections
     }));
     setStatus("generated");
+    window.requestAnimationFrame(() => {
+      finalResultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   };
 
   const regenerate = () => {
@@ -580,6 +586,7 @@ export default function ContentMaker() {
     const savedDraft = saveDraft(form, result, draftId);
     setDraftId(savedDraft.id);
     setStatus("saved");
+    setDraftMessage("내 보관함에 저장되었습니다.");
     setEditing(false);
   };
 
@@ -767,7 +774,7 @@ export default function ContentMaker() {
       </header>
 
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(320px,0.38fr)_minmax(0,0.62fr)]">
-        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+        <section className="order-2 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft xl:order-1">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">입력값</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
@@ -829,7 +836,7 @@ export default function ContentMaker() {
                   value={form.keyword}
                   onChange={(event) => updateForm("keyword", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 피부톤업, 글루타치온, 줄리스초이스"
+                  placeholder="예: 강남 피부관리샵, 리프팅 관리, 피부탄력"
                 />
                 <p className="mt-2 text-xs leading-5 text-ink/55">
                   검색되고 싶은 핵심 키워드를 1개 입력하거나, 쉼표로 2~3개까지 입력할 수 있습니다.
@@ -853,7 +860,126 @@ export default function ContentMaker() {
                 </select>
               </label>
 
-              <fieldset>
+              <div className="xl:hidden">
+                <details className="rounded-md border border-line bg-paper p-3">
+                  <summary className="cursor-pointer text-sm font-bold text-ink/70">
+                    글 조건 더 보기
+                  </summary>
+                  <div className="mt-4 space-y-4">
+                    <fieldset>
+                      <legend>
+                        <FieldLabel tooltip={FIELD_TOOLTIPS.audienceType}>사용자 유형</FieldLabel>
+                      </legend>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {makerOptions.audienceTypes.map((audienceType) => (
+                          <label
+                            key={`mobile-${audienceType}`}
+                            className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
+                              form.audienceType === audienceType
+                                ? "border-coral bg-coral text-white"
+                                : "border-line bg-white hover:border-coral"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="audienceTypeMobile"
+                              value={audienceType}
+                              checked={form.audienceType === audienceType}
+                              onChange={(event) => updateForm("audienceType", event.target.value)}
+                              className="sr-only"
+                            />
+                            {audienceType}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <fieldset>
+                      <legend>
+                        <FieldLabel required tooltip={FIELD_TOOLTIPS.goal}>글 목적</FieldLabel>
+                      </legend>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {makerOptions.goals.map((goal) => (
+                          <label
+                            key={`mobile-${goal}`}
+                            className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
+                              form.goal === goal
+                                ? "border-moss bg-moss text-white"
+                                : "border-line bg-white hover:border-moss"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="goalMobile"
+                              value={goal}
+                              checked={form.goal === goal}
+                              onChange={(event) => updateForm("goal", event.target.value)}
+                              className="sr-only"
+                            />
+                            {goal}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+
+                    <fieldset>
+                      <legend>
+                        <FieldLabel tooltip={FIELD_TOOLTIPS.targetLength}>목표 글자수</FieldLabel>
+                      </legend>
+                      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {makerOptions.targetLengths.map((option) => (
+                          <label
+                            key={`mobile-${option.value}`}
+                            className={`flex min-h-10 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-semibold transition ${
+                              form.targetLengthOption === option.value
+                                ? "border-amber bg-amber text-white"
+                                : "border-line bg-white hover:border-amber"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="targetLengthMobile"
+                              value={option.value}
+                              checked={form.targetLengthOption === option.value}
+                              onChange={(event) => updateForm("targetLengthOption", event.target.value)}
+                              className="sr-only"
+                            />
+                            {option.label}
+                          </label>
+                        ))}
+                      </div>
+                      {form.targetLengthOption === "custom" && (
+                        <input
+                          type="number"
+                          min="600"
+                          max="5000"
+                          value={form.customTargetLength}
+                          onChange={(event) => updateForm("customTargetLength", event.target.value)}
+                          className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                          placeholder="예: 1800"
+                        />
+                      )}
+                    </fieldset>
+
+                    <label className="block">
+                      <FieldLabel required tooltip={FIELD_TOOLTIPS.tone}>말투</FieldLabel>
+                      <select
+                        value={form.tone}
+                        onChange={(event) => updateForm("tone", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                      >
+                        {makerOptions.tones.map((tone) => (
+                          <option key={`mobile-${tone}`} value={tone}>
+                            {tone}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </details>
+              </div>
+
+              <fieldset className="hidden xl:block">
                 <legend>
                   <FieldLabel tooltip={FIELD_TOOLTIPS.audienceType}>사용자 유형</FieldLabel>
                 </legend>
@@ -881,7 +1007,7 @@ export default function ContentMaker() {
                 </div>
               </fieldset>
 
-              <fieldset>
+              <fieldset className="hidden xl:block">
                 <legend>
                   <FieldLabel required tooltip={FIELD_TOOLTIPS.goal}>글 목적</FieldLabel>
                 </legend>
@@ -909,7 +1035,7 @@ export default function ContentMaker() {
                 </div>
               </fieldset>
 
-              <fieldset>
+              <fieldset className="hidden xl:block">
                 <legend>
                   <FieldLabel tooltip={FIELD_TOOLTIPS.targetLength}>목표 글자수</FieldLabel>
                 </legend>
@@ -948,7 +1074,7 @@ export default function ContentMaker() {
                 )}
               </fieldset>
 
-              <label className="block">
+              <label className="hidden xl:block">
                 <FieldLabel required tooltip={FIELD_TOOLTIPS.tone}>말투</FieldLabel>
                 <select
                   value={form.tone}
@@ -988,7 +1114,7 @@ export default function ContentMaker() {
                         value={form.brandName}
                         onChange={(event) => updateForm("brandName", event.target.value)}
                         className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                        placeholder="예: 엠고컴퍼니"
+                        placeholder="예: 우리 매장명"
                       />
                     </label>
 
@@ -1085,7 +1211,63 @@ export default function ContentMaker() {
           )}
         </section>
 
-        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+        <section className="order-1 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft xl:order-2">
+          <div className="mb-5 rounded-lg border border-line bg-paper p-4 xl:hidden">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-bold">빠른 시작</h3>
+              <span className="rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-ink/60">
+                {isFormReady ? "입력 완료" : "입력 전"}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-3">
+              <label className="block">
+                <FieldLabel required tooltip={FIELD_TOOLTIPS.keyword}>키워드</FieldLabel>
+                <input
+                  value={form.keyword}
+                  onChange={(event) => updateForm("keyword", event.target.value)}
+                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                  placeholder="예: 강남 피부관리샵, 리프팅 관리, 피부탄력"
+                />
+              </label>
+
+              <label className="block">
+                <FieldLabel required tooltip={FIELD_TOOLTIPS.category}>업종/주제</FieldLabel>
+                <select
+                  value={form.category}
+                  onChange={(event) => updateForm("category", event.target.value)}
+                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                >
+                  <option value="">업종 고르기</option>
+                  {makerOptions.categories.map((category) => (
+                    <option key={`quick-${category}`} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={generateTopics}
+                disabled={!isFormReady || status === "generating"}
+                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
+              >
+                <Sparkles size={18} aria-hidden="true" />
+                글 방향 생성
+              </button>
+              <button
+                type="button"
+                onClick={regenerate}
+                disabled={!isFormReady || status === "generating"}
+                className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+              >
+                <RefreshCw size={18} aria-hidden="true" />
+                다시 생성
+              </button>
+            </div>
+          </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h3 className="text-lg font-bold">선택 및 결과</h3>
             <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -1114,30 +1296,15 @@ export default function ContentMaker() {
                 className="focus-ring col-span-2 inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white transition hover:bg-[#3a4046] disabled:cursor-not-allowed disabled:bg-ink/25 sm:col-span-1"
               >
                 <Save size={16} aria-hidden="true" />
-                로컬 저장
+                내 보관함 저장
               </button>
             </div>
           </div>
 
-          {hasFinal && (
-            <FinalResultPanel
-              result={result}
-              editing={editing}
-              range={range}
-              onCopy={copyResult}
-              onImageChange={updateImageSuggestion}
-              onTitleChange={(value) =>
-                setResult((current) => ({ ...current, selectedTitle: value }))
-              }
-              onBodyChange={(value) => setResult((current) => ({ ...current, body: value }))}
-              onHashtagsChange={(value) =>
-                setResult((current) => ({
-                  ...current,
-                  hashtags: value.split(/\s+/).filter(Boolean).slice(0, 14),
-                  hashtagGroups: []
-                }))
-              }
-            />
+          {draftMessage && (
+            <p className="mt-3 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
+              {draftMessage}
+            </p>
           )}
 
           <div className="mt-5 space-y-6">
@@ -1232,6 +1399,28 @@ export default function ContentMaker() {
                 </div>
               )}
 
+              {hasFinal && (
+                <div ref={finalResultRef}>
+                  <FinalResultPanel
+                    result={result}
+                    editing={editing}
+                    range={range}
+                    onCopy={copyResult}
+                    onImageChange={updateImageSuggestion}
+                    onTitleChange={(value) =>
+                      setResult((current) => ({ ...current, selectedTitle: value }))
+                    }
+                    onBodyChange={(value) => setResult((current) => ({ ...current, body: value }))}
+                    onHashtagsChange={(value) =>
+                      setResult((current) => ({
+                        ...current,
+                        hashtags: value.split(/\s+/).filter(Boolean).slice(0, 14),
+                        hashtagGroups: []
+                      }))
+                    }
+                  />
+                </div>
+              )}
             </div>
           </div>
         </section>

@@ -785,7 +785,9 @@ const FALLBACK_REPLY_BLOCKLIST = [
   "문의하신 부분은",
   "방문 목적에 맞춰",
   "먼저 확인해보시면 좋습니다",
+  "방문 전 궁금한 부분만 먼저 확인",
   "궁금한 부분은 편하게",
+  "편하게 확인해드리겠습니다",
   "확인해드리겠습니다",
   "짧게 남겨주신 말도 힘이 됩니다",
   "다른 분들께도 참고가 될 것 같아요"
@@ -911,7 +913,7 @@ function createReplyCandidates({ type, content, form, coreKeywords, mainKeyword,
     return isBusiness
       ? [
           `관심 가져주셔서 ${thanks}. 처음 방문하시는 분들도 편하게 상담받으실 수 있도록 신경 쓰고 있습니다.`,
-          `${keyLine || "방문 전 궁금한 부분만 먼저 확인하셔도 부담이 줄어듭니다."} ${softCta || "편한 때에 필요한 내용부터 확인해보세요."}`,
+          `${keyLine || "방문 전에 원하는 방향만 가볍게 정리해두면 상담 흐름을 잡기 쉽습니다."} ${softCta || "필요한 기준부터 천천히 살펴보세요."}`,
           `반갑게 봐주셔서 ${thanks}. 방문 전에는 목적과 일정만 간단히 정리해오셔도 안내가 더 수월합니다.`
         ]
       : [
@@ -955,7 +957,7 @@ function createReplyCandidates({ type, content, form, coreKeywords, mainKeyword,
     return [
       `좋게 봐주셔서 ${thanks}.`,
       `댓글 남겨주셔서 ${thanks}.`,
-      `짧게라도 반응 남겨주셔서 반갑습니다.`
+      `반응 남겨주셔서 반갑습니다.`
     ];
   }
 
@@ -990,6 +992,48 @@ function getReplyStart(value = "") {
   return normalizeSpaces(value).slice(0, 10);
 }
 
+function getMaxSimilarity(reply = "", previousReplies = []) {
+  const comparableReplies = previousReplies.map(normalizeSpaces).filter(Boolean);
+  if (!reply || comparableReplies.length === 0) return 0;
+
+  return Math.max(...comparableReplies.map((previous) => jaccardSimilarity(reply, previous)));
+}
+
+function isDistinctReply(reply = "", previousReplies = []) {
+  const normalizedReply = normalizeSpaces(reply);
+  const comparableReplies = previousReplies.map(normalizeSpaces).filter(Boolean);
+  if (!normalizedReply || comparableReplies.length === 0) return true;
+
+  return comparableReplies.every(
+    (previous) =>
+      previous !== normalizedReply &&
+      getReplyStart(previous) !== getReplyStart(normalizedReply) &&
+      jaccardSimilarity(normalizedReply, previous) < 0.5
+  );
+}
+
+function rephraseSimilarReply(reply = "", seed = 0) {
+  const normalized = normalizeSpaces(reply);
+  if (!normalized) return "";
+
+  const variants = [
+    normalized
+      .replace(/^맞아요,?\s*/u, "저도 그렇게 느꼈어요. ")
+      .replace(/고마워요/g, "감사해요")
+      .replace(/반가워요/g, "좋네요"),
+    normalized
+      .replace(/^좋게 봐주셔서/u, "이 부분을 좋게 봐주셔서")
+      .replace(/반갑습니다/g, "감사합니다")
+      .replace(/반가워요/g, "기쁩니다"),
+    normalized
+      .replace(/댓글 남겨주셔서/g, "이렇게 남겨주셔서")
+      .replace(/잘 와닿았습니다/g, "분명하게 와닿았어요")
+      .replace(/좋을 것 같아요/g, "도움이 됩니다")
+  ].filter((variant) => variant && variant !== normalized);
+
+  return variants[seed % Math.max(1, variants.length)] || normalized;
+}
+
 export function assessDuplicateRisk(reply = "", previousReplies = []) {
   const normalizedReply = normalizeSpaces(reply);
   const comparableReplies = previousReplies.map(normalizeSpaces).filter(Boolean);
@@ -1018,9 +1062,14 @@ function chooseReply(candidates = [], previousReplies = [], seed = 0) {
   if (!cleanCandidates.length) return "";
 
   const rotated = cleanCandidates.map((_, index) => cleanCandidates[(index + seed) % cleanCandidates.length]);
-  const lowRisk = rotated.find((candidate) => assessDuplicateRisk(candidate, previousReplies) === "중복 위험 낮음");
+  const distinct = rotated.find((candidate) => isDistinctReply(candidate, previousReplies));
+  if (distinct) return distinct;
 
-  return lowRisk || rotated[0];
+  const lowRisk = rotated.find((candidate) => getMaxSimilarity(candidate, previousReplies) < 0.58);
+  const fallback = lowRisk || rotated[0];
+  const rephrased = rephraseSimilarReply(fallback, seed);
+
+  return containsFallbackReplyPhrase(rephrased) ? fallback : rephrased;
 }
 
 export function normalizeComment(comment = {}, index = 0) {
@@ -1055,6 +1104,7 @@ export function normalizeComment(comment = {}, index = 0) {
     registerStatus: comment.registerStatus || "",
     selected: Boolean(comment.selected),
     retryCount: Number.isFinite(comment.retryCount) ? comment.retryCount : 0,
+    regenerationCount: Number.isFinite(Number(comment.regenerationCount)) ? Number(comment.regenerationCount) : 0,
     errorMessage: text(comment.errorMessage || comment.error)
   };
 }
@@ -1098,7 +1148,15 @@ export function createCommentReplyForOne(form = {}, comment = {}, previousReplie
   }
 
   const sequence = Number.isFinite(options.sequence) ? options.sequence : 0;
-  const seed = Number.isFinite(options.seed) ? options.seed : sequence + (normalizedComment.reply ? 1 : 0);
+  const regenerationCount = Number.isFinite(Number(options.regenerationCount))
+    ? Number(options.regenerationCount)
+    : normalizedComment.regenerationCount || 0;
+  const seedBase = Number.isFinite(options.seed) ? Number(options.seed) : sequence + (normalizedComment.reply ? 1 : 0);
+  const seed = seedBase + regenerationCount * 7;
+  const previousForChoice =
+    options.regenerate && normalizedComment.reply
+      ? unique([normalizedComment.reply, ...previousReplies])
+      : previousReplies;
   const useKeyword = shouldUseKeyword(type, content, mainKeyword, sequence + seed);
   const candidates = createReplyCandidates({
     type,
@@ -1108,9 +1166,9 @@ export function createCommentReplyForOne(form = {}, comment = {}, previousReplie
     mainKeyword,
     useKeyword
   });
-  const reply = chooseReply(candidates, previousReplies, seed);
+  const reply = chooseReply(candidates, previousForChoice, seed);
   const forbiddenWordsFound = findForbiddenWords(reply, forbiddenWords);
-  const duplicateRisk = assessDuplicateRisk(reply, previousReplies);
+  const duplicateRisk = assessDuplicateRisk(reply, previousForChoice);
   const needsReview =
     forbiddenWordsFound.length > 0 ||
     duplicateRisk === "재생성 권장" ||
@@ -1132,6 +1190,7 @@ export function createCommentReplyForOne(form = {}, comment = {}, previousReplie
     forbiddenWordsFound,
     duplicateRisk,
     status: needsReview ? "검토 필요" : "생성 완료",
+    regenerationCount,
     skipReason: ""
   };
 }
@@ -1278,10 +1337,18 @@ export function generateContextualCaptureReply(comment = {}, context = {}, previ
     coreKeywords,
     mainKeyword
   });
-  const seed = Number.isFinite(options.seed) ? options.seed : 0;
-  const reply = chooseReply(candidates, previousReplies, seed);
+  const regenerationCount = Number.isFinite(Number(options.regenerationCount))
+    ? Number(options.regenerationCount)
+    : normalizedComment.regenerationCount || 0;
+  const seedBase = Number.isFinite(options.seed) ? Number(options.seed) : 0;
+  const seed = seedBase + regenerationCount * 7;
+  const previousForChoice =
+    options.regenerate && normalizedComment.reply
+      ? unique([normalizedComment.reply, ...previousReplies])
+      : previousReplies;
+  const reply = chooseReply(candidates, previousForChoice, seed);
   const forbiddenWordsFound = findForbiddenWords(reply, forbiddenWords);
-  const duplicateRisk = assessDuplicateRisk(reply, previousReplies);
+  const duplicateRisk = assessDuplicateRisk(reply, previousForChoice);
   const needsReview =
     !reply ||
     forbiddenWordsFound.length > 0 ||
@@ -1302,17 +1369,23 @@ export function generateContextualCaptureReply(comment = {}, context = {}, previ
     forbiddenWordsFound,
     duplicateRisk,
     status: needsReview ? "검토 필요" : "생성 완료",
+    regenerationCount,
     skipReason: ""
   };
 }
 
 export function generateContextualCaptureReplies(comments = [], context = {}, options = {}) {
   const previousReplies = Array.isArray(options.previousReplies) ? [...options.previousReplies] : [];
+  const baseSeed = Number(options.seed || 0);
 
   return comments.map((comment, index) => {
+    const regenerationCount =
+      Number(comment?.regenerationCount || 0) + (options.regenerate && comment?.reply ? 1 : 0);
     const generated = generateContextualCaptureReply(comment, context, previousReplies, {
       sequence: index,
-      seed: Number(options.seed || 0)
+      seed: baseSeed + index,
+      regenerate: Boolean(options.regenerate),
+      regenerationCount
     });
 
     if (generated.reply) previousReplies.push(generated.reply);
@@ -1322,11 +1395,16 @@ export function generateContextualCaptureReplies(comments = [], context = {}, op
 
 export function createCommentReplyBatch(form = {}, comments = [], options = {}) {
   const previousReplies = Array.isArray(options.previousReplies) ? [...options.previousReplies] : [];
+  const baseSeed = Number(options.seed || 0);
 
   return comments.map((comment, index) => {
+    const regenerationCount =
+      Number(comment?.regenerationCount || 0) + (options.regenerate && comment?.reply ? 1 : 0);
     const generated = createCommentReplyForOne(form, comment, previousReplies, {
       sequence: index,
-      seed: Number(options.seed || 0)
+      seed: baseSeed + index,
+      regenerate: Boolean(options.regenerate),
+      regenerationCount
     });
 
     if (generated.reply) previousReplies.push(generated.reply);

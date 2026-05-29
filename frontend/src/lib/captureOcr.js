@@ -1,4 +1,5 @@
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
 
 const createResult = (overrides = {}) => ({
   ok: false,
@@ -80,6 +81,18 @@ const tesseractImageTextExtractor = {
 
 export const captureOcrAdapters = [tesseractImageTextExtractor, fallbackImageTextExtractor];
 
+const getSupportedImageType = (file) => {
+  const type = String(file?.type || "").toLowerCase();
+  if (SUPPORTED_IMAGE_TYPES.has(type)) return type;
+
+  const extension = String(file?.name || "").split(".").pop()?.toLowerCase();
+  if (SUPPORTED_IMAGE_EXTENSIONS.has(extension)) {
+    return extension === "jpg" ? "image/jpeg" : `image/${extension}`;
+  }
+
+  return "";
+};
+
 export async function extractCaptureTextFromImage(file, options = {}) {
   const adapters = options.adapter ? [options.adapter] : captureOcrAdapters;
 
@@ -89,7 +102,7 @@ export async function extractCaptureTextFromImage(file, options = {}) {
     });
   }
 
-  if (!SUPPORTED_IMAGE_TYPES.has(String(file.type || "").toLowerCase())) {
+  if (!getSupportedImageType(file)) {
     return createResult({
       warnings: ["PNG, JPG, WEBP 형식의 이미지 파일만 사용할 수 있습니다."],
       message: "지원하지 않는 파일 형식입니다."
