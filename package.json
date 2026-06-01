@@ -9,6 +9,7 @@
     "dev:frontend": "npm run dev --prefix frontend",
     "dev:backend": "npm run dev --prefix backend",
     "build": "npm run build --prefix frontend",
+    "test:local": "node tests/local-validation.test.mjs",
     "start": "npm run start --prefix backend"
   },
   "workspaces": [

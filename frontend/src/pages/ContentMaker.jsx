@@ -1677,8 +1677,10 @@ function FinalResultPanel({
         )}
       </div>
 
+      <SeoAeoCheckPanel seoCheck={result.seoCheck} />
+
       <div>
-        <h5 className="text-sm font-bold text-ink/70">4. 복사 옵션</h5>
+        <h5 className="text-sm font-bold text-ink/70">5. 복사 옵션</h5>
         <div className="mt-2 grid gap-2 lg:grid-cols-3">
           <button
             type="button"
@@ -1759,20 +1761,32 @@ function HashtagGroupCards({ groups = [], fallbackTags = [] }) {
 }
 
 const SEO_CHECK_LABELS = {
-  "title-main-keyword": "메인 키워드 제목 반영",
+  "title-main-keyword": "메인 키워드가 제목에 자연스럽게 반영됨",
+  "first-paragraph-answer": "첫 문단에 검색자가 궁금해할 핵심 답변이 있음",
   "first-paragraph-keyword": "메인 키워드 첫 문단 반영",
-  "secondary-keywords": "보조 키워드 자연 반영",
-  "outline-count": "목표 글자수별 소제목 수",
+  "secondary-keywords": "보조 키워드가 본문과 소제목에 자연스럽게 분산됨",
   "keyword-overuse": "키워드 과다 반복 없음",
+  "audience-goal-flow": "사용자 유형과 글 목적이 본문 흐름에 반영됨",
+  "outline-count": "목표 글자수에 맞는 소제목 수가 적용됨",
+  "image-markers": "본문 안에 이미지 삽입 추천 위치가 표시됨",
+  "faq-question": "FAQ 또는 질문형 답변 구조가 포함됨",
   "search-intent-title": "검색 의도 제목 유형",
-  "faq-question": "FAQ/질문형 문장 포함",
   region: "지역명 반영",
-  cta: "CTA 반영",
+  cta: "마무리 CTA가 자연스럽게 들어감",
   avoid: "금지어 없음"
 };
 
 const createSeoChecklist = (seoCheck) => {
   const items = seoCheck?.items || [];
+
+  if (items.length > 0) {
+    return items.map((item) => ({
+      id: item.id,
+      label: item.label || SEO_CHECK_LABELS[item.id] || item.id,
+      detail: item.detail || "",
+      passed: item?.passed === true
+    }));
+  }
 
   return Object.entries(SEO_CHECK_LABELS).map(([id, label]) => {
     const item = items.find((check) => check.id === id);
@@ -1780,10 +1794,56 @@ const createSeoChecklist = (seoCheck) => {
     return {
       id,
       label,
+      detail: item?.detail || "",
       passed: item?.passed === true
     };
   });
 };
+
+function SeoAeoCheckPanel({ seoCheck }) {
+  if (!seoCheck) return null;
+
+  const checklist = createSeoChecklist(seoCheck);
+  const passedCount = checklist.filter((item) => item.passed).length;
+  const totalCount = checklist.length;
+
+  return (
+    <section className="rounded-md border border-moss/25 bg-moss/10 p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-bold uppercase text-moss">SEO/AEO 점검</p>
+          <h5 className="mt-1 text-base font-bold text-ink">4. 검색 의도 기반 구조 점검</h5>
+          <p className="mt-1 text-sm leading-6 text-ink/65">
+            키워드 자연 반영, 답변형 문장 포함, 본문 흐름 점검, 이미지 삽입 위치 표시를 확인합니다.
+          </p>
+        </div>
+        <span className="inline-flex min-h-8 items-center justify-center rounded-md bg-white px-3 text-xs font-bold text-moss">
+          {passedCount}/{totalCount} 확인
+        </span>
+      </div>
+
+      <ul className="mt-4 grid gap-2 lg:grid-cols-2">
+        {checklist.map((item) => (
+          <li key={item.id} className="rounded-md border border-line bg-white p-3">
+            <div className="flex items-start gap-2">
+              <span
+                className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full ${
+                  item.passed ? "bg-moss/10 text-moss" : "bg-amber/10 text-[#7a5a1e]"
+                }`}
+              >
+                {item.passed ? <Check size={13} aria-hidden="true" /> : <CircleHelp size={13} aria-hidden="true" />}
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-ink/75">{item.label}</p>
+                {item.detail && <p className="mt-1 text-xs leading-5 text-ink/55">{item.detail}</p>}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 function StrategyMemo({ result, range }) {
   const memo = result.strategyMemo;
@@ -1829,7 +1889,7 @@ function StrategyMemo({ result, range }) {
         {seoCheck && (
           <section className="border-t border-line pt-4">
             <div className="flex items-center justify-between gap-2">
-              <h6 className="text-xs font-bold text-ink/50">최적화 체크</h6>
+              <h6 className="text-xs font-bold text-ink/50">본문 흐름 점검</h6>
               <span className="text-xs font-bold text-moss">
                 {checklist.filter((item) => item.passed).length}/{checklist.length} 통과
               </span>

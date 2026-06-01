@@ -1,13 +1,16 @@
 import {
   Archive,
   LayoutDashboard,
+  LogOut,
   MessageSquare,
   Settings2,
+  ShieldCheck,
   Sparkles,
   WandSparkles
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import EnvironmentBanner from "./EnvironmentBanner.jsx";
+import { getAccessDaysRemaining } from "../lib/accessControl.js";
 
 const navItems = [
   { to: "/", label: "대시보드", icon: LayoutDashboard },
@@ -17,7 +20,11 @@ const navItems = [
   { to: "/settings", label: "고급 설정", icon: Settings2 }
 ];
 
-export default function AppLayout({ children }) {
+export default function AppLayout({ children, accessSession, accessMessage = "", onLogout }) {
+  const daysRemaining = accessSession?.expiresAt
+    ? getAccessDaysRemaining(accessSession.expiresAt)
+    : 0;
+
   return (
     <div className="min-h-screen bg-paper text-ink">
       <div className="flex min-h-screen w-full flex-col lg:flex-row">
@@ -56,11 +63,40 @@ export default function AppLayout({ children }) {
               );
             })}
           </nav>
+
+          {accessSession && (
+            <div className="mt-5 rounded-md border border-white/20 bg-white/10 p-3 text-sm">
+              <div className="flex items-start gap-2">
+                <ShieldCheck size={18} className="mt-0.5 shrink-0 text-white/70" aria-hidden="true" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-white/55">사용권</p>
+                  <p className="mt-0.5 break-words font-bold text-white">{accessSession.label}</p>
+                  <p className="mt-1 text-xs font-semibold text-white/65">
+                    만료일: {accessSession.expiresAt}
+                    {daysRemaining > 0 ? ` · ${daysRemaining}일 남음` : ""}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="focus-ring mt-3 inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-md bg-white/10 px-3 text-xs font-bold text-white transition hover:bg-white hover:text-ink"
+              >
+                <LogOut size={14} aria-hidden="true" />
+                코드 초기화
+              </button>
+            </div>
+          )}
         </aside>
 
         <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
           <div className="mx-auto w-full max-w-[1480px]">
             <EnvironmentBanner />
+            {accessMessage && (
+              <p className="mb-4 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
+                {accessMessage}
+              </p>
+            )}
             {children}
           </div>
         </main>

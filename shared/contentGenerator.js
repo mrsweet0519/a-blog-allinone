@@ -469,22 +469,22 @@ const cleanHeadingText = (value) =>
     .replace(/ 부분$/, "")
     .replace(/\s+/g, " ");
 
-const createHeadingLead = (heading, index, audienceLabel) => {
+const createHeadingLead = (_heading, index, audienceLabel) => {
   const businessLeads = [
-    `처음에는 선택지가 많아 보이지만, 내 상황에 맞는 기준을 잡으면 비교가 훨씬 단순해집니다.`,
-    `실제로 문의나 상담으로 이어질 때는 작은 차이가 먼저 체감되는 경우가 많습니다.`,
-    `여기서부터는 겉으로 보이는 설명보다 실제로 나에게 맞는지를 보는 것이 중요합니다.`,
-    `판단이 어려울수록 상담 흐름과 안내 방식을 기준으로 보면 훨씬 현실적입니다.`,
-    `마지막에는 부담 없이 다음 행동을 떠올릴 수 있어야 합니다.`,
-    `선택 후 만족도는 작은 기준을 미리 확인했는지에서 갈리는 경우가 많습니다.`
+    `먼저 내 상황에 맞는 기준을 잡는 것이 핵심입니다.`,
+    `작은 차이가 실제 만족도를 바꾸는 경우가 많습니다.`,
+    `겉으로 보이는 설명보다 나에게 맞는지가 더 중요합니다.`,
+    `판단이 어렵다면 상담 흐름과 안내 방식을 먼저 보세요.`,
+    `마지막에는 부담 없는 다음 행동이 자연스럽게 이어져야 합니다.`,
+    `선택 후 만족도는 미리 확인한 기준에서 달라집니다.`
   ];
   const influencerLeads = [
-    `저도 처음에는 비슷한 정보를 여러 번 열어보면서 기준을 잡기 어려웠습니다.`,
-    `이런 내용은 단순한 소개보다 저장해두고 다시 볼 수 있을 때 더 도움이 됩니다.`,
-    `장점을 바로 밀어붙이기보다 직접 보고 납득할 수 있는 흐름이 더 자연스럽습니다.`,
-    `비교 포인트가 분명하면 광고처럼 느껴지기보다 참고할 만한 정보로 받아들여집니다.`,
-    `마지막에는 저장할지, 클릭할지, 직접 확인할지 자연스럽게 떠올라야 합니다.`,
-    `좋은 콘텐츠는 정보가 끝까지 하나의 흐름으로 이어질 때 더 오래 남습니다.`
+    `경험과 비교 기준이 함께 보여야 오래 읽힙니다.`,
+    `저장해두고 다시 볼 기준이 있으면 더 도움이 됩니다.`,
+    `장점보다 직접 납득되는 흐름이 더 자연스럽습니다.`,
+    `비교 포인트가 분명하면 참고할 만한 정보로 읽힙니다.`,
+    `마지막에는 저장, 클릭, 확인 중 다음 행동이 떠올라야 합니다.`,
+    `좋은 콘텐츠는 정보가 하나의 흐름으로 이어질 때 남습니다.`
   ];
   const leads = audienceLabel === "인플루언서/수익형" ? influencerLeads : businessLeads;
 
@@ -547,8 +547,8 @@ const createOpeningParagraph = (form, selectedOpeningSentence = "") => {
   const firstSentence = selected || createOpeningSentenceCandidates(form)[0];
   const secondSentence =
     audienceType === "인플루언서/수익형"
-      ? `${keyword} 콘텐츠는 장점보다 경험과 비교 기준이 함께 보일 때 더 오래 읽히고 저장됩니다.`
-      : `검색해보면 ${keyword} 관련 정보가 많지만, 사진이나 가격만으로는 상담 방식과 만족도를 충분히 알기 어렵습니다.`;
+      ? `검색자가 먼저 궁금해하는 답은 ${keyword}의 장점보다 실제 경험, 비교 기준, 사용 맥락이 함께 보이는지입니다.`
+      : `검색자가 먼저 궁금해하는 답은 ${keyword}가 내 상황에 맞는지, 상담 방식과 확인 기준이 충분히 분명한지입니다.`;
   const thirdSentence =
     audienceType === "인플루언서/수익형"
       ? `저도 ${brand}를 볼 때 ${strengthText} 같은 부분이 자연스럽게 느껴지는지 먼저 확인하게 됩니다.`
@@ -569,16 +569,69 @@ const createTopicBridgeParagraph = (form, selectedTopic, selectedTitle, titleAng
   return `${asObject(topicCue)} 중심으로 보면 선택지를 많이 보는 것보다 내 상황에서 필요한 기준을 차례대로 확인하는 것이 더 중요합니다. 아래 내용은 각 항목마다 먼저 결론을 짚고, 문의나 구매 전에 바로 참고할 수 있는 기준으로 정리했습니다.`;
 };
 
-const createFaqAnswerParagraph = (form) => {
+const shouldIncludeFaqBlock = (form, selectedTitle = "", outlineSections = []) => {
+  const goal = text(form.goal);
+  const title = text(selectedTitle);
+  const outlineText = normalizeOutlineSections(outlineSections).join(" ");
+
+  return (
+    ["정보 전달", "상품 홍보"].includes(goal) ||
+    /비교|후기|FAQ|자주 묻는 질문/u.test(title) ||
+    /FAQ|자주 묻는 질문/u.test(outlineText)
+  );
+};
+
+const createFaqItems = (form, selectedTitle = "") => {
   const keyword = getMainKeyword(form);
-  const secondaryCue = getSecondaryKeywords(form)[0] || "후기와 비교 기준";
+  const secondaryCue = getSecondaryKeywords(form)[0] || "비교 기준";
   const audienceType = getAudienceType(form);
+  const emphasis = getEmphasis(form);
+  const brand = getBrandLabel(form);
+  const targetLength = resolveTargetLength(form);
+  const wantsThreeQuestions = targetLength >= 1700 || /비교|기준|확인/u.test(text(selectedTitle));
 
   if (audienceType === "인플루언서/수익형") {
-    return `자주 묻는 질문처럼 "${keyword}는 어떤 사람에게 맞나요?"라고 본다면, ${secondaryCue}를 함께 확인했을 때 내 루틴과 부담 없이 이어질 수 있는지가 가장 현실적인 기준입니다.`;
+    return [
+      {
+        question: `${keyword}를 볼 때 가장 먼저 확인할 부분은 무엇인가요?`,
+        answer: `장점만 보기보다 ${secondaryCue}와 실제 사용 맥락이 함께 이어지는지 먼저 확인하는 것이 좋습니다.`
+      },
+      {
+        question: `${keyword}는 누구에게 필요한가요?`,
+        answer: `비슷한 정보를 여러 번 비교하고 있다면, 내 루틴에 부담 없이 맞는지 확인하는 데 도움이 됩니다.`
+      },
+      {
+        question: `어떤 기준으로 ${keyword}를 고르면 좋나요?`,
+        answer: `${emphasis}처럼 직접 체감할 수 있는 기준과 후기 흐름이 자연스럽게 연결되는지 보는 편이 좋습니다.`
+      }
+    ].slice(0, wantsThreeQuestions ? 3 : 2);
   }
 
-  return `자주 묻는 질문처럼 "${keyword}는 무엇을 먼저 확인해야 하나요?"라고 본다면, 가격보다 내 상황에 맞는 기준과 ${secondaryCue}를 함께 보는 것이 좋습니다.`;
+  return [
+    {
+      question: `${keyword}를 고를 때 가장 먼저 볼 부분은 무엇인가요?`,
+      answer: `가격이나 사진보다 내 상황에 맞는 기준과 ${secondaryCue}가 분명한지 먼저 확인하는 것이 좋습니다.`
+    },
+    {
+      question: `${keyword}는 누구에게 필요한가요?`,
+      answer: `${brand}를 알아보는 과정에서 문의 전 확인 기준을 정리하고 싶은 분에게 특히 도움이 됩니다.`
+    },
+    {
+      question: `어떤 기준으로 ${keyword}를 비교하면 좋나요?`,
+      answer: `${emphasis}처럼 실제 이용 흐름에서 체감되는 부분과 상담 안내가 자연스럽게 이어지는지 보면 좋습니다.`
+    }
+  ].slice(0, wantsThreeQuestions ? 3 : 2);
+};
+
+const createFaqSection = (form, selectedTitle = "") => {
+  const faqItems = createFaqItems(form, selectedTitle);
+
+  if (faqItems.length === 0) return "";
+
+  return [
+    "FAQ",
+    ...faqItems.flatMap((item) => [`Q. ${item.question}`, `A. ${item.answer}`])
+  ].join("\n\n");
 };
 
 const getToneNudge = (tone) =>
@@ -805,11 +858,6 @@ const createReaderFacingPostBody = (
           `원하는 결과와 궁금한 점만 간단히 남겨도 필요한 안내를 받기 쉽습니다.`
         ];
 
-  const faqTargetIndex = sectionBlocks.findIndex((section) => text(section.heading).includes("자주 묻는 질문"));
-  sectionBlocks[faqTargetIndex >= 0 ? faqTargetIndex : Math.max(0, sectionBlocks.length - 2)]?.paragraphs.push(
-    createFaqAnswerParagraph(form)
-  );
-
   if (
     [...intro, ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs))].join("\n\n")
       .length < range.min
@@ -818,9 +866,14 @@ const createReaderFacingPostBody = (
     sectionBlocks[targetIndex].paragraphs.push(...contextualDetails);
   }
 
+  const faqSection = shouldIncludeFaqBlock(form, selectedTitle, outline)
+    ? createFaqSection(form, selectedTitle)
+    : "";
+
   return normalizeBlogBody([
     ...intro,
-    ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs))
+    ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs)),
+    faqSection
   ].join("\n\n"));
 };
 
@@ -1470,53 +1523,88 @@ const inferSearchIntentTitleType = (title, region) => {
   return "";
 };
 
-const createSeoCheck = (form, body, outlineSections, hashtags, selectedCtaSentence, selectedTitle = "") => {
+const includesAny = (source, keywords = []) => keywords.some((keyword) => source.includes(keyword));
+
+const getGoalFlowSignals = (goal) =>
+  ({
+    "정보 전달": ["기준", "확인", "정리", "궁금"],
+    "신뢰 형성": ["신뢰", "설명", "안내", "응대"],
+    "상품 홍보": ["장점", "활용", "강점", "체감"],
+    "방문 유도": ["방문", "문의", "상담", "안내"]
+  })[goal] || ["기준", "확인", "정리"];
+
+const getAudienceFlowSignals = (audienceType) =>
+  audienceType === "인플루언서/수익형"
+    ? ["경험", "저장", "비교", "후기", "루틴"]
+    : ["문의", "상담", "방문", "고객", "안내"];
+
+const createSeoCheck = (
+  form,
+  body,
+  outlineSections,
+  hashtags,
+  selectedCtaSentence,
+  selectedTitle = "",
+  imageSuggestions = [],
+  markedBody = body
+) => {
   const keyword = getMainKeyword(form);
   const secondaryKeywords = getSecondaryKeywords(form);
-  const region = text(form.region);
-  const avoidWords = splitAvoidWords(form.avoid);
+  const avoidWords = uniqueText([
+    ...splitAvoidWords(form.avoid),
+    "상위노출 보장",
+    "최적화 보장",
+    "네이버 로직 완벽 반영",
+    "무조건 노출",
+    "방문자 증가 보장"
+  ]);
   const firstParagraph = getFirstParagraph(body);
+  const firstSentence = getFirstSentence(body);
   const title = text(selectedTitle);
   const firstParagraphCount = countKeywordOccurrences(firstParagraph, keyword);
   const actualOccurrences = countKeywordOccurrences(body, keyword);
   const targetOccurrences = resolveKeywordOccurrenceRange(resolveTargetLength(form));
-  const regionTokens = getRegionTokens(region);
-  const combinedForChecks = [body, ...hashtags].join(" ");
-  const compactCombined = compact(combinedForChecks);
+  const combinedForChecks = [body, markedBody, ...hashtags].join(" ");
   const outlineCount = normalizeOutlineSections(outlineSections).length;
   const expectedOutlineCount = getOutlineSectionCount(form);
+  const outlineText = normalizeOutlineSections(outlineSections).join(" ");
+  const bodyAndOutline = [body, outlineText].join(" ");
+  const compactBodyAndOutline = compact(bodyAndOutline);
   const secondaryMatches = secondaryKeywords.filter((keywordItem) =>
-    compactCombined.includes(compact(keywordItem))
+    compactBodyAndOutline.includes(compact(keywordItem))
   );
-  const hasFaqQuestion = /무엇을|어떤 사람|어떻게|확인해야 하나요|맞나요|좋나요|\?/u.test(body);
+  const hasFirstAnswer =
+    firstParagraphCount >= 1 && /먼저|기준|확인|핵심|중요|궁금|좋습니다/u.test(firstParagraph);
+  const goal = text(form.goal);
+  const audienceType = getAudienceType(form);
+  const hasGoalFlow = includesAny(body, getGoalFlowSignals(goal));
+  const hasAudienceFlow = includesAny(body, getAudienceFlowSignals(audienceType));
+  const hasImageMarkers =
+    imageSuggestions.length === 0 || /\[이미지 삽입 추천 \d+\]/u.test(markedBody);
+  const faqCount = (markedBody.match(/^Q\.\s/gmu) || []).length;
+  const hasFaqQuestion = faqCount >= 2 || /무엇인가요|누구에게 필요한가요|어떤 기준|확인해야 하나요|\?/u.test(markedBody);
   const forbiddenFound = avoidWords.filter((word) => combinedForChecks.includes(word));
   const items = [
     {
       id: "title-main-keyword",
-      label: "메인 키워드 제목 반영",
+      label: "메인 키워드가 제목에 자연스럽게 반영됨",
       passed: Boolean(title && title.includes(keyword)),
-      detail: title || "선택 제목 없음"
+      detail: title ? "키워드 자연 반영 확인" : "선택 제목 없음"
     },
     {
-      id: "first-paragraph-keyword",
-      label: "메인 키워드 첫 문단 반영",
-      passed: firstParagraphCount >= 1,
-      detail: `첫 문단 ${firstParagraphCount}회`
+      id: "first-paragraph-answer",
+      label: "첫 문단에 검색자가 궁금해할 핵심 답변이 있음",
+      passed: hasFirstAnswer,
+      detail: firstSentence || "첫 문단 확인 필요"
     },
     {
       id: "secondary-keywords",
-      label: "보조 키워드 자연 반영",
+      label: "보조 키워드가 본문과 소제목에 자연스럽게 분산됨",
       passed: secondaryKeywords.length === 0 || secondaryMatches.length > 0,
       detail:
         secondaryKeywords.length === 0
           ? "보조 키워드 없음"
           : `${secondaryMatches.length}/${secondaryKeywords.length}개 반영`
-    },
-    {
-      id: "outline-count",
-      label: "목표 글자수에 맞는 소제목 수",
-      passed: outlineCount === expectedOutlineCount,
-      detail: `${outlineCount}개 / 목표 ${expectedOutlineCount}개`
     },
     {
       id: "keyword-overuse",
@@ -1525,32 +1613,41 @@ const createSeoCheck = (form, body, outlineSections, hashtags, selectedCtaSenten
       detail: `전체 ${actualOccurrences}회 / 권장 ${targetOccurrences.min}-${targetOccurrences.max}회`
     },
     {
-      id: "search-intent-title",
-      label: "검색 의도에 맞는 제목 유형",
-      passed: Boolean(inferSearchIntentTitleType(title, region)),
-      detail: inferSearchIntentTitleType(title, region) || "제목 유형 확인 필요"
+      id: "audience-goal-flow",
+      label: "사용자 유형과 글 목적이 본문 흐름에 반영됨",
+      passed: hasAudienceFlow && hasGoalFlow,
+      detail: `${audienceType} / ${goal || "글 목적 미선택"}`
+    },
+    {
+      id: "outline-count",
+      label: "목표 글자수에 맞는 소제목 수가 적용됨",
+      passed: outlineCount === expectedOutlineCount,
+      detail: `${outlineCount}개 / 목표 ${expectedOutlineCount}개`
+    },
+    {
+      id: "image-markers",
+      label: "본문 안에 이미지 삽입 추천 위치가 표시됨",
+      passed: hasImageMarkers,
+      detail:
+        imageSuggestions.length > 0
+          ? `${imageSuggestions.length}개 이미지 삽입 위치 표시`
+          : "이미지 추천 없음"
     },
     {
       id: "faq-question",
-      label: "FAQ/질문형 문장 포함",
+      label: "FAQ 또는 질문형 답변 구조가 포함됨",
       passed: hasFaqQuestion,
-      detail: hasFaqQuestion ? "질문에 답하는 문장 포함" : "질문형 문장 없음"
-    },
-    {
-      id: "region",
-      label: "지역명 반영",
-      passed: !region || regionTokens.some((token) => compactCombined.includes(token)),
-      detail: region ? `${region} 반영 확인` : "지역 입력값 없음"
+      detail: faqCount > 0 ? `FAQ ${faqCount}개` : "질문형 답변 구조 확인 필요"
     },
     {
       id: "cta",
-      label: "CTA 반영",
+      label: "마무리 CTA가 자연스럽게 들어감",
       passed: Boolean(selectedCtaSentence && body.includes(selectedCtaSentence)),
       detail: selectedCtaSentence || "선택 CTA 없음"
     },
     {
       id: "avoid",
-      label: "금지어 포함 여부",
+      label: "금지어 없음",
       passed: forbiddenFound.length === 0,
       detail: forbiddenFound.length > 0 ? forbiddenFound.join(", ") : "금지어 없음"
     }
@@ -1559,6 +1656,10 @@ const createSeoCheck = (form, body, outlineSections, hashtags, selectedCtaSenten
   return {
     passedCount: items.filter((item) => item.passed).length,
     totalCount: items.length,
+    summary: {
+      title: "SEO/AEO 점검",
+      description: "검색 의도 기반 구조, 키워드 자연 반영, 답변형 문장 구조, 본문 흐름 점검, 이미지 삽입 위치 표시를 확인합니다."
+    },
     items
   };
 };
@@ -1753,7 +1854,16 @@ export function createFinalContent(
     selectedOpeningSentence,
     selectedCtaSentence
   };
-  const seoCheck = createSeoCheck(form, basePostBody, finalOutline, hashtags, selectedCtaSentence, selectedTitle);
+  const seoCheck = createSeoCheck(
+    form,
+    basePostBody,
+    finalOutline,
+    hashtags,
+    selectedCtaSentence,
+    selectedTitle,
+    imageSuggestions,
+    postBody
+  );
   const strategyMemo = createStrategyMemo(
     form,
     selectedTopic,
