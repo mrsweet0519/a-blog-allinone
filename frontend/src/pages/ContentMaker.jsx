@@ -68,6 +68,33 @@ const COMPANY_DEFAULT_FIELDS = [
   "customTargetLength"
 ];
 
+const STARTER_EXAMPLES = [
+  {
+    id: "store",
+    label: "매장 홍보 예시",
+    keyword: "강남 피부관리샵, 리프팅 관리, 피부탄력",
+    category: "피부관리샵",
+    audienceType: "사업자/매장 홍보",
+    goal: "방문 유도"
+  },
+  {
+    id: "review",
+    label: "상품 후기 예시",
+    keyword: "무릎보호대, 러닝용품, 착용감",
+    category: "스포츠용품",
+    audienceType: "인플루언서/수익형",
+    goal: "정보 전달"
+  },
+  {
+    id: "info",
+    label: "정보글 예시",
+    keyword: "육아서적 추천, 초등 독서, 부모 가이드",
+    category: "육아/도서",
+    audienceType: "인플루언서/수익형",
+    goal: "정보 전달"
+  }
+];
+
 const pickCompanyDefaults = (form) =>
   COMPANY_DEFAULT_FIELDS.reduce(
     (defaults, key) => ({
@@ -261,11 +288,28 @@ const normalizeResult = (storedResult = {}) => ({
   imageSuggestions: storedResult.imageSuggestions || []
 });
 
-function resultToClipboard(form, result) {
-  const body = String(result.body || "")
+const stripImageInsertionMarkers = (body = "") =>
+  String(body || "")
+    .replace(
+      /\n{0,2}\[이미지 삽입 추천 \d+\]\n위치: .+\n이미지 컨셉: .+\n이미지 검색 키워드: .+\n활용 안내: .+(?=\n|$)/gu,
+      ""
+    )
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+const normalizeClipboardBody = (body = "", { includeImageMarkers = false } = {}) => {
+  const source = includeImageMarkers ? String(body || "") : stripImageInsertionMarkers(body);
+
+  return source
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+};
+
+function resultToClipboard(_form, result, options = {}) {
+  const body = String(result.body || "")
+    ? normalizeClipboardBody(result.body, options)
+    : "";
 
   return [
     result.selectedTitle.trim(),
@@ -275,6 +319,15 @@ function resultToClipboard(form, result) {
     result.hashtags.join(" ")
   ].join("\n").trim();
 }
+
+const imageKeywordsToClipboard = (imageSuggestions = []) =>
+  imageSuggestions
+    .map((item, index) => {
+      const keyword = item.searchKeyword || item.query || item.imageSearch?.query || "";
+      return [`이미지 추천 ${index + 1} / ${item.insertAfter || "본문 흐름에 맞는 위치"}`, keyword].filter(Boolean).join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
 
 export default function ContentMaker() {
   const location = useLocation();
@@ -378,6 +431,25 @@ export default function ContentMaker() {
     }
 
     setResult(emptyResult);
+  };
+
+  const applyStarterExample = (example) => {
+    setForm((current) => {
+      const nextForm = normalizeForm({
+        ...current,
+        keyword: example.keyword,
+        category: example.category,
+        audienceType: example.audienceType,
+        goal: example.goal
+      });
+      setStatus(isReadyForm(nextForm) ? "ready" : "idle");
+      return nextForm;
+    });
+    setResult(emptyResult);
+    setDraftId(null);
+    setDraftMessage("");
+    setDefaultMessage(`${example.label} 입력값을 채웠습니다.`);
+    setEditing(false);
   };
 
   const generateTopics = async ({ forceNew = false } = {}) => {
@@ -600,10 +672,19 @@ export default function ContentMaker() {
     });
   };
 
-  const copyResult = async () => {
+  const copyResult = async (copyMode = "body") => {
     if (!hasFinal) return;
 
-    await navigator.clipboard.writeText(resultToClipboard(form, result));
+    const copyText =
+      copyMode === "withImageMarkers"
+        ? resultToClipboard(form, result, { includeImageMarkers: true })
+        : copyMode === "imageKeywords"
+          ? imageKeywordsToClipboard(result.imageSuggestions)
+          : resultToClipboard(form, result);
+
+    if (!copyText) return;
+
+    await navigator.clipboard.writeText(copyText);
     setStatus("copied");
   };
 
@@ -825,6 +906,10 @@ export default function ContentMaker() {
               {defaultMessage}
             </p>
           )}
+
+          <div className="mt-4 hidden xl:block">
+            <FirstUseGuide onFillExample={applyStarterExample} />
+          </div>
 
           <div className="mt-5 space-y-5">
             <div className="space-y-4">
@@ -1219,6 +1304,9 @@ export default function ContentMaker() {
                 {isFormReady ? "입력 완료" : "입력 전"}
               </span>
             </div>
+            <div className="mt-3">
+              <FirstUseGuide compact onFillExample={applyStarterExample} />
+            </div>
             <div className="mt-4 grid gap-3">
               <label className="block">
                 <FieldLabel required tooltip={FIELD_TOOLTIPS.keyword}>키워드</FieldLabel>
@@ -1282,7 +1370,7 @@ export default function ContentMaker() {
               </button>
               <button
                 type="button"
-                onClick={copyResult}
+                onClick={() => copyResult()}
                 disabled={!hasFinal}
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
               >
@@ -1483,6 +1571,57 @@ function FieldTooltip({ text }) {
   );
 }
 
+function FirstUseGuide({ compact = false, onFillExample }) {
+  const content = (
+    <div className="space-y-3">
+      <p className="text-sm font-semibold leading-6 text-ink/70">
+        키워드는 내 글이 검색되길 원하는 핵심 단어입니다. 매장 홍보라면 지역+업종,
+        상품 후기라면 상품명+후기, 정보글이라면 사람들이 궁금해할 질문을 넣어보세요.
+      </p>
+      {!compact && (
+        <ul className="grid gap-1 text-xs font-semibold leading-5 text-ink/55">
+          <li>매장 홍보: 강남 피부관리샵, 리프팅 관리, 피부탄력</li>
+          <li>상품 후기: 무릎보호대, 러닝용품, 착용감</li>
+          <li>정보글: 육아서적 추천, 초등 독서, 부모 가이드</li>
+        </ul>
+      )}
+      <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-1">
+        {STARTER_EXAMPLES.map((example) => (
+          <button
+            key={example.id}
+            type="button"
+            onClick={() => onFillExample(example)}
+            className="focus-ring inline-flex min-h-10 items-center justify-center rounded-md border border-line bg-white px-3 text-sm font-bold transition hover:border-moss hover:text-moss"
+          >
+            {example.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <details className="rounded-md border border-line bg-white p-3">
+        <summary className="cursor-pointer text-sm font-bold text-ink/70">
+          처음 사용 가이드
+        </summary>
+        <div className="mt-3">{content}</div>
+      </details>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-moss/20 bg-moss/10 p-3">
+      <div className="flex items-center gap-2">
+        <Sparkles size={16} className="text-moss" aria-hidden="true" />
+        <p className="text-sm font-bold text-ink/75">처음 사용 가이드</p>
+      </div>
+      <div className="mt-2">{content}</div>
+    </div>
+  );
+}
+
 function FinalResultPanel({
   result,
   editing,
@@ -1538,14 +1677,35 @@ function FinalResultPanel({
         )}
       </div>
 
-      <button
-        type="button"
-        onClick={onCopy}
-        className="focus-ring inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-amber px-4 text-sm font-bold text-white transition hover:bg-[#b8862c]"
-      >
-        <Clipboard size={18} aria-hidden="true" />
-        4. 제목 + 본문 + 해시태그 복사
-      </button>
+      <div>
+        <h5 className="text-sm font-bold text-ink/70">4. 복사 옵션</h5>
+        <div className="mt-2 grid gap-2 lg:grid-cols-3">
+          <button
+            type="button"
+            onClick={() => onCopy("body")}
+            className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md bg-amber px-4 text-sm font-bold text-white transition hover:bg-[#b8862c]"
+          >
+            <Clipboard size={18} aria-hidden="true" />
+            본문만 복사
+          </button>
+          <button
+            type="button"
+            onClick={() => onCopy("withImageMarkers")}
+            className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-moss hover:text-moss"
+          >
+            <Image size={18} aria-hidden="true" />
+            본문 + 이미지 삽입 표시 포함 복사
+          </button>
+          <button
+            type="button"
+            onClick={() => onCopy("imageKeywords")}
+            className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-amber hover:text-[#7a5a1e]"
+          >
+            <Clipboard size={18} aria-hidden="true" />
+            이미지 검색 키워드만 복사
+          </button>
+        </div>
+      </div>
 
       <ImageSuggestionList items={result.imageSuggestions} editing={editing} onChange={onImageChange} />
 
@@ -1641,7 +1801,7 @@ function StrategyMemo({ result, range }) {
     ["사용자 유형", memo?.audienceType]
   ].filter(([, value]) => value && value !== "자");
   const checklist = createSeoChecklist(seoCheck);
-  const imageItems = (result.imageSuggestions || []).slice(0, 3).map((item) => ({
+  const imageItems = (result.imageSuggestions || []).map((item) => ({
     id: item.id,
     label: item.label || item.title,
     keyword: item.searchKeyword || item.query || item.imageSearch?.query || "",
@@ -1896,7 +2056,7 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
     <div>
       <div className="flex items-center gap-2">
         <Image size={17} className="text-moss" aria-hidden="true" />
-        <h5 className="text-sm font-bold text-ink/70">이미지 삽입 추천 3개</h5>
+        <h5 className="text-sm font-bold text-ink/70">이미지 삽입 추천 {items.length}개</h5>
       </div>
       <p className="mt-2 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm leading-6 text-ink/70">
         아래 추천 키워드를 Pexels, Unsplash, Canva, 미리캔버스 등의 이미지 검색창에 넣어 관련 이미지를 찾아보세요.

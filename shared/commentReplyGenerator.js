@@ -1,15 +1,16 @@
 export const COMMENT_TYPES = [
-  "칭찬형",
   "구매의사형",
   "기대감표현형",
-  "맛/사용감 반응형",
-  "공감형",
+  "제품고민공감형",
+  "사용감반응형",
   "경험공유형",
   "질문형",
-  "방문의사형",
+  "공감형",
   "짧은반응형",
   "민감/불만형",
-  "스팸/의미불명형"
+  "스팸/의미불명형",
+  "칭찬형",
+  "방문의사형"
 ];
 
 export const COMMENT_REPLY_STATUSES = ["대기", "생성 완료", "검토 필요", "스킵 권장"];
@@ -122,8 +123,52 @@ const TYPE_TERMS = {
     "알려주세요",
     "물어봐도"
   ],
-  purchase: ["구매", "구매갑", "사야", "사야져", "사야지", "살래", "사볼", "장바구니", "담아", "주문"],
-  expectation: ["기대", "기대돼", "궁금해져", "밝아질", "눈길", "끌리", "산뜻", "좋을 것", "좋을것", "고민없이"],
+  purchase: [
+    "구매",
+    "구매갑",
+    "구매해볼",
+    "사봐",
+    "사볼",
+    "사야",
+    "사야져",
+    "사야지",
+    "살래",
+    "써봐야",
+    "써볼",
+    "장바구니",
+    "담아",
+    "주문"
+  ],
+  expectation: [
+    "기대",
+    "기대돼",
+    "궁금해져",
+    "밝아질",
+    "눈길",
+    "끌리",
+    "산뜻",
+    "좋을 것",
+    "좋을것",
+    "고민없이",
+    "찾고 있었",
+    "찾고있",
+    "딱이",
+    "귀차니즘"
+  ],
+  productConcern: [
+    "하얀가루",
+    "흰가루",
+    "가루날림",
+    "백탁",
+    "떡져",
+    "떡짐",
+    "떡져보",
+    "기름져",
+    "번들",
+    "티나",
+    "티 나",
+    "잔여감"
+  ],
   tasteUse: [
     "맛",
     "비릿",
@@ -136,11 +181,17 @@ const TYPE_TERMS = {
     "마시면",
     "챙기기",
     "사용감",
+    "착용감",
+    "발림성",
+    "간편",
+    "편할",
+    "편하",
     "발림",
     "제형",
     "향",
     "부담"
   ],
+  needEmpathy: ["필요한", "필요하", "하나쯤", "급할", "바쁠", "편할것", "편할 것", "간편"],
   visit: ["가보고", "가볼", "방문", "예약하고", "예약해", "들러", "상담받", "상담 받고", "가야겠"],
   experience: [
     "저도",
@@ -154,7 +205,7 @@ const TYPE_TERMS = {
     "이용해",
     "관리받",
     "공구때",
-    "올영",
+    "드럭스토어",
     "사 먹던",
     "먹던템",
     "꾸준히",
@@ -592,8 +643,22 @@ export function classifyComment(value = "") {
   if (includesAny(compacted, TYPE_TERMS.sensitive)) return "민감/불만형";
   if (hasQuestionIntent(content)) return "질문형";
   if (includesAny(compacted, TYPE_TERMS.experience)) return "경험공유형";
+  if (
+    includesAny(compacted, TYPE_TERMS.productConcern) &&
+    includesAny(compacted, ["없어서", "없고", "없어", "없네", "덜해서", "덜한", "좋아요", "좋아"])
+  ) {
+    return "사용감반응형";
+  }
+  if (
+    includesAny(compacted, TYPE_TERMS.tasteUse) &&
+    includesAny(compacted, ["없어서", "덜해서", "좋아요", "괜찮", "편하", "간편", "착용감"])
+  ) {
+    return "사용감반응형";
+  }
   if (includesAny(compacted, TYPE_TERMS.purchase)) return "구매의사형";
-  if (includesAny(compacted, TYPE_TERMS.tasteUse)) return "맛/사용감 반응형";
+  if (includesAny(compacted, TYPE_TERMS.productConcern)) return "제품고민공감형";
+  if (includesAny(compacted, TYPE_TERMS.needEmpathy)) return "공감형";
+  if (includesAny(compacted, TYPE_TERMS.tasteUse)) return "사용감반응형";
   if (includesAny(compacted, TYPE_TERMS.expectation)) return "기대감표현형";
   if (includesAny(compacted, TYPE_TERMS.visit)) return "방문의사형";
   if (includesAny(compacted, TYPE_TERMS.empathy)) return "공감형";
@@ -621,7 +686,8 @@ export function inferCommentIntent(type, content = "") {
   if (type === "방문의사형") return "방문 또는 상담 관심";
   if (type === "구매의사형") return "구매 의사와 호감 표현";
   if (type === "기대감표현형") return "기대감 또는 첫인상 호감";
-  if (type === "맛/사용감 반응형") return "맛이나 사용감에 대한 반응";
+  if (type === "제품고민공감형") return "제품 선택 전 걱정이나 고민에 대한 공감";
+  if (type === "사용감반응형" || type === "맛/사용감 반응형") return "맛이나 사용감에 대한 반응";
   if (type === "경험공유형") return "본인 경험 공유";
   if (type === "칭찬형") return "포스팅 또는 매장에 대한 긍정 반응";
   if (type === "공감형") return "내용에 대한 공감";
@@ -684,7 +750,13 @@ function isKeywordRelevant(content = "", mainKeyword = "") {
     "비릿",
     "레몬에이드",
     "꾸준",
-    "톤업"
+    "톤업",
+    "하얀가루",
+    "가루날림",
+    "백탁",
+    "떡짐",
+    "착용감",
+    "간편"
   ]);
 }
 
@@ -703,7 +775,9 @@ function shouldUseKeyword(type, content, mainKeyword, sequence = 0) {
   const keywordAppearsInComment = tokenize(mainKeyword).some((token) => compact(content).includes(compact(token)));
 
   if (type === "질문형" || type === "방문의사형") return sequence % 2 === 0 || keywordAppearsInComment;
-  if (type === "맛/사용감 반응형") return keywordAppearsInComment && sequence % 3 === 0;
+  if (type === "사용감반응형" || type === "맛/사용감 반응형" || type === "제품고민공감형") {
+    return keywordAppearsInComment && sequence % 3 === 0;
+  }
   if (["구매의사형", "기대감표현형", "경험공유형", "칭찬형", "공감형"].includes(type)) {
     return keywordAppearsInComment && sequence % 2 === 0;
   }
@@ -803,7 +877,14 @@ function getInteractionPoint(content = "", coreKeywords = []) {
   if (normalized.includes("패키지")) return "패키지 느낌";
   if (normalized.includes("레몬에이드")) return "레몬에이드맛";
   if (normalized.includes("비릿") || normalized.includes("비린")) return "맛 부담";
-  if (normalized.includes("공구") || normalized.includes("올영")) return "공구나 올영에서 챙겨보신 경험";
+  if (normalized.includes("하얀가루") || normalized.includes("흰가루")) return "하얀가루가 남는 부분";
+  if (normalized.includes("가루날림")) return "가루날림";
+  if (normalized.includes("백탁")) return "백탁";
+  if (normalized.includes("떡져") || normalized.includes("떡짐")) return "떡져 보이는 걱정";
+  if (normalized.includes("귀차니즘")) return "귀찮을 때 간편하게 쓰기 좋다는 점";
+  if (normalized.includes("필요")) return "하나쯤 필요하다는 부분";
+  if (normalized.includes("찾고있") || normalized.includes("찾고있었")) return "찾고 계셨다는 말";
+  if (normalized.includes("공구") || normalized.includes("드럭스토어")) return "구매처에서 챙겨보신 경험";
   if (normalized.includes("3개월") || normalized.includes("꾸준")) return "꾸준히 챙겨본 후기";
   if (normalized.includes("톤업")) return "톤업 효과";
   if (normalized.includes("꼼꼼")) return "꼼꼼한 부분";
@@ -817,7 +898,10 @@ function keywordSentence(mainKeyword, type, audienceType) {
   if (!mainKeyword) return "";
 
   if (type === "질문형") return `${withTopicParticle(mainKeyword)} 기준을 같이 보면 이해하기가 더 쉽습니다.`;
-  if (type === "맛/사용감 반응형") return `${mainKeyword}도 맛이 부담스러우면 꾸준히 챙기기 어렵더라고요.`;
+  if (type === "사용감반응형" || type === "맛/사용감 반응형") {
+    return `${mainKeyword}도 사용감이 편해야 꾸준히 손이 가더라고요.`;
+  }
+  if (type === "제품고민공감형") return `${mainKeyword}는 사용 후 티가 덜 나는지도 중요한 기준이더라고요.`;
   if (type === "구매의사형" || type === "기대감표현형") {
     return `${withTopicParticle(mainKeyword)} 첫인상과 편하게 챙길 수 있는 느낌이 같이 중요하더라고요.`;
   }
@@ -828,6 +912,133 @@ function keywordSentence(mainKeyword, type, audienceType) {
   }
 
   return `${withTopicParticle(mainKeyword)} 맥락이 자연스럽게 이어질 때 더 와닿더라고요.`;
+}
+
+function getReplyTopic(content = "", form = {}, mainKeyword = "", coreKeywords = []) {
+  const normalized = compact(content);
+  if (normalized.includes("드라이샴푸")) return "드라이샴푸";
+  if (mainKeyword) return mainKeyword;
+
+  const titleCandidate = createMainKeywordCandidates(form.postTitle || form.title)[0];
+  if (titleCandidate) return titleCandidate;
+
+  return coreKeywords.find((keyword) => keyword.length > 1) || "이 제품";
+}
+
+function analyzeCommentSignals(content = "") {
+  const normalized = compact(content);
+  const hasPowder = includesAny(normalized, ["하얀가루", "흰가루", "가루날림"]);
+  const hasWhiteCast = includesAny(normalized, ["백탁"]);
+  const hasGreasiness = includesAny(normalized, ["떡져", "떡짐", "떡져보"]);
+  const hasConcern = hasPowder || hasWhiteCast || hasGreasiness;
+  const hasNoConcern = hasConcern && includesAny(normalized, ["없어서", "없고", "없어", "없네", "없다", "덜한", "덜해서"]);
+  const hasPurchase = includesAny(normalized, TYPE_TERMS.purchase);
+  const hasConvenience = includesAny(normalized, ["귀차니즘", "간편", "편할", "편하", "바쁠", "급할", "손이가"]);
+  const hasNeed = includesAny(normalized, TYPE_TERMS.needEmpathy);
+  const isSearching = includesAny(normalized, ["찾고있", "찾고있었", "찾고 있었", "알려주신"]);
+
+  return {
+    hasPowder,
+    hasWhiteCast,
+    hasGreasiness,
+    hasConcern,
+    hasNoConcern,
+    hasPurchase,
+    hasConvenience,
+    hasNeed,
+    isSearching
+  };
+}
+
+function createMeaningBasedReplyCandidates({ type, content, form, coreKeywords, mainKeyword }) {
+  const signals = analyzeCommentSignals(content);
+  const topic = getReplyTopic(content, form, mainKeyword, coreKeywords);
+  const productPhrase = topic === "이 제품" ? "이런 제품" : topic;
+
+  if (type === "질문형" || type === "민감/불만형" || type === "스팸/의미불명형") return [];
+
+  if (signals.hasNoConcern) {
+    const concernText =
+      signals.hasPowder && signals.hasWhiteCast
+        ? "가루날림이랑 백탁이 덜한 부분"
+        : signals.hasPowder
+          ? "하얀가루나 가루날림이 덜한 부분"
+          : signals.hasWhiteCast
+            ? "백탁이 덜한 부분"
+            : "떡져 보이지 않는 부분";
+
+    return [
+      `${concernText}이 진짜 중요한 포인트더라고요. ${
+        signals.isSearching ? "찾고 계셨다니 이번 후기가 도움 됐다면 좋겠어요^^" : "그 부분을 좋게 봐주셔서 반가워요^^"
+      }`,
+      `맞아요, ${productPhrase}는 쓰고 난 뒤 티가 덜 나는지가 제일 크게 느껴지더라고요. 구매까지 생각하셨다니 도움이 됐다면 좋겠어요ㅎㅎ`,
+      `${concernText}을 콕 짚어주셨네요. ${productPhrase} 고를 때 그 부분이 편해야 손이 더 자주 가는 것 같아요.`,
+      `저도 그 부분이 핵심이라고 봤어요. ${productPhrase}는 가볍게 쓰더라도 가루나 백탁이 덜해야 만족감이 크더라고요.`
+    ];
+  }
+
+  if (signals.hasConcern && signals.hasPurchase) {
+    const concernText = [
+      signals.hasPowder ? "하얀가루" : "",
+      signals.hasWhiteCast ? "백탁" : "",
+      signals.hasGreasiness ? "떡짐" : ""
+    ].filter(Boolean).join("/") || "사용 후 티 나는 부분";
+
+    return [
+      `맞아요, ${productPhrase}는 ${concernText} 걱정이 제일 신경 쓰이더라고요. 이번 제품은 그런 부분을 보고 고르시는 분들께 참고가 될 것 같아요ㅎㅎ`,
+      `저도 그 부분이 제일 중요하다고 봤어요. ${productPhrase}는 ${withSubjectParticle(concernText)} 덜해야 손이 더 자주 가더라고요.`,
+      `맞아요, 잘못 고르면 오히려 더 티 나는 경우가 있더라고요. 그런 부분이 걱정되는 분들께 이번 후기가 도움이 되면 좋겠어요ㅎㅎ`,
+      `${concernText} 때문에 망설이셨던 마음이 이해돼요. 써보고 싶다고 봐주셔서 반갑고, 고르실 때 참고가 됐으면 좋겠어요.`,
+      `구매 전에 ${concernText}을 먼저 보게 되는 마음 공감해요. ${productPhrase}는 그 부분이 편해야 실제로 쓰기 좋더라고요.`
+    ];
+  }
+
+  if (signals.hasConvenience && signals.hasPurchase) {
+    return [
+      `맞아요ㅎㅎ 바쁠 때 간편하게 쓰기 좋은 제품이라 귀찮을 때 더 손이 가는 것 같아요. 좋게 봐주셔서 반가워요!`,
+      `귀찮을 때 바로 쓸 수 있다는 점이 확실히 매력적이더라고요. 구매까지 생각해주셨다니 이번 후기가 도움 됐으면 좋겠어요ㅎㅎ`,
+      `${productPhrase}는 준비가 번거로운 날에 더 생각나는 제품 같아요. 간편함을 좋게 봐주셔서 반가워요.`,
+      `저도 귀찮을 때 편하게 쓰는 포인트가 제일 크게 느껴졌어요. 써보고 싶게 봐주셔서 기분 좋네요!`
+    ];
+  }
+
+  if (signals.hasConvenience || signals.hasNeed) {
+    return [
+      `맞아요, 하나쯤 있으면 급할 때 정말 유용하더라고요. 편하게 쓸 수 있는 점이 가장 큰 장점 같아요.`,
+      `${productPhrase}는 필요할 때 바로 꺼내 쓰기 좋은 느낌이 있더라고요. 편할 것 같다고 봐주셔서 반가워요.`,
+      `그쵸, 이런 제품은 평소보다 급할 때 진가가 느껴지는 것 같아요. 필요한 순간을 같이 공감해주셔서 좋네요.`,
+      `편하게 쓸 수 있다는 점을 알아봐주셨네요ㅎㅎ 바쁜 날에 부담이 줄어드는 부분이 확실히 장점 같아요.`
+    ];
+  }
+
+  if (signals.hasConcern) {
+    const point = signals.hasPowder ? "하얀가루" : signals.hasWhiteCast ? "백탁" : "떡짐";
+
+    return [
+      `맞아요, ${productPhrase}는 ${point} 걱정이 있으면 선뜻 고르기 어렵더라고요. 그 부분을 먼저 봐주신 게 공감돼요.`,
+      `${point} 때문에 고민되는 마음 이해돼요. 그래서 사용 후 티가 덜 나는지 보는 게 꽤 중요한 기준이 되더라고요.`,
+      `저도 ${point}은 꼭 확인하게 되더라고요. 이번 내용이 고르실 때 조금이라도 참고가 되면 좋겠어요.`,
+      `${productPhrase} 고를 때 ${point}은 그냥 넘기기 어려운 포인트죠. 댓글로 짚어주셔서 더 와닿았어요.`
+    ];
+  }
+
+  if (signals.hasPurchase) {
+    return [
+      `구매까지 생각해주셨다니 반갑네요ㅎㅎ ${productPhrase}는 실제로 쓸 상황을 떠올려보고 고르면 더 만족하기 쉬운 것 같아요.`,
+      `써보고 싶게 봐주셔서 기분 좋아요. ${productPhrase} 고를 때 댓글에서 짚어주신 부분도 같이 보면 좋겠더라고요.`,
+      `관심 있게 봐주셔서 반가워요ㅎㅎ 구매 전에는 사용 상황이 나와 잘 맞는지 한 번 더 보면 도움이 될 것 같아요.`
+    ];
+  }
+
+  if (type === "사용감반응형" || type === "맛/사용감 반응형") {
+    return [
+      `사용감 포인트를 봐주셨네요. ${productPhrase}는 실제로 손이 자주 가려면 이런 부분이 편해야 하더라고요.`,
+      `그 부분이 꽤 중요하죠ㅎㅎ 사용 후 느낌이 부담스럽지 않아야 계속 쓰기 좋은 것 같아요.`,
+      `${productPhrase}의 사용감을 좋게 봐주셔서 반가워요. 직접 고를 때도 그런 디테일이 은근히 크게 느껴지더라고요.`
+    ];
+  }
+
+  return [];
 }
 
 function createReplyCandidates({ type, content, form, coreKeywords, mainKeyword, useKeyword }) {
@@ -851,6 +1062,15 @@ function createReplyCandidates({ type, content, form, coreKeywords, mainKeyword,
       `그렇게 느끼실 수 있는 부분도 있다고 생각합니다. 공유해주신 내용은 참고해서 더 신중히 보겠습니다.`
     ];
   }
+
+  const meaningBasedCandidates = createMeaningBasedReplyCandidates({
+    type,
+    content,
+    form,
+    coreKeywords,
+    mainKeyword
+  });
+  if (meaningBasedCandidates.length > 0) return meaningBasedCandidates;
 
   if (type === "질문형") {
     return isBusiness
@@ -891,7 +1111,7 @@ function createReplyCandidates({ type, content, form, coreKeywords, mainKeyword,
     ];
   }
 
-  if (type === "맛/사용감 반응형") {
+  if (type === "사용감반응형" || type === "맛/사용감 반응형") {
     const lemonReply = normalized.includes("레몬에이드")
       ? "레몬에이드맛이라는 점이 확실히 편하게 느껴지는 포인트였어요."
       : `${point}이 부담을 덜어주는 포인트로 느껴졌어요.`;
@@ -926,7 +1146,7 @@ function createReplyCandidates({ type, content, form, coreKeywords, mainKeyword,
   if (type === "경험공유형") {
     return [
       `이미 꾸준히 챙겨보신 후기라 더 현실감 있네요ㅎㅎ 직접 드셔본 경험까지 공유해주셔서 다른 분들께도 도움이 될 것 같아요.`,
-      `공구나 올영에서 챙겨보셨던 템이라고 해주시니 더 와닿아요. ${point}까지 남겨주셔서 든든합니다.`,
+      `공구나 드럭스토어에서 챙겨보셨던 제품이라고 해주시니 더 와닿아요. ${point}까지 남겨주셔서 든든합니다.`,
       `직접 경험해본 이야기는 확실히 참고가 되네요ㅎㅎ ${point}을 공유해주셔서 다른 분들도 보기 좋을 것 같아요.`
     ];
   }
@@ -1201,6 +1421,15 @@ function createContextualCaptureCandidates({ type, content, form, coreKeywords, 
   const questionAnswer = getQuestionAnswer(content, text(form.audienceType || form.userType));
   const brandName = text(form.brandName || form.storeName);
   const brandPhrase = brandName ? `${brandName}도 ` : "";
+  const meaningBasedCandidates = createMeaningBasedReplyCandidates({
+    type,
+    content,
+    form,
+    coreKeywords,
+    mainKeyword
+  });
+
+  if (meaningBasedCandidates.length > 0) return meaningBasedCandidates;
 
   if (type === "구매의사형" || type === "기대감표현형") {
     return [
@@ -1212,7 +1441,7 @@ function createContextualCaptureCandidates({ type, content, form, coreKeywords, 
     ];
   }
 
-  if (type === "맛/사용감 반응형") {
+  if (type === "사용감반응형" || type === "맛/사용감 반응형") {
     const lemonLine = normalized.includes("레몬에이드")
       ? "레몬에이드맛이라는 점이 확실히 편하게 느껴지는 포인트였어요."
       : `${point}이 부담을 덜어주는 포인트로 느껴졌어요.`;
@@ -1227,7 +1456,7 @@ function createContextualCaptureCandidates({ type, content, form, coreKeywords, 
   if (type === "경험공유형") {
     return [
       "이미 꾸준히 챙겨보신 후기라 더 현실감 있네요ㅎㅎ 직접 드셔본 경험까지 공유해주셔서 다른 분들께도 도움이 될 것 같아요.",
-      `공구나 올영에서 챙겨보셨던 템이라고 해주시니 더 와닿아요. ${point}까지 남겨주셔서 댓글 보시는 분들도 참고하기 좋을 것 같아요.`,
+      `공구나 드럭스토어에서 챙겨보셨던 제품이라고 해주시니 더 와닿아요. ${point}까지 남겨주셔서 댓글 보시는 분들도 참고하기 좋을 것 같아요.`,
       `직접 경험해본 이야기는 확실히 힘이 있네요ㅎㅎ ${point}을 나눠주셔서 더 현실감 있게 느껴져요.`
     ];
   }

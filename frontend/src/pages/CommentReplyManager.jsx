@@ -338,7 +338,7 @@ const toReplyListText = (comments) =>
 const toReplySetText = (comments) =>
   comments
     .filter((comment) => comment.content && (comment.reply || comment.status === "스킵 권장"))
-    .map((comment) =>
+    .map((comment, index) =>
       [
         `[${getCommentDisplayName(comment, index)}]`,
         `원댓글: ${comment.content}`,
@@ -1345,13 +1345,16 @@ export default function CommentReplyManager() {
             )}
 
             <label className="block">
-              <FieldLabel required>포스팅 제목</FieldLabel>
+              <FieldLabel>포스팅 제목</FieldLabel>
               <input
                 value={form.postTitle}
                 onChange={(event) => updateForm("postTitle", event.target.value)}
                 className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
                 placeholder="예: 강남 피부관리샵 리프팅 처음 방문 전 확인할 기준"
               />
+              <p className="mt-1 text-xs font-semibold text-ink/45">
+                선택 입력입니다. 비워도 생성할 수 있고, 입력하면 댓글 맥락이 더 자연스러워집니다.
+              </p>
             </label>
 
             <label className="block">
@@ -2069,8 +2072,12 @@ export default function CommentReplyManager() {
                 disabled={validComments.length === 0 || status === "generating"}
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
               >
-                <Sparkles size={16} aria-hidden="true" />
-                전체 상호대댓글 생성
+                {status === "generating" ? (
+                  <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Sparkles size={16} aria-hidden="true" />
+                )}
+                {status === "generating" ? "생성 중..." : `전체 상호대댓글 생성 (${validComments.length}개)`}
               </button>
               <button
                 type="button"

@@ -90,7 +90,7 @@ const BRAND_KEYWORD_HINTS = [
   "브랜드",
   "제품",
   "공구",
-  "올영"
+  "드럭스토어"
 ];
 
 const isBrandLikeKeyword = (keyword, index, total) => {
@@ -1075,6 +1075,36 @@ const IMAGE_QUERY_PRESETS = {
     sceneDescription: "상품 구성이나 상세페이지 작업 과정을 보여줄 수 있는 책상 위 작업 장면",
     detailDescription: "체크리스트, 상품 구성표, 노트북 화면처럼 비교 포인트를 정리한 장면"
   },
+  피부관리샵: {
+    hero: "skin care treatment room interior",
+    scene: "facial lifting treatment consultation",
+    detail: "skincare checklist beauty treatment notes",
+    closing: "beauty salon reservation calendar",
+    heroDescription: "관리실 내부나 상담 공간처럼 첫 방문자가 분위기를 바로 이해할 수 있는 장면",
+    sceneDescription: "상담 또는 관리 과정이 자연스럽게 보이는 피부관리샵 이용 장면",
+    detailDescription: "피부 고민, 관리 포인트, 체크리스트를 정리한 뷰티 노트 장면",
+    closingDescription: "예약 일정이나 방문 전 확인 사항을 정리한 캘린더와 메모 장면"
+  },
+  스포츠용품: {
+    hero: "knee brace running gear flatlay",
+    scene: "runner wearing knee support outdoor",
+    detail: "sports gear comfort checklist",
+    closing: "running accessories packing checklist",
+    heroDescription: "무릎보호대와 러닝용품이 한눈에 보이는 제품 전체컷",
+    sceneDescription: "러닝이나 운동 중 착용감을 떠올릴 수 있는 실제 사용 장면",
+    detailDescription: "착용감, 고정력, 소재를 비교할 수 있는 스포츠용품 체크 장면",
+    closingDescription: "운동 전 준비물이나 사용 전 확인 포인트를 정리한 장면"
+  },
+  "육아/도서": {
+    hero: "parenting books reading desk",
+    scene: "parent child reading books at home",
+    detail: "elementary reading guide checklist",
+    closing: "family reading plan calendar",
+    heroDescription: "육아서적과 독서 노트가 정돈된 책상 이미지",
+    sceneDescription: "부모와 아이가 책을 함께 읽거나 독서 습관을 만드는 장면",
+    detailDescription: "초등 독서 기준, 추천 이유, 부모 가이드를 정리한 체크리스트 장면",
+    closingDescription: "가정 독서 계획이나 책 선택 기준을 정리한 캘린더 장면"
+  },
   "로컬 매장": {
     hero: "small business storefront interior",
     scene: "customer consultation local shop",
@@ -1120,6 +1150,14 @@ const IMAGE_QUERY_PRESETS = {
 const getImageQueryPreset = (category) =>
   IMAGE_QUERY_PRESETS[text(category)] ?? IMAGE_QUERY_PRESETS.기타;
 
+const getImageSuggestionCount = (form = {}) => {
+  const targetLength = resolveTargetLength(form);
+
+  if (targetLength <= 1300) return 2;
+  if (targetLength >= 2000) return 4;
+  return 3;
+};
+
 export function createImageSuggestions(form, selectedTopic, selectedTitle) {
   const keyword = getMainKeyword(form);
   const brand = getBrandLabel(form);
@@ -1133,7 +1171,7 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       id: "image-slot-1",
       label: "이미지 추천 1",
       title: "대표 이미지",
-      insertAfter: "도입부 다음",
+      insertAfter: "도입부 첫 문단 아래",
       description: `${brand}의 첫인상이 보이도록 ${asObject(imagePreset.heroDescription)} 추천합니다. 공간, 제품, 상담 분위기가 한눈에 들어오는 컷이 좋습니다.`,
       searchKeyword: imagePreset.hero,
       query: imagePreset.hero,
@@ -1154,7 +1192,7 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       id: "image-slot-2",
       label: "이미지 추천 2",
       title: "사용 장면",
-      insertAfter: "핵심 포인트 설명 뒤",
+      insertAfter: "첫 번째 핵심 포인트 문단 아래",
       description: `${strengths[0]} 같은 강점이 실제로 느껴지도록 ${asObject(imagePreset.sceneDescription)} 넣으면 좋습니다. 고객이 이용하거나 상담받는 자연스러운 분위기 컷을 우선 추천합니다.`,
       searchKeyword: imagePreset.scene,
       query: imagePreset.scene,
@@ -1174,8 +1212,8 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
     {
       id: "image-slot-3",
       label: "이미지 추천 3",
-      title: "비교컷",
-      insertAfter: "마무리 전",
+      title: "비교 체크컷",
+      insertAfter: "비교 기준 또는 체크포인트 문단 아래",
       description: `본문 마무리 전에는 독자가 판단을 정리할 수 있게 ${asObject(imagePreset.detailDescription)} 배치하면 좋습니다. 체크리스트, 노트, 비교표처럼 검색 결과에서 바로 찾기 쉬운 이미지를 권장합니다.`,
       searchKeyword: imagePreset.detail,
       query: imagePreset.detail,
@@ -1184,6 +1222,27 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       bridge: {
         type: "blog-body-image",
         slot: "comparison",
+        status: "placeholder",
+        context: {
+          mainKeyword: keyword,
+          selectedTopic,
+          selectedTitle
+        }
+      }
+    },
+    {
+      id: "image-slot-4",
+      label: "이미지 추천 4",
+      title: "마무리 행동컷",
+      insertAfter: "마무리 CTA 바로 전 문단 아래",
+      description: `${asObject(imagePreset.closingDescription || imagePreset.detailDescription)} 넣으면 독자가 다음 행동을 떠올리기 쉽습니다. 예약, 비교, 저장, 체크리스트처럼 글의 마무리와 이어지는 컷을 추천합니다.`,
+      searchKeyword: imagePreset.closing || imagePreset.detail,
+      query: imagePreset.closing || imagePreset.detail,
+      altText: `${keyword} 마무리 확인 이미지`,
+      previewUrl: "",
+      bridge: {
+        type: "blog-body-image",
+        slot: "closing-action",
         status: "placeholder",
         context: {
           mainKeyword: keyword,
@@ -1206,8 +1265,65 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       altText: applyAvoidWords(item.altText, avoidWords),
       orientation: item.id === "image-slot-2" ? "portrait" : "landscape"
     })
-  }));
+  })).slice(0, getImageSuggestionCount(form));
 }
+
+const isBodyHeadingParagraph = (paragraph = "") => /^\*\*.+\*\*$/u.test(text(paragraph));
+
+const getDistributedMarkerPositions = (count, candidateCount) => {
+  if (candidateCount <= 0) return [];
+
+  const preferred =
+    count <= 2
+      ? [0, candidateCount - 2]
+      : count === 3
+        ? [0, Math.floor(candidateCount * 0.45), candidateCount - 2]
+        : [0, Math.floor(candidateCount * 0.32), Math.floor(candidateCount * 0.62), candidateCount - 2];
+
+  const used = new Set();
+
+  return preferred.slice(0, count).map((position) => {
+    let nextPosition = Math.min(Math.max(position, 0), candidateCount - 1);
+
+    while (used.has(nextPosition) && nextPosition < candidateCount - 1) nextPosition += 1;
+    while (used.has(nextPosition) && nextPosition > 0) nextPosition -= 1;
+
+    used.add(nextPosition);
+    return nextPosition;
+  });
+};
+
+const createImageInsertionMarker = (item, index) =>
+  [
+    `[이미지 삽입 추천 ${index + 1}]`,
+    `위치: ${item.insertAfter}`,
+    `이미지 컨셉: ${item.description}`,
+    `이미지 검색 키워드: ${item.searchKeyword}`,
+    "활용 안내: 이 키워드를 Pexels, Canva, 미리캔버스에서 검색해보세요."
+  ].join("\n");
+
+const insertImageInsertionMarkers = (body = "", imageSuggestions = []) => {
+  const paragraphs = normalizeBlogBody(body).split(/\n{2,}/u).filter(Boolean);
+  const candidates = paragraphs
+    .map((paragraph, index) => ({ paragraph, index }))
+    .filter(({ paragraph }) => !isBodyHeadingParagraph(paragraph) && Array.from(text(paragraph)).length > 24);
+  const targetPositions = getDistributedMarkerPositions(imageSuggestions.length, candidates.length);
+  const markerByParagraphIndex = new Map();
+
+  targetPositions.forEach((candidatePosition, index) => {
+    const paragraphIndex = candidates[candidatePosition]?.index;
+    if (Number.isFinite(paragraphIndex)) {
+      markerByParagraphIndex.set(paragraphIndex, createImageInsertionMarker(imageSuggestions[index], index));
+    }
+  });
+
+  return paragraphs
+    .flatMap((paragraph, index) => {
+      const marker = markerByParagraphIndex.get(index);
+      return marker ? [paragraph, marker] : [paragraph];
+    })
+    .join("\n\n");
+};
 
 const SERVICE_TAG_PRESETS = [
   {
@@ -1233,6 +1349,9 @@ const SERVICE_TAG_PRESETS = [
 ];
 
 const CATEGORY_TAG_PRESETS = {
+  피부관리샵: ["피부관리샵", "리프팅관리", "피부탄력관리"],
+  스포츠용품: ["스포츠용품", "러닝용품", "운동용품"],
+  "육아/도서": ["육아서적", "초등독서", "부모가이드"],
   "온라인 쇼핑몰": ["온라인쇼핑몰", "상세페이지제작", "쇼핑몰운영"],
   "로컬 매장": ["로컬매장", "방문상담", "매장홍보"],
   "교육/강의": ["교육상담", "학습관리", "강의문의"],
@@ -1620,26 +1739,27 @@ export function createFinalContent(
   const imageSuggestions = createImageSuggestions(form, selectedTopic, selectedTitle);
   const hashtagGroups = createHashtagGroups(form);
   const hashtags = flattenHashtagGroups(hashtagGroups);
-  const postBody = applyAvoidWords(
+  const basePostBody = applyAvoidWords(
     buildPostBody(form, selectedTopic, selectedTitle, finalOutline, {
       selectedOpeningSentence,
       selectedCtaSentence
     }),
     avoidWords
   );
+  const postBody = insertImageInsertionMarkers(basePostBody, imageSuggestions);
   const keywordOptimization = {
     ...keywordPlan,
-    actualOccurrences: countKeywordOccurrences(postBody, keyword),
+    actualOccurrences: countKeywordOccurrences(basePostBody, keyword),
     selectedOpeningSentence,
     selectedCtaSentence
   };
-  const seoCheck = createSeoCheck(form, postBody, finalOutline, hashtags, selectedCtaSentence, selectedTitle);
+  const seoCheck = createSeoCheck(form, basePostBody, finalOutline, hashtags, selectedCtaSentence, selectedTitle);
   const strategyMemo = createStrategyMemo(
     form,
     selectedTopic,
     selectedTitle,
     finalOutline,
-    postBody,
+    basePostBody,
     imageSuggestions,
     keywordOptimization,
     seoCheck

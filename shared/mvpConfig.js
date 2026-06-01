@@ -7,6 +7,9 @@ export const STORAGE_KEYS = {
 
 export const makerOptions = {
   categories: [
+    "피부관리샵",
+    "스포츠용품",
+    "육아/도서",
     "온라인 쇼핑몰",
     "로컬 매장",
     "교육/강의",
