@@ -1218,6 +1218,8 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
   const strengths = getStrengths(form);
   const avoidWords = splitAvoidWords(form.avoid);
   const imagePreset = getImageQueryPreset(category);
+  const createPrompt = (subject, mood) =>
+    `${subject}, ${keyword}, ${category}, natural light, clean lifestyle composition, realistic photo style, high detail, no text overlay, no watermark, ${mood}`;
 
   const suggestions = [
     {
@@ -1225,7 +1227,10 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       label: "이미지 추천 1",
       title: "대표 이미지",
       insertAfter: "도입부 첫 문단 아래",
+      markerGuide: "대표 이미지 또는 제품 전체컷",
       description: `${brand}의 첫인상이 보이도록 ${asObject(imagePreset.heroDescription)} 추천합니다. 공간, 제품, 상담 분위기가 한눈에 들어오는 컷이 좋습니다.`,
+      directShotGuide: `제품이나 공간이 한눈에 보이도록 밝은 자연광에서 정면 또는 45도 각도로 촬영해보세요. 배경은 깔끔하게 정리하고, ${brand}의 핵심 분위기가 먼저 보이게 잡으면 좋습니다.`,
+      aiPrompt: createPrompt(`${brand} main visual, product or service hero photo`, "bright and trustworthy mood"),
       searchKeyword: imagePreset.hero,
       query: imagePreset.hero,
       altText: `${brand} ${keyword} 대표 이미지`,
@@ -1246,7 +1251,10 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       label: "이미지 추천 2",
       title: "사용 장면",
       insertAfter: "첫 번째 핵심 포인트 문단 아래",
+      markerGuide: "사용 장면 또는 실제 착용/상담 컷",
       description: `${strengths[0]} 같은 강점이 실제로 느껴지도록 ${asObject(imagePreset.sceneDescription)} 넣으면 좋습니다. 고객이 이용하거나 상담받는 자연스러운 분위기 컷을 우선 추천합니다.`,
+      directShotGuide: `직접 사용하는 손, 착용한 모습, 상담받는 장면처럼 실제 상황이 보이게 촬영해보세요. 너무 연출된 컷보다 자연스러운 사용 장면이 블로그에 더 잘 어울립니다.`,
+      aiPrompt: createPrompt(`${keyword} real usage scene, hands using product or customer consultation`, "realistic everyday scene"),
       searchKeyword: imagePreset.scene,
       query: imagePreset.scene,
       altText: `${keyword} 상담 또는 사용 장면`,
@@ -1267,7 +1275,10 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       label: "이미지 추천 3",
       title: "비교 체크컷",
       insertAfter: "비교 기준 또는 체크포인트 문단 아래",
+      markerGuide: "비교 포인트 또는 체크리스트 컷",
       description: `본문 마무리 전에는 독자가 판단을 정리할 수 있게 ${asObject(imagePreset.detailDescription)} 배치하면 좋습니다. 체크리스트, 노트, 비교표처럼 검색 결과에서 바로 찾기 쉬운 이미지를 권장합니다.`,
+      directShotGuide: `제품 디테일, 소재, 구성품, 체크리스트 메모를 가까이에서 촬영해보세요. 독자가 비교 기준을 바로 이해할 수 있게 중요한 부분을 화면 중앙에 두면 좋습니다.`,
+      aiPrompt: createPrompt(`${keyword} detail checklist, product comparison notes on desk`, "organized flatlay realistic photo"),
       searchKeyword: imagePreset.detail,
       query: imagePreset.detail,
       altText: `${keyword} 체크리스트 비교 이미지`,
@@ -1288,7 +1299,10 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
       label: "이미지 추천 4",
       title: "마무리 행동컷",
       insertAfter: "마무리 CTA 바로 전 문단 아래",
+      markerGuide: "마무리 확인 또는 다음 행동 컷",
       description: `${asObject(imagePreset.closingDescription || imagePreset.detailDescription)} 넣으면 독자가 다음 행동을 떠올리기 쉽습니다. 예약, 비교, 저장, 체크리스트처럼 글의 마무리와 이어지는 컷을 추천합니다.`,
+      directShotGuide: `예약 화면, 문의 전 메모, 비교 체크리스트처럼 글을 읽고 다음 행동을 떠올릴 수 있는 장면을 촬영해보세요. 손이나 노트가 함께 보이면 더 자연스럽습니다.`,
+      aiPrompt: createPrompt(`${keyword} final checklist, notes and calendar for next action`, "clean blog closing image"),
       searchKeyword: imagePreset.closing || imagePreset.detail,
       query: imagePreset.closing || imagePreset.detail,
       altText: `${keyword} 마무리 확인 이미지`,
@@ -1309,7 +1323,10 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
   return suggestions.map((item) => ({
     ...item,
     title: applyAvoidWords(item.title, avoidWords),
+    markerGuide: applyAvoidWords(item.markerGuide, avoidWords),
     description: applyAvoidWords(item.description, avoidWords),
+    directShotGuide: applyAvoidWords(item.directShotGuide, avoidWords),
+    aiPrompt: applyAvoidWords(item.aiPrompt, avoidWords),
     searchKeyword: applyAvoidWords(item.searchKeyword, avoidWords),
     query: applyAvoidWords(item.query, avoidWords),
     altText: applyAvoidWords(item.altText, avoidWords),
@@ -1348,11 +1365,9 @@ const getDistributedMarkerPositions = (count, candidateCount) => {
 
 const createImageInsertionMarker = (item, index) =>
   [
-    `[이미지 삽입 추천 ${index + 1}]`,
-    `위치: ${item.insertAfter}`,
-    `이미지 컨셉: ${item.description}`,
-    `이미지 검색 키워드: ${item.searchKeyword}`,
-    "활용 안내: 이 키워드를 Pexels, Canva, 미리캔버스에서 검색해보세요."
+    `[여기에 이미지를 넣어주세요 이미지 ${index + 1}]`,
+    `이 문단 아래에 ${item.markerGuide || item.title || "본문 흐름에 맞는 이미지"} 이미지를 넣어주세요.`,
+    `추천 이미지: ${item.description}`
   ].join("\n");
 
 const insertImageInsertionMarkers = (body = "", imageSuggestions = []) => {
@@ -1550,14 +1565,14 @@ const createSeoCheck = (
 ) => {
   const keyword = getMainKeyword(form);
   const secondaryKeywords = getSecondaryKeywords(form);
-  const avoidWords = uniqueText([
-    ...splitAvoidWords(form.avoid),
-    "상위노출 보장",
-    "최적화 보장",
-    "네이버 로직 완벽 반영",
-    "무조건 노출",
-    "방문자 증가 보장"
-  ]);
+  const defaultBlockedClaims = [
+    ["상위노출", "보장"],
+    ["최적화", "보장"],
+    ["네이버 로직", "완벽 반영"],
+    ["무조건", "노출"],
+    ["방문자 증가", "보장"]
+  ].map((parts) => parts.join(" "));
+  const avoidWords = uniqueText([...splitAvoidWords(form.avoid), ...defaultBlockedClaims]);
   const firstParagraph = getFirstParagraph(body);
   const firstSentence = getFirstSentence(body);
   const title = text(selectedTitle);
@@ -1580,7 +1595,8 @@ const createSeoCheck = (
   const hasGoalFlow = includesAny(body, getGoalFlowSignals(goal));
   const hasAudienceFlow = includesAny(body, getAudienceFlowSignals(audienceType));
   const hasImageMarkers =
-    imageSuggestions.length === 0 || /\[이미지 삽입 추천 \d+\]/u.test(markedBody);
+    imageSuggestions.length === 0 ||
+    /\[(?:여기에 이미지를 넣어주세요 이미지 \d+|이미지 \d+ 삽입 위치)\]/u.test(markedBody);
   const faqCount = (markedBody.match(/^Q\.\s/gmu) || []).length;
   const hasFaqQuestion = faqCount >= 2 || /무엇인가요|누구에게 필요한가요|어떤 기준|확인해야 하나요|\?/u.test(markedBody);
   const forbiddenFound = avoidWords.filter((word) => combinedForChecks.includes(word));
@@ -1657,8 +1673,9 @@ const createSeoCheck = (
     passedCount: items.filter((item) => item.passed).length,
     totalCount: items.length,
     summary: {
-      title: "SEO/AEO 점검",
-      description: "검색 의도 기반 구조, 키워드 자연 반영, 답변형 문장 구조, 본문 흐름 점검, 이미지 삽입 위치 표시를 확인합니다."
+      title: "블로그 글 구조 점검",
+      description:
+        "제목, 첫 문단, 소제목, 키워드, 마무리 문장, 이미지 삽입 위치가 검색자가 궁금해할 내용에 맞게 구성됐는지 확인합니다."
     },
     items
   };

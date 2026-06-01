@@ -1,5 +1,5 @@
-import { STORAGE_KEYS } from "@shared/mvpConfig.js";
-import { resolveTargetLength } from "./contentGenerator.js";
+import { STORAGE_KEYS } from "../../../shared/mvpConfig.js";
+import { resolveTargetLength } from "../../../shared/contentGenerator.js";
 
 const emptyDrafts = [];
 
@@ -66,19 +66,93 @@ export function saveSettings(settings) {
 }
 
 export function loadCompanyDefaults() {
+  return loadWritingProfiles()[0]?.values ?? null;
+}
+
+const isProfileEnvelope = (value) => Array.isArray(value?.profiles);
+
+const isProfileItem = (value) => Boolean(value?.id && value?.values);
+
+const createProfileId = () =>
+  `profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const normalizeWritingProfile = (profile, index = 0) => {
+  if (isProfileItem(profile)) {
+    return {
+      id: profile.id,
+      name: profile.name || `작성 프로필 ${index + 1}`,
+      values: profile.values || {},
+      createdAt: profile.createdAt || new Date().toISOString(),
+      updatedAt: profile.updatedAt || profile.createdAt || new Date().toISOString()
+    };
+  }
+
+  return {
+    id: createProfileId(),
+    name: index === 0 ? "기본 작성 프로필" : `작성 프로필 ${index + 1}`,
+    values: profile || {},
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+};
+
+export function loadWritingProfiles() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.companyDefaults);
-    return raw ? JSON.parse(raw) : null;
+    const parsed = raw ? JSON.parse(raw) : null;
+
+    if (!parsed) return [];
+
+    if (isProfileEnvelope(parsed)) {
+      return parsed.profiles.map(normalizeWritingProfile);
+    }
+
+    if (Array.isArray(parsed)) {
+      return parsed.map(normalizeWritingProfile);
+    }
+
+    return [normalizeWritingProfile(parsed)];
   } catch {
-    return null;
+    return [];
   }
 }
 
 export function saveCompanyDefaults(defaults) {
-  localStorage.setItem(STORAGE_KEYS.companyDefaults, JSON.stringify(defaults));
-  return defaults;
+  const profile = saveWritingProfile("기본 작성 프로필", defaults);
+  return profile.values;
 }
 
 export function clearCompanyDefaults() {
+  clearWritingProfiles();
+}
+
+export function saveWritingProfile(name, values, previousId = "") {
+  const profiles = loadWritingProfiles();
+  const now = new Date().toISOString();
+  const profileId = previousId || createProfileId();
+  const previous = profiles.find((profile) => profile.id === profileId);
+  const profile = {
+    id: profileId,
+    name: String(name || "").trim() || previous?.name || "작성 프로필",
+    values,
+    createdAt: previous?.createdAt || now,
+    updatedAt: now
+  };
+  const nextProfiles = [
+    profile,
+    ...profiles.filter((item) => item.id !== profile.id)
+  ].slice(0, 20);
+
+  localStorage.setItem(STORAGE_KEYS.companyDefaults, JSON.stringify({ profiles: nextProfiles }));
+  return profile;
+}
+
+export function deleteWritingProfile(profileId) {
+  const nextProfiles = loadWritingProfiles().filter((profile) => profile.id !== profileId);
+  localStorage.setItem(STORAGE_KEYS.companyDefaults, JSON.stringify({ profiles: nextProfiles }));
+  return nextProfiles;
+}
+
+export function clearWritingProfiles() {
   localStorage.removeItem(STORAGE_KEYS.companyDefaults);
 }

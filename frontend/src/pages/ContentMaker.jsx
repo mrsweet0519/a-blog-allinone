@@ -26,11 +26,11 @@ import {
 } from "../lib/contentGenerator.js";
 import { isBackendApiEnabled, postBackend } from "../lib/backendApi.js";
 import {
-  clearCompanyDefaults,
+  deleteWritingProfile,
   findDraft,
-  loadCompanyDefaults,
-  saveCompanyDefaults,
-  saveDraft
+  loadWritingProfiles,
+  saveDraft,
+  saveWritingProfile
 } from "../lib/localDrafts.js";
 
 const initialForm = {
@@ -53,9 +53,11 @@ const initialForm = {
 const OUTLINE_MIN = 3;
 const OUTLINE_MAX = 6;
 
-const COMPANY_DEFAULT_FIELDS = [
+const WRITING_PROFILE_FIELDS = [
+  "keyword",
   "audienceType",
   "category",
+  "goal",
   "brandName",
   "region",
   "strengths",
@@ -95,8 +97,8 @@ const STARTER_EXAMPLES = [
   }
 ];
 
-const pickCompanyDefaults = (form) =>
-  COMPANY_DEFAULT_FIELDS.reduce(
+const pickWritingProfileValues = (form) =>
+  WRITING_PROFILE_FIELDS.reduce(
     (defaults, key) => ({
       ...defaults,
       [key]: form[key]
@@ -291,7 +293,7 @@ const normalizeResult = (storedResult = {}) => ({
 const stripImageInsertionMarkers = (body = "") =>
   String(body || "")
     .replace(
-      /\n{0,2}\[이미지 삽입 추천 \d+\]\n위치: .+\n이미지 컨셉: .+\n이미지 검색 키워드: .+\n활용 안내: .+(?=\n|$)/gu,
+      /\n{0,2}\[(?:이미지 삽입 추천 \d+|이미지 \d+ 삽입 위치|여기에 이미지를 넣어주세요 이미지 \d+)\][\s\S]*?(?=\n{2,}|$)/gu,
       ""
     )
     .replace(/\n{3,}/g, "\n\n")
@@ -324,7 +326,7 @@ const imageKeywordsToClipboard = (imageSuggestions = []) =>
   imageSuggestions
     .map((item, index) => {
       const keyword = item.searchKeyword || item.query || item.imageSearch?.query || "";
-      return [`이미지 추천 ${index + 1} / ${item.insertAfter || "본문 흐름에 맞는 위치"}`, keyword].filter(Boolean).join("\n");
+      return [`이미지 ${index + 1} 검색어`, keyword].filter(Boolean).join("\n");
     })
     .filter(Boolean)
     .join("\n\n");
@@ -339,7 +341,9 @@ export default function ContentMaker() {
   const [draftId, setDraftId] = useState(null);
   const [draftMessage, setDraftMessage] = useState("");
   const [defaultMessage, setDefaultMessage] = useState("");
-  const [hasSavedDefaults, setHasSavedDefaults] = useState(() => Boolean(loadCompanyDefaults()));
+  const [writingProfiles, setWritingProfiles] = useState(() => loadWritingProfiles());
+  const [selectedProfileId, setSelectedProfileId] = useState(() => loadWritingProfiles()[0]?.id || "");
+  const [profileName, setProfileName] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const range = useMemo(() => getTargetLengthRange(form), [form]);
@@ -355,25 +359,20 @@ export default function ContentMaker() {
   const hasOutline = selectedOutlineHeadings.length >= OUTLINE_MIN && selectedOutlineHeadings.length <= OUTLINE_MAX;
   const hasWritingChoices = Boolean(result.selectedOpeningSentence && result.selectedCtaSentence);
   const hasFinal = Boolean(result.body && result.hashtags.length > 0);
+  const hasWritingProfiles = writingProfiles.length > 0;
 
   useEffect(() => {
     const draft = location.state?.draftId ? findDraft(location.state.draftId) : null;
 
     if (!draft) {
-      const companyDefaults = loadCompanyDefaults();
-
-      setHasSavedDefaults(Boolean(companyDefaults));
-
-      if (!companyDefaults) return;
-
-      const nextForm = normalizeForm({
-        ...initialForm,
-        ...companyDefaults
-      });
-
-      setForm(nextForm);
-      setStatus(isReadyForm(nextForm) ? "ready" : "idle");
-      setDefaultMessage("저장된 업체 기본값이 적용되었습니다.");
+      const profiles = loadWritingProfiles();
+      setWritingProfiles(profiles);
+      setSelectedProfileId((current) => current || profiles[0]?.id || "");
+      setDefaultMessage(
+        profiles.length > 0
+          ? `저장된 작성 프로필 ${profiles.length}개가 있습니다. 목록에서 선택한 뒤 불러오세요.`
+          : ""
+      );
       return;
     }
 
@@ -688,25 +687,45 @@ export default function ContentMaker() {
     setStatus("copied");
   };
 
-  const saveCompanyDefaultsFromForm = () => {
-    saveCompanyDefaults(pickCompanyDefaults(form));
-    setHasSavedDefaults(true);
-    setDefaultMessage("기본값을 저장했습니다. 이 정보는 다음 글 생성 시 자동으로 불러올 수 있습니다.");
+  const refreshWritingProfiles = (selectedId = "") => {
+    const profiles = loadWritingProfiles();
+    setWritingProfiles(profiles);
+    setSelectedProfileId(selectedId || profiles[0]?.id || "");
+    return profiles;
   };
 
-  const loadCompanyDefaultsToForm = () => {
-    const companyDefaults = loadCompanyDefaults();
+  const saveWritingProfileFromForm = () => {
+    const fallbackName =
+      form.brandName ||
+      form.category ||
+      String(form.keyword || "").split(",")[0]?.trim() ||
+      `작성 프로필 ${writingProfiles.length + 1}`;
+    const profile = saveWritingProfile(
+      profileName || fallbackName,
+      pickWritingProfileValues(form)
+    );
 
-    if (!companyDefaults) {
-      setHasSavedDefaults(false);
-      setDefaultMessage("저장된 업체 기본값이 아직 없습니다.");
+    refreshWritingProfiles(profile.id);
+    setProfileName("");
+    setDefaultMessage(`작성 프로필 "${profile.name}"을 저장했습니다. 목록에서 선택해 다시 불러올 수 있습니다.`);
+  };
+
+  const loadSelectedWritingProfileToForm = () => {
+    const profiles = loadWritingProfiles();
+    const selectedProfile = profiles.find((profile) => profile.id === selectedProfileId) || profiles[0];
+
+    setWritingProfiles(profiles);
+
+    if (!selectedProfile) {
+      setSelectedProfileId("");
+      setDefaultMessage("저장된 작성 프로필이 아직 없습니다.");
       return;
     }
 
     setForm((current) => {
       const nextForm = normalizeForm({
         ...current,
-        ...companyDefaults
+        ...selectedProfile.values
       });
       setStatus(isReadyForm(nextForm) ? "ready" : "idle");
       return nextForm;
@@ -714,18 +733,28 @@ export default function ContentMaker() {
     setResult(emptyResult);
     setDraftId(null);
     setEditing(false);
-    setHasSavedDefaults(true);
-    setDefaultMessage("저장된 업체 기본값이 적용되었습니다.");
+    setSelectedProfileId(selectedProfile.id);
+    setProfileName(selectedProfile.name);
+    setDefaultMessage(`작성 프로필 "${selectedProfile.name}"을 입력값에 반영했습니다.`);
   };
 
-  const resetCompanyDefaults = () => {
-    const confirmed = window.confirm("저장된 업체 기본값을 초기화할까요?");
+  const deleteSelectedWritingProfile = () => {
+    const selectedProfile = writingProfiles.find((profile) => profile.id === selectedProfileId);
+
+    if (!selectedProfile) {
+      setDefaultMessage("삭제할 작성 프로필을 먼저 선택해주세요.");
+      return;
+    }
+
+    const confirmed = window.confirm(`작성 프로필 "${selectedProfile.name}"을 삭제할까요?`);
 
     if (!confirmed) return;
 
-    clearCompanyDefaults();
-    setHasSavedDefaults(false);
-    setDefaultMessage("저장된 업체 기본값을 초기화했습니다.");
+    const nextProfiles = deleteWritingProfile(selectedProfile.id);
+    setWritingProfiles(nextProfiles);
+    setSelectedProfileId(nextProfiles[0]?.id || "");
+    setProfileName("");
+    setDefaultMessage(`작성 프로필 "${selectedProfile.name}"을 삭제했습니다.`);
   };
 
   const updateImageSuggestion = (id, key, value) => {
@@ -866,37 +895,71 @@ export default function ContentMaker() {
           <div className="mt-4 rounded-md border border-line bg-paper px-3 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-bold text-ink/55">
-                <span>업체 기본값</span>
-                <span className={`rounded-md px-2 py-0.5 ${hasSavedDefaults ? "bg-moss/10 text-moss" : "bg-white"}`}>
-                  {hasSavedDefaults ? "저장됨" : "없음"}
+                <span>작성 프로필 관리</span>
+                <span className={`rounded-md px-2 py-0.5 ${hasWritingProfiles ? "bg-moss/10 text-moss" : "bg-white"}`}>
+                  {hasWritingProfiles ? `${writingProfiles.length}개 저장됨` : "없음"}
                 </span>
               </div>
-              <div className="grid w-full grid-cols-3 gap-1.5 sm:w-auto">
+            </div>
+            <p className="mt-2 text-xs font-semibold leading-5 text-ink/55">
+              자주 쓰는 업종, 말투, 금지어, 글 목적, 키워드 스타일을 저장해두는 기능입니다.
+            </p>
+            <div className="mt-3 grid gap-2">
+              <label className="block">
+                <span className="text-xs font-bold text-ink/55">프로필 이름</span>
+                <input
+                  value={profileName}
+                  onChange={(event) => setProfileName(event.target.value)}
+                  className="focus-ring mt-1 min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm"
+                  placeholder="예: 무릎보호대 상품 후기용"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-bold text-ink/55">저장된 작성 프로필</span>
+                <select
+                  value={selectedProfileId}
+                  onChange={(event) => {
+                    const profile = writingProfiles.find((item) => item.id === event.target.value);
+                    setSelectedProfileId(event.target.value);
+                    setProfileName(profile?.name || "");
+                  }}
+                  disabled={!hasWritingProfiles}
+                  className="focus-ring mt-1 min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm disabled:cursor-not-allowed disabled:text-ink/35"
+                >
+                  {!hasWritingProfiles && <option value="">저장된 프로필 없음</option>}
+                  {writingProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="grid grid-cols-3 gap-1.5">
                 <button
                   type="button"
-                  onClick={saveCompanyDefaultsFromForm}
-                  className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-moss hover:text-moss"
+                  onClick={saveWritingProfileFromForm}
+                  className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-moss hover:text-moss"
                 >
                   <Save size={14} aria-hidden="true" />
-                  저장
+                  프로필 저장
                 </button>
                 <button
                   type="button"
-                  onClick={loadCompanyDefaultsToForm}
-                  disabled={!hasSavedDefaults}
-                  className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+                  onClick={loadSelectedWritingProfileToForm}
+                  disabled={!hasWritingProfiles}
+                  className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
                 >
                   <RefreshCw size={14} aria-hidden="true" />
                   불러오기
                 </button>
                 <button
                   type="button"
-                  onClick={resetCompanyDefaults}
-                  disabled={!hasSavedDefaults}
-                  className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30"
+                  onClick={deleteSelectedWritingProfile}
+                  disabled={!hasWritingProfiles}
+                  className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-2 text-xs font-bold transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30"
                 >
                   <Trash2 size={14} aria-hidden="true" />
-                  초기화
+                  삭제
                 </button>
               </div>
             </div>
@@ -1704,7 +1767,7 @@ function FinalResultPanel({
             className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-amber hover:text-[#7a5a1e]"
           >
             <Clipboard size={18} aria-hidden="true" />
-            이미지 검색 키워드만 복사
+            이미지 검색어만 복사
           </button>
         </div>
       </div>
@@ -1717,6 +1780,7 @@ function FinalResultPanel({
 }
 
 function HashtagGroupCards({ groups = [], fallbackTags = [] }) {
+  const [copiedGroupId, setCopiedGroupId] = useState("");
   const displayGroups =
     groups.length > 0
       ? groups
@@ -1728,34 +1792,75 @@ function HashtagGroupCards({ groups = [], fallbackTags = [] }) {
             tags: fallbackTags
           }
         ];
+  const allTags = Array.from(new Set(displayGroups.flatMap((group) => group.tags || [])));
+  const copyTags = async (id, tags = []) => {
+    const copyText = tags
+      .map((tag) => String(tag || "").trim())
+      .filter(Boolean)
+      .map((tag) => (tag.startsWith("#") ? tag : `#${tag.replace(/\s+/g, "")}`))
+      .join(" ");
+
+    if (!copyText) return;
+
+    await navigator.clipboard.writeText(copyText);
+    setCopiedGroupId(id);
+    window.setTimeout(() => setCopiedGroupId((currentId) => (currentId === id ? "" : currentId)), 1600);
+  };
 
   return (
-    <div className="mt-2 grid gap-3 md:grid-cols-2">
-      {displayGroups.map((group) => (
-        <div key={group.id || group.label} className="rounded-md border border-line bg-paper p-3">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <p className="text-sm font-bold text-ink">{group.label}</p>
-              {group.description && (
-                <p className="mt-1 text-xs leading-5 text-ink/55">{group.description}</p>
-              )}
-            </div>
-            <span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-moss">
-              {group.tags.length}개
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {group.tags.map((tag) => (
-              <span
-                key={`${group.id}-${tag}`}
-                className="rounded-md bg-moss/10 px-3 py-2 text-sm font-semibold text-moss"
-              >
-                {tag}
+    <div className="mt-2 space-y-3">
+      <div className="flex flex-col gap-2 rounded-md border border-line bg-paper p-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm font-bold text-ink/70">네이버 블로그 태그 입력에 바로 붙여넣을 수 있습니다.</p>
+        <button
+          type="button"
+          onClick={() => copyTags("all", allTags)}
+          disabled={allTags.length === 0}
+          className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
+        >
+          {copiedGroupId === "all" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+          {copiedGroupId === "all" ? "복사됨" : "전체 해시태그 복사"}
+        </button>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {displayGroups.map((group) => (
+          <div key={group.id || group.label} className="rounded-md border border-line bg-paper p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-ink">{group.label}</p>
+                {group.description && (
+                  <p className="mt-1 text-xs leading-5 text-ink/55">{group.description}</p>
+                )}
+              </div>
+              <span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-moss">
+                {group.tags.length}개
               </span>
-            ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {group.tags.map((tag) => (
+                <span
+                  key={`${group.id}-${tag}`}
+                  className="rounded-md bg-moss/10 px-3 py-2 text-sm font-semibold text-moss"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => copyTags(group.id || group.label, group.tags)}
+              disabled={group.tags.length === 0}
+              className="focus-ring mt-3 inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-3 text-xs font-bold text-ink/60 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {copiedGroupId === (group.id || group.label) ? (
+                <Check size={14} aria-hidden="true" />
+              ) : (
+                <Clipboard size={14} aria-hidden="true" />
+              )}
+              {copiedGroupId === (group.id || group.label) ? "복사됨" : `${group.label} 복사`}
+            </button>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -1811,10 +1916,10 @@ function SeoAeoCheckPanel({ seoCheck }) {
     <section className="rounded-md border border-moss/25 bg-moss/10 p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-bold uppercase text-moss">SEO/AEO 점검</p>
-          <h5 className="mt-1 text-base font-bold text-ink">4. 검색 의도 기반 구조 점검</h5>
+          <p className="text-xs font-bold text-moss">글 구성 체크</p>
+          <h5 className="mt-1 text-base font-bold text-ink">4. 블로그 글 구조 점검</h5>
           <p className="mt-1 text-sm leading-6 text-ink/65">
-            키워드 자연 반영, 답변형 문장 포함, 본문 흐름 점검, 이미지 삽입 위치 표시를 확인합니다.
+            제목, 첫 문단, 소제목, 키워드, 마무리 문장이 검색자가 궁금해할 내용에 맞게 구성됐는지 확인합니다.
           </p>
         </div>
         <span className="inline-flex min-h-8 items-center justify-center rounded-md bg-white px-3 text-xs font-bold text-moss">
@@ -1919,7 +2024,7 @@ function StrategyMemo({ result, range }) {
                 <li key={item.id} className="text-sm">
                   <p className="font-semibold text-ink/75">{item.label}</p>
                   {item.keyword && (
-                    <p className="text-ink/60">이미지 검색 키워드: {item.keyword}</p>
+                    <p className="text-ink/60">이미지 사이트 검색어: {item.keyword}</p>
                   )}
                   {item.concept && (
                     <p className="line-clamp-2 text-ink/60">추천 이미지 컨셉: {item.concept}</p>
@@ -2101,15 +2206,16 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
 }
 
 function ImageSuggestionList({ items = [], editing, onChange }) {
-  const [copiedKeywordId, setCopiedKeywordId] = useState("");
+  const [copiedImageField, setCopiedImageField] = useState("");
 
-  const copyKeyword = async (id, keyword) => {
-    const normalizedKeyword = String(keyword || "").trim();
-    if (!normalizedKeyword) return;
+  const copyImageText = async (id, field, value) => {
+    const normalizedValue = String(value || "").trim();
+    if (!normalizedValue) return;
 
-    await navigator.clipboard.writeText(normalizedKeyword);
-    setCopiedKeywordId(id);
-    window.setTimeout(() => setCopiedKeywordId((currentId) => (currentId === id ? "" : currentId)), 1600);
+    const copyId = `${id}:${field}`;
+    await navigator.clipboard.writeText(normalizedValue);
+    setCopiedImageField(copyId);
+    window.setTimeout(() => setCopiedImageField((currentId) => (currentId === copyId ? "" : currentId)), 1600);
   };
 
   return (
@@ -2119,7 +2225,7 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
         <h5 className="text-sm font-bold text-ink/70">이미지 삽입 추천 {items.length}개</h5>
       </div>
       <p className="mt-2 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm leading-6 text-ink/70">
-        아래 추천 키워드를 Pexels, Unsplash, Canva, 미리캔버스 등의 이미지 검색창에 넣어 관련 이미지를 찾아보세요.
+        블로그용 이미지는 직접 촬영을 우선 추천합니다. AI 프롬프트는 티스토리, SNS, 참고 이미지 제작용으로 활용해보세요.
       </p>
       <div className="mt-3 grid gap-2">
         {items.map((item) => {
@@ -2128,7 +2234,8 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
           const searchKeyword = item.searchKeyword || item.query || item.imageSearch?.query || "";
           const pexelsQuery = item.query || item.imageSearch?.query || searchKeyword;
           const displayKeyword = searchKeyword || pexelsQuery;
-          const isKeywordCopied = copiedKeywordId === item.id;
+          const promptCopied = copiedImageField === `${item.id}:prompt`;
+          const keywordCopied = copiedImageField === `${item.id}:keyword`;
 
           return (
             <div key={item.id} className="rounded-md border border-line bg-paper p-3">
@@ -2148,7 +2255,7 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
                 ) : (
                   <div className="flex min-h-24 items-center gap-3 px-3 py-4 text-sm text-ink/55">
                     <Image size={18} className="shrink-0 text-moss" aria-hidden="true" />
-                    <span>이미지 검색 키워드: {displayKeyword}</span>
+                    <span>직접 촬영 추천: {item.directShotGuide || item.description}</span>
                   </div>
                 )}
               </div>
@@ -2181,36 +2288,80 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
                     />
                   </label>
                   <label className="block">
-                    <span className="text-xs font-bold text-ink/55">이미지 검색 키워드</span>
+                    <span className="text-xs font-bold text-ink/55">직접 촬영 추천</span>
+                    <textarea
+                      value={item.directShotGuide || ""}
+                      onChange={(event) => onChange(item.id, "directShotGuide", event.target.value)}
+                      rows={2}
+                      className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-bold text-ink/55">AI 이미지 프롬프트</span>
+                    <textarea
+                      value={item.aiPrompt || ""}
+                      onChange={(event) => onChange(item.id, "aiPrompt", event.target.value)}
+                      rows={2}
+                      className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs font-bold text-ink/55">이미지 사이트 검색어</span>
                     <input
                       value={searchKeyword}
                       onChange={(event) => onChange(item.id, "searchKeyword", event.target.value)}
                       className="focus-ring mt-1 min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm"
-                      placeholder="이미지 검색 키워드"
+                      placeholder="이미지 사이트 검색어"
                     />
                   </label>
                 </div>
               ) : (
                 <dl className="mt-3 grid gap-3 text-sm">
                   <div>
-                    <dt className="text-xs font-bold text-ink/50">이미지 추천 위치</dt>
-                    <dd className="mt-1 font-semibold text-ink/75">{item.insertAfter}</dd>
-                  </div>
-                  <div>
                     <dt className="text-xs font-bold text-ink/50">이미지 컨셉</dt>
                     <dd className="mt-1 leading-6 text-ink/70">{item.description}</dd>
                   </div>
+                  <div className="rounded-md border border-moss/20 bg-white p-3">
+                    <dt className="text-xs font-bold text-moss">직접 촬영 추천</dt>
+                    <dd className="mt-1 leading-6 text-ink/70">{item.directShotGuide || item.description}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs font-bold text-ink/50">본문 삽입 위치</dt>
+                    <dd className="mt-1 font-semibold text-ink/75">
+                      본문에 표시된 [여기에 이미지를 넣어주세요 이미지 {items.indexOf(item) + 1}] 바로 아래에 넣어주세요.
+                    </dd>
+                  </div>
                   <div>
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <dt className="text-xs font-bold text-ink/50">이미지 검색 키워드</dt>
+                      <dt className="text-xs font-bold text-ink/50">AI 이미지 프롬프트</dt>
                       <button
                         type="button"
-                        onClick={() => copyKeyword(item.id, displayKeyword)}
+                        onClick={() => copyImageText(item.id, "prompt", item.aiPrompt)}
+                        disabled={!item.aiPrompt}
+                        className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-3 text-xs font-bold text-ink/60 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:opacity-45 sm:w-32"
+                      >
+                        {promptCopied ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+                        {promptCopied ? "복사됨" : "프롬프트 복사"}
+                      </button>
+                    </div>
+                    <dd className="mt-1 break-words rounded-md border border-line bg-white px-3 py-2 leading-6 text-ink/70">
+                      {item.aiPrompt}
+                      <span className="mt-1 block text-xs font-semibold text-ink/45">
+                        티스토리, SNS, 참고 이미지 제작용으로 활용하세요.
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <dt className="text-xs font-bold text-ink/50">이미지 사이트 검색어</dt>
+                      <button
+                        type="button"
+                        onClick={() => copyImageText(item.id, "keyword", displayKeyword)}
                         disabled={!displayKeyword}
                         className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-3 text-xs font-bold text-ink/60 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:opacity-45 sm:w-28"
                       >
-                        {isKeywordCopied ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
-                        {isKeywordCopied ? "복사됨" : "키워드 복사"}
+                        {keywordCopied ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+                        {keywordCopied ? "복사됨" : "검색어 복사"}
                       </button>
                     </div>
                     <dd className="mt-1 break-words rounded-md border border-line bg-white px-3 py-2 font-semibold text-ink/75">
@@ -2218,12 +2369,6 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
                       {pexelsQuery && pexelsQuery !== searchKeyword ? (
                         <span className="block pt-1 text-xs font-semibold text-ink/45">보조 검색어: {pexelsQuery}</span>
                       ) : null}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs font-bold text-ink/50">활용 안내</dt>
-                    <dd className="mt-1 leading-6 text-ink/65">
-                      이 키워드를 Pexels나 Canva 이미지 검색창에 넣어 참고 이미지를 찾아보세요.
                     </dd>
                   </div>
                 </dl>

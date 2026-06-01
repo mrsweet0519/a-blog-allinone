@@ -7,6 +7,11 @@ import {
   saveAccessSession,
   validateAccessCode
 } from "../frontend/src/lib/accessControl.js";
+import {
+  deleteWritingProfile,
+  loadWritingProfiles,
+  saveWritingProfile
+} from "../frontend/src/lib/localDrafts.js";
 import { createFinalContent } from "../shared/contentGenerator.js";
 
 const now = new Date(2026, 5, 1, 10, 0, 0);
@@ -28,19 +33,41 @@ assert.equal(inactive.ok, false);
 assert.equal(inactive.message, "사용이 중지된 코드입니다.");
 
 const memoryStorage = new Map();
-globalThis.window = {
-  localStorage: {
-    getItem: (key) => memoryStorage.get(key) ?? null,
-    setItem: (key, value) => memoryStorage.set(key, String(value)),
-    removeItem: (key) => memoryStorage.delete(key)
-  }
+const localStorageMock = {
+  getItem: (key) => memoryStorage.get(key) ?? null,
+  setItem: (key, value) => memoryStorage.set(key, String(value)),
+  removeItem: (key) => memoryStorage.delete(key)
 };
+globalThis.localStorage = localStorageMock;
+globalThis.window = { localStorage: localStorageMock };
 const session = createAccessSession(valid.license, now);
 saveAccessSession(session);
 assert.equal(loadAccessSession(now).code, "MGO-TEST7");
 clearAccessSession();
 assert.equal(loadAccessSession(now), null);
+
+const kneeProfile = saveWritingProfile("무릎보호대 상품 후기용", {
+  audienceType: "인플루언서/수익형",
+  category: "스포츠용품",
+  goal: "정보 전달",
+  tone: "친근한"
+});
+const shopProfile = saveWritingProfile("피부관리샵 프로필", {
+  audienceType: "사업자/매장 홍보",
+  category: "피부관리샵",
+  goal: "방문 유도",
+  tone: "전문적인"
+});
+assert.equal(loadWritingProfiles().length, 2);
+assert.equal(loadWritingProfiles()[0].name, "피부관리샵 프로필");
+assert.equal(loadWritingProfiles().find((profile) => profile.id === kneeProfile.id).values.category, "스포츠용품");
+deleteWritingProfile(shopProfile.id);
+assert.equal(loadWritingProfiles().length, 1);
+const keywordProfile = saveWritingProfile("keyword style profile", { keyword: "main keyword, sub keyword" });
+assert.equal(loadWritingProfiles()[0].values.keyword, "main keyword, sub keyword");
+deleteWritingProfile(keywordProfile.id);
 delete globalThis.window;
+delete globalThis.localStorage;
 
 const finalContent = createFinalContent(
   {
@@ -55,7 +82,7 @@ const finalContent = createFinalContent(
     emphasisPoint: "하얀가루와 떡짐이 적은 사용감",
     ctaDirection: "필요한 기준을 비교해보세요.",
     useEmoji: false,
-    avoid: "상위노출 보장, 무조건 노출",
+    avoid: "과장 표현, 확정 표현",
     targetLengthOption: "1500",
     customTargetLength: "1800"
   },
@@ -78,7 +105,9 @@ const checkIds = finalContent.seoCheck.items.map((item) => item.id);
 assert.equal(finalContent.seoCheck.items.length, 10);
 assert.ok(checkIds.includes("first-paragraph-answer"));
 assert.ok(checkIds.includes("image-markers"));
-assert.ok(finalContent.body.includes("[이미지 삽입 추천 1]"));
+assert.ok(finalContent.body.includes("[여기에 이미지를 넣어주세요 이미지 1]"));
+assert.ok(finalContent.imageSuggestions[0].directShotGuide);
+assert.ok(finalContent.imageSuggestions[0].aiPrompt);
 assert.ok(finalContent.body.includes("FAQ"));
 assert.ok(finalContent.seoCheck.items.find((item) => item.id === "faq-question").passed);
 assert.ok(finalContent.seoCheck.items.find((item) => item.id === "avoid").passed);
