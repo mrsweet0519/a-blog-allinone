@@ -335,7 +335,7 @@ const normalizeResult = (storedResult = {}) => ({
 const stripImageInsertionMarkers = (body = "") =>
   String(body || "")
     .replace(
-      /\n{0,2}\[(?:이미지 삽입 추천 \d+|이미지 \d+ 삽입 위치|여기에 이미지를 넣어주세요 이미지 \d+)\][\s\S]*?(?=\n{2,}|$)/gu,
+      /\n{0,2}\[(?:이미지 삽입 추천 \d+|이미지 \d+ 삽입 위치|여기에 이미지를 넣어주세요 이미지 \d+|여기에 이미지 \d+을 넣어주세요[^\]]*)\][\s\S]*?(?=\n{2,}|$)/gu,
       ""
     )
     .replace(/\n{3,}/g, "\n\n")
@@ -2440,7 +2440,7 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
                   <div>
                     <dt className="text-xs font-bold text-ink/50">본문 삽입 위치</dt>
                     <dd className="mt-1 font-semibold text-ink/75">
-                      본문에 표시된 [여기에 이미지를 넣어주세요 이미지 {items.indexOf(item) + 1}] 바로 아래에 넣어주세요.
+                      본문에 표시된 [여기에 이미지 {items.indexOf(item) + 1}을 넣어주세요] 위치에 넣어주세요.
                     </dd>
                   </div>
                   <div>

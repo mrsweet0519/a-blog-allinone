@@ -1,3 +1,10 @@
+import {
+  ensureSentence as ensureToneSentence,
+  getToneProfile as getSharedToneProfile,
+  normalizeTone,
+  softenForTone
+} from "./toneEngine.js";
+
 const DEFAULT_TARGET_LENGTH = 1500;
 
 const INTERNAL_KEYWORD_OPTIMIZATION = {
@@ -116,11 +123,11 @@ export const parseKeywordInput = (value = "") => {
     };
   }
 
-  const mainKeyword = keywords.length >= 2 ? `${keywords[0]} ${keywords[1]}` : keywords[0];
-  const baseSecondary = keywords.length >= 2 ? keywords.slice(2) : [];
+  const mainKeyword = keywords[0];
+  const baseSecondary = keywords.slice(1);
   const derivedSecondary =
     keywords.length >= 2
-      ? [`${keywords[0]} 관리`, `${keywords[1]} 후기`]
+      ? [`${keywords[0]} ${keywords[1]}`, `${keywords[1]} 후기`]
       : [`${keywords[0]} 선택 기준`, `${keywords[0]} 후기`];
   const brandKeywords = uniqueText(
     keywords.filter((keyword, index) => isBrandLikeKeyword(keyword, index, keywords.length))
@@ -291,10 +298,11 @@ const createHumanList = (items) => {
   return `${items[0]}, ${items[1]}, ${items[2]}`;
 };
 
-const createSentence = (value) => {
+const createSentence = (value, tone = "") => {
   const sentence = text(value);
 
   if (!sentence) return "";
+  if (tone) return ensureToneSentence(softenForTone(sentence, tone), tone);
   if (/[.!?요다]$/.test(sentence)) return sentence;
 
   return `${sentence}.`;
@@ -306,14 +314,40 @@ export const createCtaCandidates = (form = {}) => {
   const keyword = getMainKeyword(form);
   const region = text(form.region);
   const direction = text(form.ctaDirection);
+  const tone = normalizeTone(form.tone);
+  const toneProfile = getSharedToneProfile(tone);
   const wantsBooking = direction.includes("예약");
   const wantsVisit = direction.includes("방문");
 
   if (audienceType === "인플루언서/수익형") {
+    if (tone === "전문적인") {
+      return [
+        `${keyword}가 궁금하다면 구성, 사용 기준, 주의사항을 함께 확인할 필요가 있습니다.`,
+        `${brand}를 검토할 때는 장점보다 실제 루틴 적합성을 기준으로 판단하는 것이 좋습니다.`,
+        `구매 전에는 내 상황과 맞는지 객관적인 기준으로 확인하는 것이 중요합니다.`
+      ];
+    }
+
+    if (tone === "차분한") {
+      return [
+        `${keyword}가 궁금하다면 내 생활에 맞는지 차분히 확인해보면 좋습니다.`,
+        `비슷한 고민이라면 구성과 사용 흐름을 천천히 비교해보셔도 좋습니다.`,
+        `${brand}가 궁금했다면 필요한 기준부터 하나씩 확인해보세요.`
+      ];
+    }
+
+    if (tone === "활기찬") {
+      return [
+        `${keyword}가 궁금하다면 구매 전 포인트부터 가볍게 체크해보세요!`,
+        `비슷한 고민이라면 한 번 비교해보셔도 좋더라고요!`,
+        `${brand}가 눈에 들어왔다면 내 루틴과 맞는지 바로 확인해보세요.`
+      ];
+    }
+
     return [
-      `저는 이 기준으로 골라보는 쪽을 추천드려요.`,
+      `저는 이 기준으로 천천히 골라보는 쪽이 좋을 것 같아요.`,
       `비슷한 고민이라면 한 번 비교해보셔도 좋을 것 같아요.`,
-      `${brand}가 궁금했다면 내 기준과 맞는지 직접 확인해보는 걸 추천드려요.`
+      `${brand}가 궁금했다면 내 기준과 맞는지 직접 확인해보면 좋겠어요.`
     ];
   }
 
@@ -334,7 +368,7 @@ export const createCtaCandidates = (form = {}) => {
   }
 
   return [
-    `${brand}가 궁금하다면 부담 없이 상담 받아보세요.`,
+    toneProfile.cta || `${brand}가 궁금하다면 부담 없이 상담 받아보세요.`,
     `방문 전 기준부터 확인해보고 편하게 문의해보셔도 좋습니다.`,
     `${region ? `${region}에서 ` : ""}${asObject(keyword)} 고민 중이라면 필요한 부분만 먼저 물어보세요.`
   ];
@@ -342,10 +376,11 @@ export const createCtaCandidates = (form = {}) => {
 
 const createCtaSentence = (form, selectedCtaSentence = "") => {
   const selected = text(selectedCtaSentence);
+  const tone = text(form.tone);
 
-  if (selected) return createSentence(selected);
+  if (selected) return createSentence(selected, tone);
 
-  return createCtaCandidates(form)[0] || getCta(form);
+  return createSentence(createCtaCandidates(form)[0] || getCta(form), tone);
 };
 
 const createReaderCue = (form) => {
@@ -566,6 +601,76 @@ const stripMainKeyword = (value, keyword, replacement = "이 기준") => {
     .trim();
 };
 
+const isReviewLikePost = (form = {}, selectedTitle = "", outlineSections = []) => {
+  const audienceType = getAudienceType(form);
+  const source = [
+    selectedTitle,
+    text(form.selectedTitle),
+    normalizeOutlineSections(outlineSections).join(" ")
+  ].join(" ");
+
+  return (
+    audienceType === "인플루언서/수익형" ||
+    /후기|리뷰|직접|써보기 전|알아본|사용감|루틴/u.test(source)
+  );
+};
+
+const getReviewSubjectType = (form = {}) => {
+  const category = text(form.category);
+  const goal = text(form.goal);
+
+  if (goal === "방문 유도" || /매장|샵|교육|강의|서비스|상담/u.test(category)) return "서비스";
+
+  return "제품";
+};
+
+const getReviewSecondaryCues = (form = {}) => {
+  const rawSecondary = uniqueText(getKeywordContext(form).rawKeywords.slice(1));
+
+  if (rawSecondary.length > 0) return rawSecondary.slice(0, 3);
+
+  return uniqueText(getSecondaryKeywords(form)).slice(0, 3);
+};
+
+const getReviewHighlights = (form = {}) => {
+  const strengths = splitList(form.strengths);
+  const cues = getReviewSecondaryCues(form);
+
+  if (strengths.length > 0) return strengths;
+  if (cues.length > 0) return cues;
+
+  return ["간편하게 확인할 수 있는 구성", "루틴에 넣기 쉬운 사용 흐름", "구매 전 비교하기 좋은 정보"];
+};
+
+const createReviewCueText = (form = {}) => {
+  const cues = getReviewSecondaryCues(form).map(softenSensitiveExpression).filter(Boolean);
+
+  if (cues.length === 0) return text(form.category) || "관련 정보";
+
+  return createHumanList(cues.slice(0, 3));
+};
+
+const createReviewOpeningSentence = (form = {}) => {
+  const keyword = getMainKeyword(form);
+  const cueText = createReviewCueText(form);
+  const subjectType = getReviewSubjectType(form);
+  const tone = normalizeTone(form.tone);
+
+  if (tone === "전문적인") {
+    return `${keyword}는 ${cueText} 관련 정보를 검토할 때 사용 기준과 구매 전 확인 항목을 함께 살펴볼 필요가 있는 ${subjectType}입니다.`;
+  }
+
+  if (tone === "차분한") {
+    return `${keyword}는 ${cueText} 관련 정보를 살펴볼 때 사용 흐름과 구매 전 확인점을 함께 보기 좋은 ${subjectType}입니다.`;
+  }
+
+  if (tone === "활기찬") {
+    return `${keyword}는 ${cueText} 쪽으로 찾아보다 보면 간편한 루틴으로 눈에 들어오는 ${subjectType}이에요!`;
+  }
+
+  return `${keyword}는 ${cueText} 쪽으로 정보를 찾아보다가 자연스럽게 관심이 간 ${subjectType}이에요.`;
+};
+
 export const createOpeningSentenceCandidates = (form = {}) => {
   const keyword = getMainKeyword(form);
   const secondaryKeywords = getSecondaryKeywords(form);
@@ -577,28 +682,72 @@ export const createOpeningSentenceCandidates = (form = {}) => {
   const naturalKeyword = createNaturalKeywordVariant(form);
 
   if (audienceType === "인플루언서/수익형") {
+    const toneProfile = getSharedToneProfile(tone);
     return [
-      `${keyword} 관련 정보를 볼 때는 이름보다 필요한 상황과 확인 기준을 먼저 보는 것이 좋습니다.`,
-      `${keyword}를 찾아볼 때는 ${asObject(secondaryCue)} 함께 보면 내 상황에 맞는 후기인지 구분하기 쉽습니다.`,
-      `${keyword} 콘텐츠는 장점보다 ${naturalKeyword} 관점의 경험과 비교 흐름이 함께 보일 때 더 오래 읽힙니다.`
+      createReviewOpeningSentence(form),
+      createSentence(`${keyword}를 찾아볼 때는 장점만 보기보다 내가 왜 관심을 갖게 됐는지와 실제 루틴에 맞을지를 함께 보는 편이 자연스럽습니다`, tone),
+      createSentence(`${keyword} 콘텐츠는 ${naturalKeyword} 관점의 상황, 사용 흐름, 구매 전 확인점이 이어질 때 후기처럼 편하게 읽힙니다`, toneProfile.label)
     ];
   }
 
   const toneMatched = {
-    친근한: `${keyword}를 처음 알아본다면 가격보다 내 상황에 맞는 선택 기준부터 잡는 것이 좋습니다.`,
+    친근한: `${keyword}를 처음 알아본다면 가격보다 내 상황에 맞는 선택 기준부터 잡아보면 좋겠어요.`,
     전문적인: `${keyword} 검토할 때는 가격보다 사용 목적과 확인 기준이 먼저 정리되어야 합니다.`,
     차분한: `${keyword} 정보가 많을수록 처음에는 필요한 기준부터 차분히 확인하는 것이 좋습니다.`,
-    활기찬: `${keyword} 빠르게 비교하려면 처음부터 선택 기준과 체크포인트를 나눠보는 편이 좋습니다.`
+    활기찬: `${keyword} 빠르게 비교하려면 처음부터 선택 기준과 체크포인트를 나눠보면 좋아요!`
   };
 
   return [
     toneMatched[tone] ?? toneMatched.친근한,
-    `${region ? `${region}에서 ` : ""}${keyword}를 찾는 분들은 보통 가격보다 실제 이용 흐름이 내 상황과 맞는지 먼저 궁금해합니다.`,
-    `${category} 정보를 비교할 때 ${keyword} 기준 없이 보면 좋은 설명도 비슷하게 느껴질 수 있습니다.`
+    createSentence(`${region ? `${region}에서 ` : ""}${keyword}를 찾는 분들은 보통 가격보다 실제 이용 흐름이 내 상황과 맞는지 먼저 궁금해합니다`, tone),
+    createSentence(`${category} 정보를 비교할 때 ${keyword} 기준 없이 보면 좋은 설명도 비슷하게 느껴질 수 있습니다`, tone)
   ];
 };
 
-const createOpeningParagraph = (form, selectedOpeningSentence = "") => {
+const createReviewOpeningParagraph = (form, selectedOpeningSentence = "") => {
+  const keyword = getMainKeyword(form);
+  const selected = text(selectedOpeningSentence);
+  const cueText = createReviewCueText(form);
+  const highlightText = createHumanList(getReviewHighlights(form));
+  const tone = normalizeTone(form.tone);
+  const toneProfile = getSharedToneProfile(tone);
+  const safeSelected =
+    selected && selected.includes(keyword) && !/구매하세요|추천합니다|지금 바로|특가|할인/u.test(selected)
+      ? selected
+      : createReviewOpeningSentence(form);
+
+  if (tone === "전문적인") {
+    return [
+      safeSelected,
+      `평소 ${cueText} 관련 정보를 검토할 때는 ${keyword}처럼 사용 흐름을 확인할 수 있는 선택지를 기준과 함께 살펴볼 필요가 있습니다.`,
+      `따라서 ${keyword}는 효과를 단정하기보다 ${highlightText} 같은 항목이 생활 루틴에 적합한지 확인하는 방식으로 정리하겠습니다.`
+    ].join(" ");
+  }
+
+  if (tone === "차분한") {
+    return [
+      safeSelected,
+      `평소 ${cueText} 쪽으로 정보를 살펴보다 보면 ${keyword}처럼 부담 없이 챙길 수 있는 선택지가 왜 눈에 들어오는지 자연스럽게 궁금해집니다.`,
+      `그래서 ${keyword}는 효과를 단정하기보다 ${highlightText} 같은 포인트가 생활 흐름에 맞는지 차분히 정리해보겠습니다.`
+    ].join(" ");
+  }
+
+  if (tone === "활기찬") {
+    return [
+      safeSelected,
+      `평소 ${cueText} 쪽으로 찾아보다 보면 ${keyword}처럼 간편하게 챙길 수 있는 선택지가 더 눈에 들어오더라고요!`,
+      `그래서 ${keyword}는 효과를 단정하기보다 ${highlightText} 같은 포인트가 내 루틴에 맞는지 밝게 정리해볼게요.`
+    ].join(" ");
+  }
+
+  return [
+    softenForTone(safeSelected, toneProfile.label),
+    `평소 ${cueText} 쪽으로 정보를 찾아보다 보면 ${keyword}처럼 간편하게 챙길 수 있는 선택지가 왜 눈에 들어오는지 자연스럽게 궁금해졌어요.`,
+    `그래서 ${keyword}는 효과를 단정하기보다 ${highlightText} 같은 포인트가 내 생활 흐름에 맞는지 정리해보려고 해요.`
+  ].join(" ");
+};
+
+const createOpeningParagraph = (form, selectedOpeningSentence = "", selectedTitle = "") => {
   const keyword = getMainKeyword(form);
   const brand = getBrandLabel(form);
   const region = text(form.region);
@@ -607,6 +756,12 @@ const createOpeningParagraph = (form, selectedOpeningSentence = "") => {
   const audienceType = getAudienceType(form);
   const selected = text(selectedOpeningSentence);
   const naturalKeyword = createNaturalKeywordVariant(form);
+  const tone = normalizeTone(form.tone);
+
+  if (isReviewLikePost(form, selectedTitle)) {
+    return createReviewOpeningParagraph(form, selectedOpeningSentence);
+  }
+
   const firstSentence =
     selected && selected.includes(keyword) && !/구매하세요|추천합니다|지금 바로/u.test(selected)
       ? selected
@@ -620,19 +775,28 @@ const createOpeningParagraph = (form, selectedOpeningSentence = "") => {
       ? `${naturalKeyword}라는 표현도 과장 없이 생활 관리와 구매 전 체크 관점에서 살펴보는 흐름이 필요합니다.`
       : `${brand}를 볼 때도 ${region ? `${region} 안에서 움직이기 편한지와 ` : ""}${category} 이용자가 실제로 느낄 수 있는 차이를 함께 보는 것이 좋습니다.`;
 
-  return [firstSentence, secondSentence, thirdSentence].join(" ");
+  return [firstSentence, secondSentence, thirdSentence]
+    .map((sentence) => createSentence(sentence, tone))
+    .join(" ");
 };
 
 const createTopicBridgeParagraph = (form, selectedTopic, selectedTitle, titleAngle) => {
   const keyword = getMainKeyword(form);
   const audienceType = getAudienceType(form);
   const topicCue = stripMainKeyword(selectedTopic || selectedTitle || titleAngle, keyword, "") || "확인 기준";
+  const tone = normalizeTone(form.tone);
 
-  if (audienceType === "인플루언서/수익형") {
-    return `${asObject(topicCue)} 중심으로 보면 장점을 나열하기보다 경험, 비교 기준, 확인할 포인트가 자연스럽게 이어지는지가 중요합니다. 그래서 아래 내용은 후기처럼 읽히면서도 필요할 때 다시 꺼내볼 수 있게 정리했습니다.`;
+  if (isReviewLikePost(form, selectedTitle)) {
+    return createSentence(
+      `${asObject(topicCue)} 중심으로 보면 장점을 나열하기보다 찾게 된 이유, 관심이 간 부분, 루틴으로 볼 지점이 자연스럽게 이어지는지가 중요합니다. 아래 내용은 직접 효과를 단정하지 않고 후기처럼 편하게 읽히도록 정리했습니다`,
+      tone
+    );
   }
 
-  return `${asObject(topicCue)} 중심으로 보면 선택지를 많이 보는 것보다 내 상황에서 필요한 기준을 차례대로 확인하는 것이 더 중요합니다. 아래 내용은 각 항목마다 먼저 결론을 짚고, 문의나 구매 전에 바로 참고할 수 있는 기준으로 정리했습니다.`;
+  return createSentence(
+    `${asObject(topicCue)} 중심으로 보면 선택지를 많이 보는 것보다 내 상황에서 필요한 기준을 차례대로 확인하는 것이 더 중요합니다. 아래 내용은 각 항목마다 먼저 결론을 짚고, 문의나 구매 전에 바로 참고할 수 있는 기준으로 정리했습니다`,
+    tone
+  );
 };
 
 const shouldIncludeFaqBlock = (form, selectedTitle = "", outlineSections = []) => {
@@ -640,9 +804,13 @@ const shouldIncludeFaqBlock = (form, selectedTitle = "", outlineSections = []) =
   const title = text(selectedTitle);
   const outlineText = normalizeOutlineSections(outlineSections).join(" ");
 
+  if (isReviewLikePost(form, selectedTitle, outlineSections)) {
+    return /FAQ|자주 묻는 질문/u.test(title) || /FAQ|자주 묻는 질문/u.test(outlineText);
+  }
+
   return (
     ["정보 전달", "상품 홍보"].includes(goal) ||
-    /비교|후기|FAQ|자주 묻는 질문/u.test(title) ||
+    /비교|FAQ|자주 묻는 질문/u.test(title) ||
     /FAQ|자주 묻는 질문/u.test(outlineText)
   );
 };
@@ -888,6 +1056,42 @@ export function createOutlineSections(form, selectedTopic, selectedTitle) {
   const count = getOutlineSectionCount(form);
   const roles = OUTLINE_ROLES_BY_COUNT[count] ?? OUTLINE_ROLES_BY_COUNT[4];
 
+  if (isReviewLikePost(form, selectedTitle)) {
+    const subjectType = getReviewSubjectType(form);
+    const reviewHeadingsByCount = {
+      3: [
+        `${keyword}를 찾게 된 이유`,
+        `${asObject(subjectType)} 보고 관심이 간 부분`,
+        `구매 전 확인하면 좋을 점`
+      ],
+      4: [
+        `${keyword}를 찾게 된 이유`,
+        `내 상황에서 궁금했던 부분`,
+        `루틴으로 볼 사용 방법과 기대 포인트`,
+        `구매 전 확인하면 좋을 점`
+      ],
+      5: [
+        `${keyword}를 찾게 된 이유`,
+        `내 상황에서 궁금했던 부분`,
+        `${asObject(subjectType)} 보고 관심이 간 이유`,
+        `루틴으로 볼 사용 방법과 느낀 점`,
+        `구매 전 확인하면 좋을 점`
+      ],
+      6: [
+        `${keyword}를 찾게 된 이유`,
+        `내 상황에서 궁금했던 부분`,
+        `${asObject(subjectType)} 보고 관심이 간 이유`,
+        `사용 방법이나 루틴으로 볼 부분`,
+        `이런 분께 맞을 것 같은 이유`,
+        `구매 전 확인하면 좋을 점`
+      ]
+    };
+
+    return (reviewHeadingsByCount[count] ?? reviewHeadingsByCount[4])
+      .map((section) => applyAvoidWords(section, avoidWords))
+      .slice(0, count);
+  }
+
   return roles
     .map((role) =>
       createOutlineHeading({
@@ -910,8 +1114,10 @@ const formatHeading = (heading) => {
   return cleaned ? `**${cleaned}**` : "";
 };
 
-const createSection = (heading, paragraphs) =>
-  [formatHeading(heading), ...paragraphs.map(createSentence)].filter(Boolean).join("\n\n");
+const createSection = (heading, paragraphs, tone = "") =>
+  [formatHeading(heading), ...paragraphs.map((paragraph) => createSentence(paragraph, tone))]
+    .filter(Boolean)
+    .join("\n\n");
 
 const normalizeBlogBody = (body) =>
   String(body ?? "")
@@ -957,6 +1163,86 @@ const createBusinessInfoSection = (form = {}) => {
   ].join("\n\n");
 };
 
+const createReviewProductInfoSection = (form = {}) => {
+  const keyword = getMainKeyword(form);
+  const tone = normalizeTone(form.tone);
+  const rawKeywords = getKeywordContext(form).rawKeywords;
+  const productName = text(form.brandName) || rawKeywords[0] || keyword;
+  const relatedKeywords = uniqueText(getReviewSecondaryCues(form));
+  const entries = [
+    ["제품/브랜드명", productName],
+    ["메인 키워드", keyword],
+    ["관련 키워드", relatedKeywords.join(", ")],
+    ["카테고리", text(form.category)],
+    ["가격대", text(form.priceInfo)],
+    ["구매처", text(form.purchaseUrl)],
+    ["배송/교환 정보", text(form.shippingInfo)],
+    ["문의 방법", text(form.contactMethod)]
+  ].filter(([, value]) => value);
+
+  return [
+    "**제품 정보 정리**",
+    createSentence("마지막으로 구매나 비교 전에 다시 보기 쉽게 기본 정보를 정리해두면 좋습니다", tone),
+    ...entries.map(([label, value]) => `${label}: ${value}`)
+  ].join("\n\n");
+};
+
+const createReviewPostBody = (
+  form,
+  selectedTopic,
+  selectedTitle,
+  outlineSections = [],
+  writingChoices = {}
+) => {
+  const keyword = getMainKeyword(form);
+  const subjectType = getReviewSubjectType(form);
+  const cueText = createReviewCueText(form);
+  const highlightText = createHumanList(getReviewHighlights(form));
+  const emphasis = text(form.emphasisPoint) || `${highlightText}을 실제 루틴에 넣기 쉬운지`;
+  const selectedOpeningSentence =
+    text(writingChoices.selectedOpeningSentence) || text(form.selectedOpeningSentence);
+  const selectedCtaSentence = text(writingChoices.selectedCtaSentence) || text(form.selectedCtaSentence);
+  const cta = createCtaSentence(form, selectedCtaSentence);
+  const normalizedOutline = normalizeOutlineSections(outlineSections);
+  const heading = (index, fallback) => normalizedOutline[index] || fallback;
+  const tone = normalizeTone(form.tone);
+  const intro = [
+    `${form.useEmoji ? "✨ " : ""}${createReviewOpeningParagraph(form, selectedOpeningSentence)}`,
+    createTopicBridgeParagraph(form, selectedTopic, selectedTitle, selectedTitle)
+  ];
+  const sections = [
+    createSection(heading(0, `${keyword}를 찾게 된 이유`), [
+      `${cueText}에 관심이 생기면 처음에는 좋은 말보다 왜 지금 이 주제가 필요해졌는지가 더 먼저 떠오릅니다.`,
+      `저도 이 제품을 볼 때 바로 결론을 내리기보다 내 생활 패턴에서 부담 없이 이어갈 수 있는지부터 살펴보는 편이 자연스럽다고 느꼈습니다.`
+    ], tone),
+    createSection(heading(1, `내 상황에서 궁금했던 부분`), [
+      `특히 몸 관리, 사용 편의성, 구매 전 확인할 정보가 한꺼번에 보이면 오히려 무엇을 먼저 봐야 할지 헷갈릴 수 있습니다.`,
+      `그래서 이 제품도 좋은 후기만 보기보다 내 고민과 비슷한 상황에서 어떤 포인트를 확인했는지 차근차근 보는 쪽이 도움이 됩니다.`
+    ], tone),
+    createSection(heading(2, `${asObject(subjectType)} 보고 관심이 간 이유`), [
+      `${asObject(subjectType)} 볼 때 눈에 들어온 부분은 ${highlightText} 같은 부분이었습니다.`,
+      `${emphasis} 같은 포인트가 분명하면 광고 문구처럼 느껴지기보다 실제로 살펴볼 이유가 생깁니다.`,
+      `다만 건강, 다이어트, 컨디션 관련 내용은 개인차가 크기 때문에 특정 효과를 단정하기보다 구성과 섭취 또는 사용 흐름을 먼저 확인하는 편이 좋습니다.`
+    ], tone),
+    createSection(heading(3, `사용 방법이나 루틴으로 볼 부분`), [
+      `이 제품을 루틴으로 본다면 하루 중 언제 챙기기 편한지, 보관이나 휴대가 번거롭지 않은지부터 확인하면 좋습니다.`,
+      `상세페이지나 안내 이미지가 있다면 용량, 구성, 섭취 또는 사용 방법, 주의사항을 함께 보면서 내 생활 패턴에 맞을지 판단해보면 됩니다.`
+    ], tone),
+    createSection(heading(4, `이런 분께 맞을 것 같은 이유`), [
+      `${cueText} 정보를 이미 여러 번 찾아본 분이라면 ${keyword}처럼 한눈에 확인할 수 있는 선택지가 편하게 느껴질 수 있습니다.`,
+      `복잡한 관리보다 가볍게 시작할 수 있는 루틴을 원하거나, 구매 전 필요한 정보를 차분히 비교하고 싶은 분에게 잘 맞을 것 같습니다.`
+    ], tone),
+    createSection(heading(5, `구매 전 확인하면 좋을 점`), [
+      `구매 전에는 성분이나 구성, 섭취 또는 사용 방법, 보관법, 교환 가능 여부처럼 나중에 다시 찾게 되는 내용을 먼저 확인해보세요.`,
+      `후기만 보고 바로 결정하기보다 내 몸 상태나 생활 패턴에 맞는지 살펴보는 과정이 필요합니다.`,
+      `${cta}`
+    ], tone),
+    createReviewProductInfoSection(form)
+  ];
+
+  return normalizeBlogBody([...intro, ...sections].join("\n\n"));
+};
+
 const createReaderFacingPostBody = (
   form,
   selectedTopic,
@@ -973,14 +1259,20 @@ const createReaderFacingPostBody = (
   const cta = createCtaSentence(form, selectedCtaSentence);
   const titleAngle = createTitleAngle(selectedTitle, keyword, goal);
   const audienceProfile = getAudienceProfile(form);
+  const tone = normalizeTone(form.tone);
   const normalizedOutline = normalizeOutlineSections(outlineSections);
   const outline =
     normalizedOutline.length >= 3
       ? normalizedOutline
       : createOutlineSections(form, selectedTopic, selectedTitle);
+
+  if (isReviewLikePost(form, selectedTitle, outline)) {
+    return createReviewPostBody(form, selectedTopic, selectedTitle, outline, writingChoices);
+  }
+
   const flowBlocks = createFlowBlocks({ form, cta });
   const intro = [
-    `${form.useEmoji ? "✨ " : ""}${createOpeningParagraph(form, selectedOpeningSentence)}`,
+    `${form.useEmoji ? "✨ " : ""}${createOpeningParagraph(form, selectedOpeningSentence, selectedTitle)}`,
     createTopicBridgeParagraph(form, selectedTopic, selectedTitle, titleAngle)
   ];
   const blockOrder = ["criteria", "experience", "purchase", "faqContext", "extra"];
@@ -1005,7 +1297,7 @@ const createReaderFacingPostBody = (
         ];
 
   if (
-    [...intro, ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs))].join("\n\n")
+    [...intro, ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs, tone))].join("\n\n")
       .length < range.min
   ) {
     const targetIndex = Math.max(0, sectionBlocks.length - 2);
@@ -1019,7 +1311,7 @@ const createReaderFacingPostBody = (
 
   return normalizeBlogBody([
     ...intro,
-    ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs)),
+    ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs, tone)),
     businessInfoSection,
     faqSection
   ].join("\n\n"));
@@ -1508,11 +1800,7 @@ const getDistributedMarkerPositions = (count, candidateCount) => {
 };
 
 const createImageInsertionMarker = (item, index) =>
-  [
-    `[여기에 이미지를 넣어주세요 이미지 ${index + 1}]`,
-    `이 문단 아래에 ${item.markerGuide || item.title || "본문 흐름에 맞는 이미지"} 이미지를 넣어주세요.`,
-    `추천 이미지: ${item.description}`
-  ].join("\n");
+  `[여기에 이미지 ${index + 1}을 넣어주세요: ${item.markerGuide || item.title || "본문 흐름에 맞는 이미지"}]`;
 
 const insertImageInsertionMarkers = (body = "", imageSuggestions = []) => {
   const paragraphs = normalizeBlogBody(body).split(/\n{2,}/u).filter(Boolean);
@@ -1778,6 +2066,7 @@ const createSeoCheck = (
   const secondaryMatches = secondaryKeywords.filter((keywordItem) =>
     compactBodyAndOutline.includes(compact(keywordItem))
   );
+  const reviewLike = isReviewLikePost(form, selectedTitle, outlineSections);
   const hasFirstAnswer =
     firstParagraphCount >= 1 && /먼저|기준|확인|핵심|중요|궁금|좋습니다/u.test(firstParagraph);
   const hasInfoFirstSentence =
@@ -1796,9 +2085,12 @@ const createSeoCheck = (
   const hasExperienceOrCheckFlow = /경험|후기|비교|체크포인트|체크리스트|구매 전|방문 전|직접|써보기 전/u.test(body);
   const hasImageMarkers =
     imageSuggestions.length === 0 ||
-    /\[(?:여기에 이미지를 넣어주세요 이미지 \d+|이미지 \d+ 삽입 위치)\]/u.test(markedBody);
+    /\[(?:여기에 이미지를 넣어주세요 이미지 \d+|여기에 이미지 \d+을 넣어주세요[^\]]*|이미지 \d+ 삽입 위치)\]/u.test(markedBody);
   const faqCount = (markedBody.match(/^Q\.\s/gmu) || []).length;
-  const hasFaqQuestion = faqCount >= 2 || /무엇인가요|누구에게 필요한가요|어떤 기준|확인해야 하나요|\?/u.test(markedBody);
+  const hasFaqQuestion =
+    faqCount >= 2 ||
+    /무엇인가요|누구에게 필요한가요|어떤 기준|확인해야 하나요|\?/u.test(markedBody) ||
+    (reviewLike && /이런 분께 맞을 것|구매 전 확인/u.test(markedBody));
   const forbiddenFound = avoidWords.filter((word) => combinedForChecks.includes(word));
   const overclaimFound = overclaimWords.filter((word) => combinedForChecks.includes(word));
   const items = [
@@ -1888,9 +2180,14 @@ const createSeoCheck = (
     },
     {
       id: "faq-question",
-      label: "FAQ 또는 질문형 답변 구조가 포함됨",
+      label: reviewLike ? "후기형 대체 구조 또는 FAQ가 포함됨" : "FAQ 또는 질문형 답변 구조가 포함됨",
       passed: hasFaqQuestion,
-      detail: faqCount > 0 ? `FAQ ${faqCount}개` : "질문형 답변 구조 확인 필요"
+      detail:
+        faqCount > 0
+          ? `FAQ ${faqCount}개`
+          : reviewLike
+            ? "이런 분께 맞을 것 같아요/구매 전 확인 흐름 확인"
+            : "질문형 답변 구조 확인 필요"
     },
     {
       id: "overclaim",
