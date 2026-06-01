@@ -3,10 +3,10 @@ const DEFAULT_TARGET_LENGTH = 1500;
 const INTERNAL_KEYWORD_OPTIMIZATION = {
   adminOnly: true,
   targetRanges: [
-    { maxLength: 1300, min: 5, max: 7 },
-    { maxLength: 1700, min: 5, max: 7 },
-    { maxLength: 2200, min: 5, max: 7 },
-    { maxLength: 5000, min: 5, max: 7 }
+    { maxLength: 1300, min: 3, max: 5 },
+    { maxLength: 1700, min: 4, max: 7 },
+    { maxLength: 2200, min: 5, max: 9 },
+    { maxLength: 5000, min: 6, max: 12 }
   ],
   placementHints: ["첫 문장", "첫 문단", "핵심 기준", "판단 문단", "마무리"]
 };
@@ -144,6 +144,47 @@ const getBrandKeywords = (form = {}) => getKeywordContext(form).brandKeywords;
 
 const applyAvoidWords = (value, avoidWords) =>
   avoidWords.reduce((result, word) => result.replaceAll(word, "해당 표현"), value);
+
+const softenSensitiveExpression = (value) =>
+  text(value)
+    .replace(/변비\s*해결/gu, "변비 고민 관리")
+    .replace(/해결/gu, "관리")
+    .replace(/효과\s*보장/gu, "체감 기준")
+    .replace(/완치|치료/gu, "관리")
+    .replace(/즉시\s*효과/gu, "빠른 확인 포인트")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const createNaturalKeywordVariant = (form = {}) => {
+  const keywords = getKeywordContext(form).rawKeywords;
+
+  if (keywords.length >= 2) {
+    return `${keywords[0]} ${softenSensitiveExpression(keywords[1])}`.trim();
+  }
+
+  return softenSensitiveExpression(getMainKeyword(form));
+};
+
+const normalizeTitleCandidate = (title) =>
+  text(title)
+    .replace(/[!?。]+$/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const createReviewKeywordPhrase = (form = {}) => {
+  const rawKeywords = getKeywordContext(form).rawKeywords;
+
+  if (rawKeywords.length >= 2) {
+    const [first, second] = rawKeywords;
+    const firstLooksIntent = /해결|고민|관리|기준|비교|후기|추천/u.test(first);
+    const secondLooksIntent = /해결|고민|관리|기준|비교|후기|추천/u.test(second);
+
+    if (firstLooksIntent && !secondLooksIntent) return `${second} ${first}`;
+    return `${first} ${second}`;
+  }
+
+  return getMainKeyword(form);
+};
 
 const uniqueHashTags = (items) =>
   Array.from(new Set(items.filter(Boolean)))
@@ -469,7 +510,27 @@ const cleanHeadingText = (value) =>
     .replace(/ 부분$/, "")
     .replace(/\s+/g, " ");
 
-const createHeadingLead = (_heading, index, audienceLabel) => {
+const createHeadingLead = (heading, index, audienceLabel) => {
+  const headingText = text(heading);
+  const isInfluencer = audienceLabel === "인플루언서/수익형";
+
+  if (/질문|FAQ|자주 묻|상황/u.test(headingText)) {
+    return `자주 나오는 질문은 먼저 짧게 답을 잡아두면 이해하기 쉽습니다.`;
+  }
+  if (/구매|방문|상담 전|체크/u.test(headingText)) {
+    return isInfluencer
+      ? `구매 전에는 좋아 보이는 점보다 내가 실제로 확인할 부분이 먼저입니다.`
+      : `방문이나 상담 전에는 필요한 정보가 분명할수록 결정이 편해집니다.`;
+  }
+  if (/후기|경험|비교|다른/u.test(headingText)) {
+    return isInfluencer
+      ? `후기처럼 볼 때는 직접 확인한 기준과 비교 흐름이 함께 보여야 합니다.`
+      : `비교할 때는 설명보다 실제 이용 흐름이 내 조건과 맞는지가 중요합니다.`;
+  }
+  if (/마무리|정리/u.test(headingText)) {
+    return `마무리는 필요한 기준만 다시 정리해 다음 행동이 자연스럽게 이어지게 하는 것이 좋습니다.`;
+  }
+
   const businessLeads = [
     `먼저 내 상황에 맞는 기준을 잡는 것이 핵심입니다.`,
     `작은 차이가 실제 만족도를 바꾸는 경우가 많습니다.`,
@@ -486,7 +547,7 @@ const createHeadingLead = (_heading, index, audienceLabel) => {
     `마지막에는 저장, 클릭, 확인 중 다음 행동이 떠올라야 합니다.`,
     `좋은 콘텐츠는 정보가 하나의 흐름으로 이어질 때 남습니다.`
   ];
-  const leads = audienceLabel === "인플루언서/수익형" ? influencerLeads : businessLeads;
+  const leads = isInfluencer ? influencerLeads : businessLeads;
 
   return leads[index] ?? leads.at(-1);
 };
@@ -513,26 +574,27 @@ export const createOpeningSentenceCandidates = (form = {}) => {
   const audienceType = getAudienceType(form);
   const region = text(form.region);
   const category = text(form.category);
+  const naturalKeyword = createNaturalKeywordVariant(form);
 
   if (audienceType === "인플루언서/수익형") {
     return [
-      `${asObject(keyword)} 처음 본다면 실제로 꾸준히 활용할 수 있는 조건인지 먼저 확인하는 것이 좋습니다.`,
-      `${asObject(keyword)} 찾아볼 때는 ${asObject(secondaryCue)} 함께 보면 내 상황에 맞는 후기인지 구분하기 쉽습니다.`,
-      `${asObject(keyword)} 콘텐츠는 장점보다 경험, 비교 기준, 사용 맥락이 함께 보일 때 더 오래 읽힙니다.`
+      `${keyword} 관련 정보를 볼 때는 이름보다 필요한 상황과 확인 기준을 먼저 보는 것이 좋습니다.`,
+      `${keyword}를 찾아볼 때는 ${asObject(secondaryCue)} 함께 보면 내 상황에 맞는 후기인지 구분하기 쉽습니다.`,
+      `${keyword} 콘텐츠는 장점보다 ${naturalKeyword} 관점의 경험과 비교 흐름이 함께 보일 때 더 오래 읽힙니다.`
     ];
   }
 
   const toneMatched = {
-    친근한: `${asObject(keyword)} 처음 알아본다면 가격보다 내 상황에 맞는 선택 기준부터 잡는 것이 좋습니다.`,
-    전문적인: `${asObject(keyword)} 검토할 때는 가격보다 사용 목적과 확인 기준이 먼저 정리되어야 합니다.`,
-    차분한: `${asObject(keyword)} 정보가 많을수록 처음에는 필요한 기준부터 차분히 확인하는 것이 좋습니다.`,
-    활기찬: `${asObject(keyword)} 빠르게 비교하려면 처음부터 선택 기준과 체크포인트를 나눠보는 편이 좋습니다.`
+    친근한: `${keyword}를 처음 알아본다면 가격보다 내 상황에 맞는 선택 기준부터 잡는 것이 좋습니다.`,
+    전문적인: `${keyword} 검토할 때는 가격보다 사용 목적과 확인 기준이 먼저 정리되어야 합니다.`,
+    차분한: `${keyword} 정보가 많을수록 처음에는 필요한 기준부터 차분히 확인하는 것이 좋습니다.`,
+    활기찬: `${keyword} 빠르게 비교하려면 처음부터 선택 기준과 체크포인트를 나눠보는 편이 좋습니다.`
   };
 
   return [
     toneMatched[tone] ?? toneMatched.친근한,
-    `${region ? `${region}에서 ` : ""}${asObject(keyword)} 찾는 분들은 보통 가격보다 실제 이용 흐름이 내 상황과 맞는지 먼저 궁금해합니다.`,
-    `${category} 정보를 비교할 때 ${asObject(keyword)} 기준 없이 보면 좋은 설명도 비슷하게 느껴질 수 있습니다.`
+    `${region ? `${region}에서 ` : ""}${keyword}를 찾는 분들은 보통 가격보다 실제 이용 흐름이 내 상황과 맞는지 먼저 궁금해합니다.`,
+    `${category} 정보를 비교할 때 ${keyword} 기준 없이 보면 좋은 설명도 비슷하게 느껴질 수 있습니다.`
   ];
 };
 
@@ -544,14 +606,18 @@ const createOpeningParagraph = (form, selectedOpeningSentence = "") => {
   const strengthText = createHumanList(getStrengths(form));
   const audienceType = getAudienceType(form);
   const selected = text(selectedOpeningSentence);
-  const firstSentence = selected || createOpeningSentenceCandidates(form)[0];
+  const naturalKeyword = createNaturalKeywordVariant(form);
+  const firstSentence =
+    selected && selected.includes(keyword) && !/구매하세요|추천합니다|지금 바로/u.test(selected)
+      ? selected
+      : `${keyword} 관련 정보를 볼 때는 단순히 이름만 보고 고르기보다 어떤 상황에서 필요한지 먼저 보는 것이 좋습니다.`;
   const secondSentence =
     audienceType === "인플루언서/수익형"
-      ? `검색자가 먼저 궁금해하는 답은 ${keyword}의 장점보다 실제 경험, 비교 기준, 사용 맥락이 함께 보이는지입니다.`
-      : `검색자가 먼저 궁금해하는 답은 ${keyword}가 내 상황에 맞는지, 상담 방식과 확인 기준이 충분히 분명한지입니다.`;
+      ? `${asObject(keyword)} 처음 접하는 분들은 장점보다 실제 경험, 비교 기준, 사용 맥락이 함께 보이는지를 먼저 확인하는 경우가 많습니다.`
+      : `${asObject(keyword)} 처음 접하는 분들은 내 상황에 맞는지, 상담 방식과 확인 기준이 충분히 분명한지 먼저 확인하는 경우가 많습니다.`;
   const thirdSentence =
     audienceType === "인플루언서/수익형"
-      ? `저도 ${brand}를 볼 때 ${strengthText} 같은 부분이 자연스럽게 느껴지는지 먼저 확인하게 됩니다.`
+      ? `${naturalKeyword}라는 표현도 과장 없이 생활 관리와 구매 전 체크 관점에서 살펴보는 흐름이 필요합니다.`
       : `${brand}를 볼 때도 ${region ? `${region} 안에서 움직이기 편한지와 ` : ""}${category} 이용자가 실제로 느낄 수 있는 차이를 함께 보는 것이 좋습니다.`;
 
   return [firstSentence, secondSentence, thirdSentence].join(" ");
@@ -655,6 +721,22 @@ const createFlowBlocks = ({ form, cta }) => {
 
   if (audienceType === "인플루언서/수익형") {
     return {
+      criteria: [
+        `${keyword}를 볼 때 가장 먼저 확인할 부분은 내 상황에서 왜 필요한지입니다.`,
+        `${toneNudge} 특히 ${category} 정보는 기준, 후기, 비교 흐름이 함께 보일 때 정보형 글처럼 자연스럽게 읽힙니다.`
+      ],
+      experience: [
+        `후기처럼 살펴볼 때는 장점보다 직접 확인한 기준이 더 오래 남습니다.`,
+        `${brand}의 경우에도 ${strengthText} 같은 부분이 실제 사용 전 체크 흐름과 연결되는지 보면 부담 없이 비교할 수 있습니다.`
+      ],
+      purchase: [
+        `구매 전에는 가격, 구성, 후기, 교환 가능 여부처럼 나중에 다시 확인할 항목을 따로 보는 편이 좋습니다.`,
+        `${emphasis}은 제품을 고를 때 놓치기 쉽지만 실제 만족도에 영향을 줄 수 있는 체크포인트입니다.`
+      ],
+      faqContext: [
+        `자주 묻는 질문은 결국 "나에게 맞는지"와 "무엇을 먼저 볼지"로 모입니다.`,
+        `이 기준을 먼저 정리해두면 ${keyword}를 다시 비교할 때도 정보가 흩어지지 않습니다.`
+      ],
       empathy: [
         `처음부터 결론을 내리려고 하면 오히려 비교가 더 어려워집니다. 나와 비슷한 상황에서 어떤 점을 봤는지부터 확인하면 훨씬 편합니다.`,
         `${toneNudge} 특히 ${category} 정보는 실제 경험처럼 읽힐 때 기억에 오래 남습니다.`
@@ -683,6 +765,22 @@ const createFlowBlocks = ({ form, cta }) => {
   }
 
   return {
+    criteria: [
+      `${keyword}를 찾는 고객이 가장 먼저 보는 것은 내 상황에 맞는 안내인지입니다.`,
+      `${toneNudge} 특히 ${category}에서는 상담 전 기준이 분명해야 불필요한 문의와 고민을 줄일 수 있습니다.`
+    ],
+    experience: [
+      `비교할 때는 사진이나 문구보다 실제 상담 흐름과 이용 과정이 더 중요합니다.`,
+      `${brand}의 강점인 ${strengthText}도 고객이 이해하기 쉬운 방식으로 연결될 때 신뢰가 생깁니다.`
+    ],
+    purchase: [
+      `방문이나 구매 전에는 가격, 운영 방식, 문의 방법처럼 바로 확인할 정보를 정리하는 편이 좋습니다.`,
+      `${emphasis}은 고객이 마지막에 다시 확인하는 지점이 될 수 있어 본문에서 자연스럽게 짚어주는 것이 좋습니다.`
+    ],
+    faqContext: [
+      `고객이 자주 묻는 질문은 대부분 기준, 비용, 이용 흐름으로 이어집니다.`,
+      `질문에 먼저 답하는 구조를 넣으면 광고처럼 밀어붙이는 느낌보다 안내받는 느낌이 강해집니다.`
+    ],
     empathy: [
       `처음부터 결정하려고 하면 가격, 후기, 위치, 설명이 한꺼번에 보여 더 헷갈릴 수 있습니다.`,
       `${toneNudge} 특히 ${category}에서는 실제 상담이나 이용 과정에서 느끼는 차이가 만족도로 이어집니다.`
@@ -728,10 +826,10 @@ export function getOutlineSectionCount(form = {}) {
 }
 
 const OUTLINE_ROLES_BY_COUNT = {
-  3: ["핵심 기준", "선택 포인트", "마무리 정리"],
-  4: ["공감/문제", "선택 기준", "비교 포인트", "마무리"],
-  5: ["공감/문제", "핵심 기준", "비교/주의점", "실제 활용 포인트", "마무리 CTA"],
-  6: ["공감/문제", "기본 개념", "선택 기준", "비교 포인트", "자주 묻는 질문", "마무리 CTA"]
+  3: ["핵심 기준", "구매 전 체크", "마무리 정리"],
+  4: ["핵심 기준", "경험/비교", "구매 전 체크", "마무리 CTA"],
+  5: ["핵심 기준", "경험/비교", "구매 전 체크", "상황별 질문", "마무리 CTA"],
+  6: ["기본 개념", "핵심 기준", "경험/비교", "구매 전 체크", "자주 묻는 질문", "마무리 CTA"]
 };
 
 const createOutlineHeading = ({ role, keyword, secondaryCue, brand, audienceLabel, goal, titleAngle }) => {
@@ -745,9 +843,19 @@ const createOutlineHeading = ({ role, keyword, secondaryCue, brand, audienceLabe
     case "기본 개념":
       return `${keyword}를 볼 때 먼저 알아둘 기본 흐름`;
     case "핵심 기준":
-      return `${keyword}, 처음이라면 먼저 확인할 핵심 기준`;
+      return `${keyword}, 가장 먼저 볼 기준은 무엇일까`;
     case "선택 기준":
       return `${keyword} 선택 전 먼저 볼 기준`;
+    case "경험/비교":
+      return isInfluencer
+        ? `${keyword} 후기처럼 비교해본 포인트`
+        : `${keyword} 비교할 때 고객이 보는 포인트`;
+    case "구매 전 체크":
+      return goal === "방문 유도"
+        ? `${keyword} 방문 전 확인할 체크포인트`
+        : `${keyword} 구매 전 확인할 체크포인트`;
+    case "상황별 질문":
+      return `${keyword}, 이런 상황에서는 무엇을 봐야 할까`;
     case "선택 포인트":
       return `${secondaryCue || keyword}까지 함께 보는 선택 포인트`;
     case "비교 포인트":
@@ -811,6 +919,44 @@ const normalizeBlogBody = (body) =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
+const getBusinessInfoEntries = (form = {}) =>
+  [
+    ["브랜드명", text(form.brandName)],
+    ["지역", text(form.region)],
+    ["주소", text(form.address)],
+    ["영업시간", text(form.businessHours)],
+    ["가격대", text(form.priceInfo)],
+    ["구매처", text(form.purchaseUrl)],
+    ["문의 방법", text(form.contactMethod)],
+    ["배송/교환 정보", text(form.shippingInfo)]
+  ].filter(([, value]) => value);
+
+const shouldIncludeBusinessInfoSection = (form = {}) => {
+  const entries = getBusinessInfoEntries(form);
+  const goal = text(form.goal);
+  const audienceType = getAudienceType(form);
+  const category = text(form.category);
+
+  return (
+    entries.length > 0 &&
+    (audienceType === "사업자/매장 홍보" ||
+      ["상품 홍보", "방문 유도"].includes(goal) ||
+      /쇼핑몰|상품|제품|매장|샵/u.test(category))
+  );
+};
+
+const createBusinessInfoSection = (form = {}) => {
+  if (!shouldIncludeBusinessInfoSection(form)) return "";
+
+  const entries = getBusinessInfoEntries(form);
+
+  return [
+    "**제품/매장 정보 정리**",
+    "마지막으로 제품이나 매장 정보를 한 번 더 정리해두면 방문이나 구매 전 확인하기 좋습니다.",
+    ...entries.map(([label, value]) => `${label}: ${value}`)
+  ].join("\n\n");
+};
+
 const createReaderFacingPostBody = (
   form,
   selectedTopic,
@@ -837,7 +983,7 @@ const createReaderFacingPostBody = (
     `${form.useEmoji ? "✨ " : ""}${createOpeningParagraph(form, selectedOpeningSentence)}`,
     createTopicBridgeParagraph(form, selectedTopic, selectedTitle, titleAngle)
   ];
-  const blockOrder = ["empathy", "situation", "criteria", "judgment", "extra"];
+  const blockOrder = ["criteria", "experience", "purchase", "faqContext", "extra"];
   const sectionBlocks = outline.map((heading, index) => {
     const blockKey = index === outline.length - 1 ? "action" : blockOrder[index] ?? "extra";
     const baseBlocks = flowBlocks[blockKey] ?? flowBlocks.extra;
@@ -869,10 +1015,12 @@ const createReaderFacingPostBody = (
   const faqSection = shouldIncludeFaqBlock(form, selectedTitle, outline)
     ? createFaqSection(form, selectedTitle)
     : "";
+  const businessInfoSection = createBusinessInfoSection(form);
 
   return normalizeBlogBody([
     ...intro,
     ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs)),
+    businessInfoSection,
     faqSection
   ].join("\n\n"));
 };
@@ -952,7 +1100,7 @@ export function createTopicRecommendations(form = {}) {
   const audienceProfile = getAudienceProfile(form);
   const secondaryKeywords = getSecondaryKeywords(form);
   const secondaryCue = secondaryKeywords[0] || `${keyword} 후기`;
-  const brandCue = getBrandKeywords(form)[0] || brand;
+  const brandCue = getBrandKeywords(form)[0] || text(form.brandName) || secondaryCue;
   const avoidWords = splitAvoidWords(form.avoid);
   const previousTopics = getPreviousTopicSet(form);
 
@@ -1067,41 +1215,37 @@ export function createTopicRecommendations(form = {}) {
 export function createTitleCandidates(form, selectedTopic) {
   const keyword = getMainKeyword(form);
   const goal = text(form.goal);
-  const brand = getBrandLabel(form);
   const region = text(form.region);
   const regionPhrase = getRegionPhrase(form);
   const audienceType = getAudienceType(form);
-  const secondaryKeywords = getSecondaryKeywords(form);
-  const secondaryCue = secondaryKeywords[0] || "선택 기준";
-  const brandCue = getBrandKeywords(form)[0] || brand;
+  const naturalKeyword = createNaturalKeywordVariant(form);
+  const reviewKeyword = createReviewKeywordPhrase(form);
+  const brandCue = getBrandKeywords(form)[0] || text(form.brandName);
   const avoidWords = splitAvoidWords(form.avoid);
-  const infoTitle =
-    goal === "신뢰 형성"
-      ? `${keyword} 선택 전 믿을 수 있는 기준`
-      : `${keyword} 처음 알아볼 때 먼저 확인할 기준`;
-  const localTitle = region
-    ? `${regionPhrase}${keyword} 찾는다면 방문 전 확인할 것`
-    : `${keyword} 선택 전 ${secondaryCue}까지 확인할 부분`;
+  const isInfluencer = audienceType === "인플루언서/수익형";
+  const isProductLike = goal === "상품 홍보" || /쇼핑몰|상품|제품|후기/u.test(`${form.category} ${selectedTopic}`);
+  const infoTitle = `${keyword} 처음 볼 때 확인할 기준`;
+  const reviewTitle = isInfluencer
+    ? `${reviewKeyword} 직접 알아본 후기`
+    : goal === "상품 홍보"
+      ? `${reviewKeyword} 후기처럼 정리한 체크포인트`
+      : `${reviewKeyword} 선택 전 확인할 후기 포인트`;
   const comparisonTitle =
-    goal === "상품 홍보"
-      ? `${brandCue}의 ${keyword} 장점 비교할 때 볼 포인트`
-      : `${keyword} 고르기 전 비교해야 할 포인트`;
-  const clickTitle =
-    audienceType === "인플루언서/수익형"
-      ? goal === "방문 유도"
-        ? `${keyword} 방문 전 저장해둘 실제 체크 포인트`
-        : goal === "상품 홍보"
-          ? `${keyword}, 다 비슷해 보여도 사용감은 다릅니다`
-          : `${keyword}, 다 비슷해 보여도 확인할 부분은 다릅니다`
-      : goal === "방문 유도"
-        ? `${regionPhrase}${keyword} 방문 전 꼭 확인해야 할 3가지`
-        : goal === "상품 홍보"
-          ? `${keyword} 선택 전 놓치면 아쉬운 차이`
-          : `${keyword}, 처음이라면 꼭 봐야 할 기준`;
+    isProductLike && brandCue
+      ? `${brandCue} ${keyword} 고르기 전 비교할 점`
+      : `${reviewKeyword} 고르기 전 비교할 점`;
+  const selectionTitle = region
+    ? `${regionPhrase}${keyword} 선택 전 볼 포인트`
+    : `${keyword} 선택 전 볼 포인트`;
+  const clickTitle = isInfluencer
+    ? `${reviewKeyword}, 비슷해 보여도 다른 점`
+    : region
+      ? `${regionPhrase}${keyword} 문의 전 많이 묻는 점`
+      : `${naturalKeyword} 놓치기 쉬운 체크포인트`;
 
-  return Array.from(new Set([infoTitle, localTitle, comparisonTitle, clickTitle]))
-    .map((title) => applyAvoidWords(title, avoidWords))
-    .slice(0, 4);
+  return Array.from(new Set([infoTitle, reviewTitle, comparisonTitle, selectionTitle, clickTitle]))
+    .map((title) => normalizeTitleCandidate(applyAvoidWords(title, avoidWords)))
+    .slice(0, 5);
 }
 
 const createImageSearchConfig = ({ searchKeyword, altText, orientation = "landscape" }) => ({
@@ -1439,8 +1583,26 @@ const getServiceTagPreset = (keyword, category) => {
   );
 };
 
+const createSensitiveTagVariants = (keyword) => {
+  const source = text(keyword);
+  const softened = softenSensitiveExpression(source);
+  const sensitive = /해결|효과|치료|완치/u.test(source);
+  const variants = sensitive ? [softened] : [source, softened];
+
+  if (/변비/u.test(source)) {
+    variants.push("변비고민", "변비관리", "생활관리");
+  }
+  if (/해결/u.test(source)) {
+    variants.push(`${source}정보`);
+  }
+
+  return uniqueText(variants);
+};
+
 const createHashtagGroups = (form) => {
   const keyword = getMainKeyword(form);
+  const keywordContext = getKeywordContext(form);
+  const rawKeywords = keywordContext.rawKeywords;
   const secondaryKeywords = getSecondaryKeywords(form);
   const brandKeywords = getBrandKeywords(form);
   const category = text(form.category);
@@ -1454,13 +1616,25 @@ const createHashtagGroups = (form) => {
   const serviceTags = servicePreset.tags;
   const intentTags = Array.from(
     new Set([
-      goal === "방문 유도" ? "방문전확인" : goal === "신뢰 형성" ? "신뢰상담" : "선택기준",
+      goal === "방문 유도" ? "방문전확인" : goal === "신뢰 형성" ? "신뢰상담" : "구매전확인",
+      goal === "상품 홍보" ? "상품비교" : "정보체크",
       ...servicePreset.intentTags
     ])
   );
+  const mainKeywordTags = uniqueText([
+    rawKeywords[0],
+    keyword,
+    rawKeywords[0] ? `${rawKeywords[0]}후기` : "",
+    rawKeywords[0] ? `${rawKeywords[0]}체크` : ""
+  ]);
+  const secondaryTagVariants = uniqueText([
+    ...rawKeywords.slice(1).flatMap(createSensitiveTagVariants),
+    ...secondaryKeywords
+  ]);
   const longTailTags = [
     `${keyword}선택기준`,
-    `${keyword}방문전확인`,
+    goal === "방문 유도" ? `${keyword}방문전확인` : `${keyword}구매전확인`,
+    `${keyword}체크리스트`,
     secondaryKeywords[0] || "",
     secondaryKeywords[1] || "",
     brand ? `${brand}${keyword}` : `${keyword}상담`
@@ -1471,7 +1645,13 @@ const createHashtagGroups = (form) => {
       id: "main",
       label: "메인 키워드",
       description: "검색 중심이 되는 대표 태그",
-      tags: [toHashTag(keyword)]
+      tags: mainKeywordTags.map(toHashTag)
+    },
+    {
+      id: "longtail",
+      label: "롱테일 보조 태그",
+      description: "구체적인 고민과 행동 의도를 담은 보조 태그",
+      tags: [...secondaryTagVariants, ...longTailTags].map(toHashTag)
     },
     {
       id: "region",
@@ -1487,7 +1667,7 @@ const createHashtagGroups = (form) => {
       id: "category",
       label: "업종/서비스",
       description: "업종과 서비스 범위를 설명하는 태그",
-      tags: [category, ...serviceTags].map(toHashTag)
+      tags: [category, category && `${category}후기`, ...serviceTags].map(toHashTag)
     },
     {
       id: "intent",
@@ -1499,38 +1679,40 @@ const createHashtagGroups = (form) => {
       id: "brand",
       label: "브랜드/매장명",
       description: "상호명 검색과 재방문 유입을 위한 태그",
-      tags: [brand].map(toHashTag)
-    },
-    {
-      id: "longtail",
-      label: "롱테일 보조 태그",
-      description: "구체적인 고민과 행동 의도를 담은 보조 태그",
-      tags: longTailTags.map(toHashTag)
+      tags: [brand, ...brandKeywords, brand && `${brand}후기`].map(toHashTag)
     }
   ];
+  const groupTagLimits = {
+    main: 3,
+    longtail: 4,
+    region: 3,
+    category: 3,
+    intent: 3,
+    brand: 2
+  };
 
   return groups
     .map((group) => ({
       ...group,
-      tags: Array.from(new Set(group.tags.filter(Boolean))).slice(0, group.id === "main" ? 1 : 3)
+      tags: Array.from(new Set(group.tags.filter(Boolean))).slice(0, groupTagLimits[group.id] ?? 3)
     }))
     .filter((group) => group.tags.length > 0);
 };
 
 const flattenHashtagGroups = (groups) =>
-  Array.from(new Set(groups.flatMap((group) => group.tags))).slice(0, 14);
+  Array.from(new Set(groups.flatMap((group) => group.tags))).slice(0, 15);
 
 const getFirstParagraph = (body) => text(String(body ?? "").split(/\n{2,}/)[0]);
 
 const getFirstSentence = (body) =>
   getFirstParagraph(body)
     .replace(/^✨\s*/u, "")
-    .split(/(?<=[.!?요다])\s+/u)[0] || "";
+    .split(/(?<=[.!?])\s+/u)[0] || "";
 
 const inferSearchIntentTitleType = (title, region) => {
   const source = text(title);
 
-  if (region && source.includes(region)) return "지역형";
+  if (/후기|직접|써보기 전|알아본/u.test(source)) return "경험형";
   if (source.includes("비교")) return "비교형";
   if (source.includes("처음") || source.includes("기준") || source.includes("확인")) return "정보형";
   if (source.includes("다릅니다") || source.includes("놓치")) return "클릭형";
@@ -1564,18 +1746,26 @@ const createSeoCheck = (
   markedBody = body
 ) => {
   const keyword = getMainKeyword(form);
+  const rawKeywords = getKeywordContext(form).rawKeywords;
   const secondaryKeywords = getSecondaryKeywords(form);
   const defaultBlockedClaims = [
     ["상위노출", "보장"],
     ["최적화", "보장"],
     ["네이버 로직", "완벽 반영"],
     ["무조건", "노출"],
-    ["방문자 증가", "보장"]
+    ["방문자 증가", "보장"],
+    ["효과", "보장"],
+    ["100%", "해결"]
   ].map((parts) => parts.join(" "));
   const avoidWords = uniqueText([...splitAvoidWords(form.avoid), ...defaultBlockedClaims]);
+  const overclaimWords = ["최고", "무조건", "완치", "효과 보장", "100% 해결", "즉시 효과"];
   const firstParagraph = getFirstParagraph(body);
   const firstSentence = getFirstSentence(body);
   const title = text(selectedTitle);
+  const titleHasMainKeyword =
+    Boolean(title && title.includes(keyword)) ||
+    (rawKeywords.length > 1 && rawKeywords.every((item) => compact(title).includes(compact(item))));
+  const firstSentenceCount = countKeywordOccurrences(firstSentence, keyword);
   const firstParagraphCount = countKeywordOccurrences(firstParagraph, keyword);
   const actualOccurrences = countKeywordOccurrences(body, keyword);
   const targetOccurrences = resolveKeywordOccurrenceRange(resolveTargetLength(form));
@@ -1590,28 +1780,51 @@ const createSeoCheck = (
   );
   const hasFirstAnswer =
     firstParagraphCount >= 1 && /먼저|기준|확인|핵심|중요|궁금|좋습니다/u.test(firstParagraph);
+  const hasInfoFirstSentence =
+    firstSentenceCount >= 1 && !/구매하세요|추천합니다|지금 바로|특가|할인/u.test(firstSentence);
   const goal = text(form.goal);
   const audienceType = getAudienceType(form);
   const hasGoalFlow = includesAny(body, getGoalFlowSignals(goal));
   const hasAudienceFlow = includesAny(body, getAudienceFlowSignals(audienceType));
+  const titleTopicMatchesBody =
+    Boolean(title && keyword && title.includes(keyword) && body.includes(keyword)) ||
+    getKeywordContext(form).rawKeywords.some((item) => title.includes(item) && body.includes(item));
+  const searchIntentMatchesGoal = hasGoalFlow && /기준|확인|비교|질문|체크|후기|구매 전|방문 전/u.test(body);
+  const outlineMatchesBody = normalizeOutlineSections(outlineSections).every((heading) =>
+    body.includes(formatHeading(heading)) || body.includes(heading)
+  );
+  const hasExperienceOrCheckFlow = /경험|후기|비교|체크포인트|체크리스트|구매 전|방문 전|직접|써보기 전/u.test(body);
   const hasImageMarkers =
     imageSuggestions.length === 0 ||
     /\[(?:여기에 이미지를 넣어주세요 이미지 \d+|이미지 \d+ 삽입 위치)\]/u.test(markedBody);
   const faqCount = (markedBody.match(/^Q\.\s/gmu) || []).length;
   const hasFaqQuestion = faqCount >= 2 || /무엇인가요|누구에게 필요한가요|어떤 기준|확인해야 하나요|\?/u.test(markedBody);
   const forbiddenFound = avoidWords.filter((word) => combinedForChecks.includes(word));
+  const overclaimFound = overclaimWords.filter((word) => combinedForChecks.includes(word));
   const items = [
     {
       id: "title-main-keyword",
-      label: "메인 키워드가 제목에 자연스럽게 반영됨",
-      passed: Boolean(title && title.includes(keyword)),
+      label: "메인 키워드가 제목에 포함됨",
+      passed: titleHasMainKeyword,
       detail: title ? "키워드 자연 반영 확인" : "선택 제목 없음"
     },
     {
+      id: "first-sentence-keyword",
+      label: "첫 문장에 메인 키워드 반영",
+      passed: hasInfoFirstSentence,
+      detail: firstSentence || "첫 문장 확인 필요"
+    },
+    {
+      id: "first-paragraph-keyword-density",
+      label: "첫 문단에 키워드 2~3회 자연 반영",
+      passed: firstParagraphCount >= 2 && firstParagraphCount <= 3,
+      detail: `첫 문단 ${firstParagraphCount}회 반영`
+    },
+    {
       id: "first-paragraph-answer",
-      label: "첫 문단에 검색자가 궁금해할 핵심 답변이 있음",
+      label: "첫 문단이 정보형 답변으로 시작함",
       passed: hasFirstAnswer,
-      detail: firstSentence || "첫 문단 확인 필요"
+      detail: firstParagraph.slice(0, 70) || "첫 문단 확인 필요"
     },
     {
       id: "secondary-keywords",
@@ -1621,6 +1834,30 @@ const createSeoCheck = (
         secondaryKeywords.length === 0
           ? "보조 키워드 없음"
           : `${secondaryMatches.length}/${secondaryKeywords.length}개 반영`
+    },
+    {
+      id: "title-body-match",
+      label: "제목과 본문 주제가 일치함",
+      passed: titleTopicMatchesBody,
+      detail: titleTopicMatchesBody ? "선택 제목과 본문 키워드 연결 확인" : "제목/본문 연결 확인 필요"
+    },
+    {
+      id: "search-intent-goal-match",
+      label: "검색 의도와 글 목적이 일치함",
+      passed: searchIntentMatchesGoal,
+      detail: `${goal || "글 목적 미선택"} 흐름 확인`
+    },
+    {
+      id: "outline-body-linked",
+      label: "소제목이 본문 내용과 연결됨",
+      passed: outlineMatchesBody,
+      detail: `${outlineCount}개 소제목 연결 확인`
+    },
+    {
+      id: "experience-comparison-check",
+      label: "경험/후기/비교/체크포인트 중 하나 이상 포함",
+      passed: hasExperienceOrCheckFlow,
+      detail: hasExperienceOrCheckFlow ? "경험형 또는 체크 흐름 확인" : "경험/비교 흐름 보강 필요"
     },
     {
       id: "keyword-overuse",
@@ -1654,6 +1891,12 @@ const createSeoCheck = (
       label: "FAQ 또는 질문형 답변 구조가 포함됨",
       passed: hasFaqQuestion,
       detail: faqCount > 0 ? `FAQ ${faqCount}개` : "질문형 답변 구조 확인 필요"
+    },
+    {
+      id: "overclaim",
+      label: "과장 표현 없음",
+      passed: overclaimFound.length === 0,
+      detail: overclaimFound.length > 0 ? overclaimFound.join(", ") : "과장 표현 없음"
     },
     {
       id: "cta",

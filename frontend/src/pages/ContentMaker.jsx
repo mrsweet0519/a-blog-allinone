@@ -44,6 +44,12 @@ const initialForm = {
   strengths: "",
   emphasisPoint: "",
   ctaDirection: "",
+  address: "",
+  businessHours: "",
+  priceInfo: "",
+  purchaseUrl: "",
+  contactMethod: "",
+  shippingInfo: "",
   useEmoji: true,
   avoid: "",
   targetLengthOption: "1500",
@@ -66,6 +72,12 @@ const WRITING_PROFILE_FIELDS = [
   "useEmoji",
   "avoid",
   "ctaDirection",
+  "address",
+  "businessHours",
+  "priceInfo",
+  "purchaseUrl",
+  "contactMethod",
+  "shippingInfo",
   "targetLengthOption",
   "customTargetLength"
 ];
@@ -171,6 +183,36 @@ const FIELD_TOOLTIPS = {
     description: "마무리 문장의 방향을 입력하세요.",
     example: "부담 없이 상담 받아보세요, 기준부터 확인해보세요"
   },
+  address: {
+    title: "주소",
+    description: "본문 하단 정보 정리에 넣을 주소를 입력하세요.",
+    example: "서울 강남구 ○○로 00"
+  },
+  businessHours: {
+    title: "영업시간",
+    description: "방문 전 확인하기 좋은 운영 시간을 입력하세요.",
+    example: "평일 10:00-19:00, 토요일 예약제"
+  },
+  priceInfo: {
+    title: "가격/가격대",
+    description: "상품 가격이나 대략적인 가격대를 입력하세요.",
+    example: "29,000원대, 상담 후 안내"
+  },
+  purchaseUrl: {
+    title: "구매처",
+    description: "쇼핑몰명, 스마트스토어명, 구매 가능한 경로를 입력하세요.",
+    example: "자사몰, 네이버 스마트스토어"
+  },
+  contactMethod: {
+    title: "문의 방법",
+    description: "예약, 상담, 구매 문의 방법을 입력하세요.",
+    example: "카카오톡 채널, 전화, 네이버 톡톡"
+  },
+  shippingInfo: {
+    title: "배송/교환 정보",
+    description: "상품형 글에서 구매 전 확인할 배송이나 교환 정보를 입력하세요.",
+    example: "평일 오후 2시 전 주문 당일 출고, 단순 변심 교환 가능"
+  },
   useEmoji: {
     title: "이모지 사용",
     description: "본문 첫머리에 가벼운 이모지를 넣을지 선택합니다.",
@@ -178,7 +220,7 @@ const FIELD_TOOLTIPS = {
   }
 };
 
-const TITLE_TYPES = ["정보형", "지역/선택형", "비교형", "클릭형"];
+const TITLE_TYPES = ["정보형", "후기형", "비교형", "선택형", "클릭형"];
 const TITLE_CANDIDATE_LABELS = TITLE_TYPES.map((type) => `${type} 제목`);
 
 const inferTitleType = (titles = [], selectedTitle = "") => {
@@ -1308,6 +1350,72 @@ export default function ContentMaker() {
                     />
                   </label>
 
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.address}>주소</FieldLabel>
+                      <input
+                        value={form.address}
+                        onChange={(event) => updateForm("address", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 서울 강남구 ○○로 00"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.businessHours}>영업시간</FieldLabel>
+                      <input
+                        value={form.businessHours}
+                        onChange={(event) => updateForm("businessHours", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 평일 10:00-19:00"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.priceInfo}>가격/가격대</FieldLabel>
+                      <input
+                        value={form.priceInfo}
+                        onChange={(event) => updateForm("priceInfo", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 29,000원대"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.purchaseUrl}>구매처</FieldLabel>
+                      <input
+                        value={form.purchaseUrl}
+                        onChange={(event) => updateForm("purchaseUrl", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 네이버 스마트스토어"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.contactMethod}>문의 방법</FieldLabel>
+                      <input
+                        value={form.contactMethod}
+                        onChange={(event) => updateForm("contactMethod", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 카카오톡 채널, 전화"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <FieldLabel tooltip={FIELD_TOOLTIPS.shippingInfo}>배송/교환 정보</FieldLabel>
+                      <input
+                        value={form.shippingInfo}
+                        onChange={(event) => updateForm("shippingInfo", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                        placeholder="예: 평일 오후 2시 전 주문 당일 출고"
+                      />
+                    </label>
+                  </div>
+
                   <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-line bg-paper px-3">
                     <FieldLabel tooltip={FIELD_TOOLTIPS.useEmoji}>이모지 사용</FieldLabel>
                     <input
@@ -1866,17 +1974,21 @@ function HashtagGroupCards({ groups = [], fallbackTags = [] }) {
 }
 
 const SEO_CHECK_LABELS = {
-  "title-main-keyword": "메인 키워드가 제목에 자연스럽게 반영됨",
-  "first-paragraph-answer": "첫 문단에 검색자가 궁금해할 핵심 답변이 있음",
-  "first-paragraph-keyword": "메인 키워드 첫 문단 반영",
+  "title-main-keyword": "메인 키워드가 제목에 포함됨",
+  "first-sentence-keyword": "첫 문장에 메인 키워드 반영",
+  "first-paragraph-keyword-density": "첫 문단에 키워드 2~3회 자연 반영",
+  "first-paragraph-answer": "첫 문단이 정보형 답변으로 시작함",
   "secondary-keywords": "보조 키워드가 본문과 소제목에 자연스럽게 분산됨",
+  "title-body-match": "제목과 본문 주제가 일치함",
+  "search-intent-goal-match": "검색 의도와 글 목적이 일치함",
+  "outline-body-linked": "소제목이 본문 내용과 연결됨",
+  "experience-comparison-check": "경험/후기/비교/체크포인트 중 하나 이상 포함",
   "keyword-overuse": "키워드 과다 반복 없음",
   "audience-goal-flow": "사용자 유형과 글 목적이 본문 흐름에 반영됨",
   "outline-count": "목표 글자수에 맞는 소제목 수가 적용됨",
   "image-markers": "본문 안에 이미지 삽입 추천 위치가 표시됨",
   "faq-question": "FAQ 또는 질문형 답변 구조가 포함됨",
-  "search-intent-title": "검색 의도 제목 유형",
-  region: "지역명 반영",
+  overclaim: "과장 표현 없음",
   cta: "마무리 CTA가 자연스럽게 들어감",
   avoid: "금지어 없음"
 };
