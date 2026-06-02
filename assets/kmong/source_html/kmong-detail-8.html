@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, initial-scale=1.0">
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0; width: 1080px; height: 1920px;
+            background-color: #FAFAFA; font-family: 'Pretendard', sans-serif;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            position: relative; overflow: hidden;
+        }
+        
+        .bg-circle {
+            position: absolute; width: 900px; height: 900px;
+            background: radial-gradient(circle, rgba(0,191,165,0.08) 0%, rgba(250,250,250,0) 70%);
+            border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 0;
+        }
+
+        .content {
+            position: relative; z-index: 10; text-align: center;
+            display: flex; flex-direction: column; align-items: center; width: 100%;
+        }
+        
+        .avatar { width: 350px; height: 350px; border-radius: 50%; border: 8px solid #FFF; box-shadow: 0 30px 60px rgba(0,0,0,0.1); margin-bottom: 60px; object-fit: cover; object-position: center 20%;}
+        
+        .main-copy { font-size: 72px; color: #111; font-weight: 900; line-height: 1.35; margin: 0 0 40px 0; letter-spacing: -2px;}
+        .sub-copy { font-size: 36px; color: #555; font-weight: 700; line-height: 1.5; margin: 0 0 80px 0; letter-spacing: -1px;}
+
+        .cta-btn {
+            background: linear-gradient(135deg, #00BFA5, #00897B);
+            color: #FFFFFF; font-size: 42px; font-weight: 900;
+            padding: 40px 80px; border-radius: 30px;
+            box-shadow: 0 30px 60px rgba(0,191,165,0.3);
+            display: flex; flex-direction: column; gap: 16px;
+            cursor: pointer; transition: transform 0.3s; width: 80%; max-width: 800px;
+        }
+        .cta-btn:hover { transform: translateY(-5px); box-shadow: 0 40px 80px rgba(0,191,165,0.4); }
+        .cta-sub {
+            font-size: 24px; font-weight: 700; opacity: 0.9; letter-spacing: 0px;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="bg-circle"></div>
+    <div class="content">
+        <img src="./memoji_thumbsup.png" class="avatar" alt="Thumbs up">
+        <h1 class="main-copy">이제 블로그 글쓰기<br>혼자 오래 붙잡지 마세요</h1>
+        <p class="sub-copy">검색형 포스팅 초안부터<br>상품 후기 초안까지 한 번에 정리해보세요</p>
+        
+        <div class="cta-btn">
+            <span class="cta-sub">바로 활용할 수 있는 블로그 초안 시스템</span>
+            내 블로그용 초안부터 시작해보세요 🚀
+        </div>
+    </div>
+</body>
+</html>

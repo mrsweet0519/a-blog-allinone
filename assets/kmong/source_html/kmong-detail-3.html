@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, initial-scale=1.0">
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0;
+            width: 1080px; height: 1920px;
+            background-color: #FAFAFA;
+            font-family: 'Pretendard', sans-serif;
+            display: flex; flex-direction: column;
+            position: relative;
+            padding: 150px 80px;
+        }
+
+        .header-section {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            margin-bottom: 100px; position: relative; z-index: 10;
+        }
+        .header-left { flex: 1; }
+        .sub-label {
+            display: inline-block; background: rgba(0, 191, 165, 0.15); color: #00897B;
+            padding: 12px 24px; border-radius: 12px; font-size: 24px; font-weight: 800;
+            margin-bottom: 24px; letter-spacing: 0.5px;
+        }
+        .main-title {
+            font-size: 64px; color: #111; font-weight: 900; margin: 0 0 24px 0; letter-spacing: -2px;
+        }
+        .description {
+            font-size: 34px; color: #555; font-weight: 600; line-height: 1.5; margin: 0; letter-spacing: -1px;
+        }
+        .header-right { position: relative; }
+        
+        .avatar {
+            width: 280px; height: 280px; background: #E8F5E9; border: 6px solid #00BFA5;
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 20px 40px rgba(0,191,165,0.25); margin-top: 20px; object-fit: cover; object-position: center 20%;
+        }
+        .avatar-bubble {
+            position: absolute; top: -10px; right: 230px; background: #FFF;
+            border: 3px solid #E8F5E9; border-radius: 20px 20px 0 20px;
+            padding: 16px 28px; font-size: 24px; font-weight: 800; color: #004D40;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.05); white-space: nowrap; z-index: 20;
+        }
+
+        .flow-container {
+            position: relative; display: flex; flex-direction: column; gap: 40px; padding-left: 80px;
+        }
+        .flow-line {
+            position: absolute; left: 40px; top: 40px; bottom: 40px; width: 6px;
+            background: linear-gradient(to bottom, #00BFA5, #E8F5E9); border-radius: 3px; z-index: 1;
+        }
+
+        .step-item { position: relative; display: flex; align-items: center; z-index: 2; }
+        .step-dot {
+            position: absolute; left: -53px; width: 24px; height: 24px; background: #FFF;
+            border: 6px solid #00BFA5; border-radius: 50%; box-shadow: 0 0 0 10px #FAFAFA;
+        }
+
+        .step-card {
+            background: #FFFFFF; border: 2px solid rgba(0,0,0,0.04); border-radius: 30px;
+            padding: 40px 50px; width: 100%; display: flex; align-items: center; gap: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.03); transition: all 0.3s ease;
+        }
+
+        .step-icon {
+            width: 100px; height: 100px; background: #F8F9FA; border-radius: 24px;
+            display: flex; align-items: center; justify-content: center; font-size: 50px;
+            flex-shrink: 0; border: 3px solid #F1F3F5;
+        }
+
+        .step-content { flex: 1; }
+        .step-title {
+            font-size: 36px; color: #111; font-weight: 900; margin: 0 0 20px 0;
+            letter-spacing: -1px; display: flex; align-items: center; gap: 12px;
+        }
+        .step-title .step-num { color: #ADB5BD; font-size: 28px; font-weight: 800; }
+
+        .tags { display: flex; gap: 12px; flex-wrap: wrap; }
+        .tag {
+            background: #F1F3F5; color: #495057; padding: 12px 24px; border-radius: 12px;
+            font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+        }
+        .tag.mint-tag { background: #E8F5E9; color: #00897B; }
+
+        .step-item:nth-child(1) .step-icon { background: #E3F2FD; border-color: #BBDEFB; }
+        .step-item:nth-child(2) .step-icon { background: #FFF3E0; border-color: #FFE0B2; }
+        .step-item:nth-child(3) .step-icon { background: #E8F5E9; border-color: #C8E6C9; }
+        .step-item:nth-child(4) .step-icon { background: #F3E5F5; border-color: #E1BEE7; }
+
+    </style>
+</head>
+<body>
+    <div class="header-section">
+        <div class="header-left">
+            <div class="sub-label">핵심 기능 01</div>
+            <h1 class="main-title">콘텐츠 메이커</h1>
+            <p class="description">키워드만 넣으면<br>글 방향부터 제목, 소제목, 본문 초안까지 정리</p>
+        </div>
+        <div class="header-right">
+            <div class="avatar-bubble">초안 빠르게 정리 ✨</div>
+            <img src="./memoji_laptop.png" class="avatar" alt="Laptop Memoji">
+        </div>
+    </div>
+
+    <div class="flow-container">
+        <div class="flow-line"></div>
+        
+        <div class="step-item">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-icon">🔍</div>
+                <div class="step-content">
+                    <h3 class="step-title"><span class="step-num">STEP 1</span> 키워드 및 방향 입력</h3>
+                    <div class="tags"><span class="tag mint-tag">✅ 검색최적화 흐름 반영</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="step-item">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-icon">📝</div>
+                <div class="step-content">
+                    <h3 class="step-title"><span class="step-num">STEP 2</span> 제목 & 소제목 구조화</h3>
+                    <div class="tags"><span class="tag">✅ 제목 구조 정리</span></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="step-item">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-icon">📄</div>
+                <div class="step-content">
+                    <h3 class="step-title"><span class="step-num">STEP 3</span> 본문 초안 완성</h3>
+                    <div class="tags">
+                        <span class="tag">✅ 이미지 삽입 위치 안내</span>
+                        <span class="tag mint-tag">✅ 글 구조 체크</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="step-item">
+            <div class="step-dot"></div>
+            <div class="step-card">
+                <div class="step-icon">#️⃣</div>
+                <div class="step-content">
+                    <h3 class="step-title"><span class="step-num">STEP 4</span> 해시태그 정리</h3>
+                    <div class="tags"><span class="tag">✅ 해시태그 정리</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

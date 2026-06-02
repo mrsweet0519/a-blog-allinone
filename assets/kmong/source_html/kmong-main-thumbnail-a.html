@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=652, height=488, initial-scale=1.0">
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      width: 652px;
+      height: 488px;
+      margin: 0;
+      overflow: hidden;
+      background: linear-gradient(135deg, #ffffff 0%, #effbf7 100%);
+      font-family: Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      color: #07110f;
+    }
+    .wrap {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      padding: 31px 8px 29px 30px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 92px;
+      gap: 0;
+      align-items: center;
+    }
+    .glow {
+      position: absolute;
+      right: -130px;
+      top: -130px;
+      width: 360px;
+      height: 360px;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(0,191,165,.18), rgba(255,255,255,0) 70%);
+    }
+    main { position: relative; z-index: 2; }
+    .label {
+      display: inline-flex;
+      width: fit-content;
+      margin-bottom: 9px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: #e2f7f0;
+      color: #006457;
+      font-size: 21px;
+      font-weight: 950;
+      letter-spacing: -.4px;
+    }
+    h1 {
+      margin: 0;
+      color: #07110f;
+      font-size: 92px;
+      line-height: .88;
+      font-weight: 950;
+      letter-spacing: -6.8px;
+    }
+    .mint {
+      display: block;
+      color: #00bfa5;
+      font-size: 88px;
+      line-height: .88;
+      letter-spacing: -6.7px;
+    }
+    .writing {
+      display: block;
+      margin-top: 10px;
+      font-size: 98px;
+      line-height: .82;
+      letter-spacing: -7.3px;
+    }
+    .sub {
+      margin: 25px 0 20px;
+      color: #004d40;
+      font-size: 35px;
+      line-height: 1.02;
+      font-weight: 950;
+      letter-spacing: -2.5px;
+    }
+    .badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: nowrap;
+    }
+    .badge {
+      min-height: 34px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 15px;
+      line-height: 1;
+      font-weight: 950;
+      letter-spacing: -.5px;
+      white-space: nowrap;
+      background: #004d40;
+      color: #fff;
+      box-shadow: 0 8px 16px rgba(0,77,64,.14);
+    }
+    .badge.light {
+      background: #ffffff;
+      color: #006457;
+      border: 2px solid #cceee6;
+      box-shadow: 0 8px 16px rgba(0,77,64,.08);
+    }
+    .visual {
+      position: relative;
+      z-index: 1;
+      height: 190px;
+      opacity: .55;
+      transform: translateX(0);
+    }
+    .browser {
+      position: absolute;
+      right: 4px;
+      top: 51px;
+      width: 88px;
+      height: 114px;
+      border-radius: 15px;
+      background: #fff;
+      border: 2px solid #def4ee;
+      box-shadow: 0 14px 26px rgba(0,0,0,.07);
+      padding: 9px;
+      transform: rotate(1deg);
+    }
+    .dots {
+      display: flex;
+      gap: 4px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #edf3f1;
+    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #00bfa5; }
+    .dot:nth-child(2) { background: #ffd36a; }
+    .dot:nth-child(3) { background: #ff6b6b; }
+    .doc {
+      margin-top: 9px;
+      border-radius: 10px;
+      background: #f4fbf8;
+      padding: 7px;
+      height: 64px;
+    }
+    .doc-title {
+      width: 41px;
+      height: 10px;
+      border-radius: 999px;
+      background: #00bfa5;
+      margin-bottom: 8px;
+    }
+    .line { height: 5px; border-radius: 999px; background: #dbe7e3; margin-bottom: 5px; }
+    .line.short { width: 60%; }
+    .line.mid { width: 82%; }
+    .check {
+      position: absolute;
+      right: 62px;
+      bottom: 31px;
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: #00bfa5;
+      color: #fff;
+      font-size: 24px;
+      font-weight: 950;
+      box-shadow: 0 10px 16px rgba(0,191,165,.18);
+      transform: rotate(-6deg);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="glow"></div>
+    <main>
+      <div class="label">N사 블로그용</div>
+      <h1><span class="mint">검색형 포스팅</span><span class="writing">글쓰기</span></h1>
+      <div class="sub">사진+메모 후기글 초안까지</div>
+      <div class="badges">
+        <span class="badge">콘텐츠메이커</span>
+        <span class="badge light">후기메이커</span>
+        <span class="badge light">글구조체크</span>
+      </div>
+    </main>
+    <aside class="visual" aria-hidden="true">
+      <div class="browser">
+        <div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+        <div class="doc">
+          <div class="doc-title"></div>
+          <div class="line"></div>
+          <div class="line mid"></div>
+          <div class="line"></div>
+          <div class="line short"></div>
+        </div>
+      </div>
+      <div class="check">✓</div>
+    </aside>
+  </div>
+</body>
+</html>

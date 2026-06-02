@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, initial-scale=1.0">
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0; width: 1080px; height: 1920px;
+            background-color: #FFFFFF; font-family: 'Pretendard', sans-serif;
+            display: flex; flex-direction: column; padding: 150px 60px; align-items: center;
+        }
+        .header { text-align: center; margin-bottom: 100px; }
+        .header h2 { font-size: 28px; color: #868E96; font-weight: 800; margin: 0 0 20px 0; letter-spacing: 1px;}
+        .header h1 { font-size: 58px; color: #111; font-weight: 900; margin: 0; letter-spacing: -1.5px; line-height: 1.3;}
+        
+        .compare-wrap { display: flex; width: 100%; gap: 30px; position: relative;}
+
+        .col { flex: 1; border-radius: 40px; padding: 60px 40px; position: relative; }
+        .col-before { background: #F8F9FA; border: 2px solid #E9ECEF; }
+        .col-after { background: #004D40; box-shadow: 0 30px 60px rgba(0,77,64,0.15); }
+
+        .avatar { width: 160px; height: 160px; border-radius: 50%; margin: 0 auto 30px auto; display: block; border: 4px solid #FFF; object-fit: cover; object-position: center 20%;}
+        .col-title { text-align: center; font-size: 38px; font-weight: 900; margin-bottom: 50px; }
+        .col-before .col-title { color: #495057; }
+        .col-after .col-title { color: #00BFA5; }
+
+        .list { display: flex; flex-direction: column; gap: 24px; }
+        .item { 
+            display: flex; align-items: center; gap: 20px; font-size: 26px; font-weight: 700; 
+            padding: 24px; border-radius: 20px; word-break: keep-all; letter-spacing: -0.5px;
+        }
+        
+        .col-before .item { background: #FFFFFF; color: #868E96; box-shadow: 0 5px 15px rgba(0,0,0,0.02); border: 1px solid #F1F3F5;}
+        .col-after .item { background: rgba(255,255,255,0.1); color: #FFFFFF; border: 1px solid rgba(255,255,255,0.1); }
+        
+        .icon-x { color: #FF6B6B; font-weight: 900; font-size: 32px; }
+        .icon-o { color: #00BFA5; font-weight: 900; font-size: 32px; }
+        
+        .vs-badge {
+            position: absolute; top: 280px; left: 50%; transform: translate(-50%, -50%);
+            width: 90px; height: 90px; background: #FFD93D; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 34px; font-weight: 900; color: #111; box-shadow: 0 15px 30px rgba(0,0,0,0.1);
+            z-index: 10; border: 6px solid #FFF;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>비교할수록 확실한 차이</h2>
+        <h1>블로그 운영이 어떻게 달라질까요?</h1>
+    </div>
+
+    <div class="compare-wrap">
+        <div class="vs-badge">VS</div>
+        
+        <!-- Before -->
+        <div class="col col-before">
+            <img src="./memoji_worry.png" class="avatar" alt="Worry">
+            <div class="col-title">기존 방식</div>
+            <div class="list">
+                <div class="item"><span class="icon-x">✕</span> 매번 글감 고민</div>
+                <div class="item"><span class="icon-x">✕</span> 제목부터 막힘</div>
+                <div class="item"><span class="icon-x">✕</span> 후기 정리 오래 걸림</div>
+                <div class="item"><span class="icon-x">✕</span> 구조 체크 어려움</div>
+                <div class="item"><span class="icon-x">✕</span> AI 말투가 어색함</div>
+            </div>
+        </div>
+
+        <!-- After -->
+        <div class="col col-after">
+            <img src="./memoji_thumbsup.png" class="avatar" alt="Thumbs up">
+            <div class="col-title">M.GO 올인원</div>
+            <div class="list">
+                <div class="item"><span class="icon-o">✓</span> 글 방향부터 쉽게 정리</div>
+                <div class="item"><span class="icon-o">✓</span> 매력적인 제목 후보 제공</div>
+                <div class="item"><span class="icon-o">✓</span> 사진+메모 후기글 초안 정리</div>
+                <div class="item"><span class="icon-o">✓</span> 글 구조 흐름 체크</div>
+                <div class="item"><span class="icon-o">✓</span> 4가지 말투 선택 가능</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

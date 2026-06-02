@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, initial-scale=1.0">
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0; width: 1080px; height: 1920px;
+            background-color: #FAFAFA; font-family: 'Pretendard', sans-serif;
+            display: flex; flex-direction: column; padding: 150px 80px;
+        }
+
+        .header-section {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            margin-bottom: 80px; position: relative; z-index: 10;
+        }
+        .header-left { flex: 1; }
+        .sub-label {
+            display: inline-block; background: rgba(255, 107, 107, 0.12); color: #E03131;
+            padding: 12px 24px; border-radius: 12px; font-size: 24px; font-weight: 800;
+            margin-bottom: 24px; letter-spacing: 0.5px;
+        }
+        .main-title {
+            font-size: 64px; color: #111; font-weight: 900; margin: 0 0 24px 0; letter-spacing: -2px;
+        }
+        .description {
+            font-size: 34px; color: #444; font-weight: 700; line-height: 1.5; margin: 0; letter-spacing: -1px;
+        }
+        .coral { color: #FF6B6B; }
+        
+        .header-right { position: relative; }
+        .avatar {
+            width: 280px; height: 280px; background: #FFF5F5; border: 6px solid #FF6B6B;
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 20px 40px rgba(255,107,107,0.25); margin-top: 20px; object-fit: cover; object-position: center 20%;
+        }
+        .avatar-bubble {
+            position: absolute; top: -10px; right: 230px; background: #FFF;
+            border: 3px solid #FFE3E3; border-radius: 20px 20px 0 20px;
+            padding: 16px 28px; font-size: 24px; font-weight: 800; color: #E03131;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.05); white-space: nowrap; z-index: 20;
+        }
+
+        .infographic-section {
+            background: #FFFFFF; border-radius: 40px; padding: 80px 40px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.04); border: 2px solid rgba(0,0,0,0.03);
+            margin-bottom: 60px; display: flex; align-items: center; justify-content: center; gap: 24px;
+        }
+
+        .flow-box { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+        .icon-card {
+            width: 160px; height: 160px; background: #FAFAFA; border: 3px solid #F1F3F5;
+            border-radius: 30px; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.03); position: relative;
+        }
+        .icon-card.highlight {
+            background: #FFF5F5; border-color: #FF6B6B; box-shadow: 0 20px 40px rgba(255,107,107,0.2);
+        }
+
+        .photos-icon { position: relative; width: 80px; height: 80px; }
+        .photo-layer {
+            position: absolute; background: #E8F5E9; border: 3px solid #00BFA5; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center; font-size: 32px;
+        }
+        .photo-layer:nth-child(1) { width: 60px; height: 60px; left: 0; top: 0; transform: rotate(-10deg); background: #E3F2FD; border-color: #4DABF7; z-index: 1;}
+        .photo-layer:nth-child(2) { width: 60px; height: 60px; left: 20px; top: 20px; transform: rotate(5deg); z-index: 2;}
+
+        .icon-card .memo-icon { font-size: 70px; }
+        .icon-card .doc-icon { font-size: 70px; position: relative; }
+        .doc-icon .check-badge {
+            position: absolute; right: -15px; bottom: -5px; background: #FF6B6B; color: #FFF;
+            width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; font-size: 20px; border: 3px solid #FFF; font-weight: bold;
+        }
+
+        .flow-text { font-size: 24px; font-weight: 800; color: #333; letter-spacing: -0.5px; text-align: center; }
+        .operator { font-size: 40px; color: #CED4DA; font-weight: bold; }
+        .operator.arrow { color: #FF6B6B; font-size: 50px; }
+
+        .points-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+        .point-card {
+            background: #FFFFFF; border-radius: 24px; padding: 30px 36px;
+            display: flex; align-items: center; gap: 24px; box-shadow: 0 15px 30px rgba(0,0,0,0.02);
+            border: 2px solid rgba(0,0,0,0.03);
+        }
+        .point-card.full-width { grid-column: 1 / -1; background: #FFF5F5; border-color: #FFC9C9; justify-content: center;}
+        
+        .point-icon {
+            width: 60px; height: 60px; background: #FFF5F5; color: #FF6B6B;
+            border-radius: 16px; display: flex; align-items: center; justify-content: center;
+            font-size: 30px; font-weight: 900;
+        }
+        .point-text { font-size: 26px; color: #111; font-weight: 800; letter-spacing: -0.5px; margin: 0; }
+        .point-card.full-width .point-icon { background: #FF6B6B; color: #FFF; }
+        .point-card.full-width .point-text { color: #E03131; font-size: 32px; }
+
+    </style>
+</head>
+<body>
+    <div class="header-section">
+        <div class="header-left">
+            <div class="sub-label">핵심 기능 02</div>
+            <h1 class="main-title">상품 후기 메이커</h1>
+            <p class="description">사진 여러 장 + 메모 몇 줄이면<br><span class="coral">후기형 포스팅 초안 완성</span></p>
+        </div>
+        <div class="header-right">
+            <div class="avatar-bubble">와, 내 얘기처럼 써지네! 🤩</div>
+            <img src="./memoji_wow.png" class="avatar" alt="Wow Memoji">
+        </div>
+    </div>
+
+    <div class="infographic-section">
+        <div class="flow-box">
+            <div class="icon-card">
+                <div class="photos-icon"><div class="photo-layer">🏞️</div><div class="photo-layer">📸</div></div>
+            </div>
+            <div class="flow-text">사진 여러 장</div>
+        </div>
+        <div class="operator">➕</div>
+        <div class="flow-box">
+            <div class="icon-card"><div class="memo-icon">📝</div></div>
+            <div class="flow-text">메모 몇 줄</div>
+        </div>
+        <div class="operator arrow">➡️</div>
+        <div class="flow-box">
+            <div class="icon-card highlight">
+                <div class="doc-icon">📄<div class="check-badge">✓</div></div>
+            </div>
+            <div class="flow-text coral">후기형 초안 완성</div>
+        </div>
+    </div>
+
+    <div class="points-grid">
+        <div class="point-card"><div class="point-icon">🛍️</div><p class="point-text">상품 정보 정리</p></div>
+        <div class="point-card"><div class="point-icon">🔄</div><p class="point-text">사용 흐름 반영</p></div>
+        <div class="point-card"><div class="point-icon">💬</div><p class="point-text">다양한 말투 선택 가능</p></div>
+        <div class="point-card"><div class="point-icon">✍️</div><p class="point-text">후기형 구조 정리</p></div>
+        <div class="point-card full-width">
+            <div class="point-icon">🚀</div>
+            <p class="point-text">수정 부담 줄이고, 복붙해서 바로 활용!</p>
+        </div>
+    </div>
+</body>
+</html>

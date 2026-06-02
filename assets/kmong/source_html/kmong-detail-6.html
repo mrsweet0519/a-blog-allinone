@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1080, initial-scale=1.0">
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; padding: 0; width: 1080px; height: 1920px;
+            background-color: #F4F6F8; font-family: 'Pretendard', sans-serif;
+            display: flex; flex-direction: column; padding: 150px 80px; align-items: center;
+        }
+        .header { text-align: center; margin-bottom: 80px; }
+        .header h2 { font-size: 28px; color: #FF6B6B; font-weight: 800; margin: 0 0 24px 0; background: #FFF5F5; display: inline-block; padding: 12px 24px; border-radius: 20px;}
+        .header h1 { font-size: 64px; color: #111; font-weight: 900; margin: 0; letter-spacing: -2px; }
+        
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; width: 100%; max-width: 900px; }
+        .card {
+            background: #FFFFFF; border-radius: 30px; padding: 40px;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.02); border: 2px solid #E9ECEF;
+            display: flex; flex-direction: column; gap: 20px; transition: transform 0.3s;
+        }
+        .card-icon {
+            width: 70px; height: 70px; background: #F8F9FA; border-radius: 16px;
+            display: flex; align-items: center; justify-content: center; font-size: 36px;
+        }
+        .card p { font-size: 26px; color: #222; font-weight: 800; margin: 0; line-height: 1.4; word-break: keep-all; letter-spacing: -0.5px;}
+        
+        .card:nth-child(1) .card-icon { background: #E3F2FD; color: #4DABF7; }
+        .card:nth-child(2) .card-icon { background: #FFF0F0; color: #FF6B6B; }
+        .card:nth-child(3) .card-icon { background: #E8F5E9; color: #00BFA5; }
+        .card:nth-child(4) .card-icon { background: #F3E5F5; color: #DA70D6; }
+        .card:nth-child(5) .card-icon { background: #FFF9DB; color: #FCC419; }
+        .card:nth-child(6) .card-icon { background: #F1F3F5; color: #495057; }
+
+        .avatar-wrap { 
+            margin-top: 80px; display: flex; align-items: center; justify-content: center; gap: 30px; 
+            background: #FFF; padding: 30px 50px; border-radius: 60px; 
+            box-shadow: 0 20px 40px rgba(0,0,0,0.04); 
+            width: 100%; max-width: 850px;
+        }
+        .avatar-wrap span { font-size: 34px; font-weight: 900; color: #004D40; letter-spacing: -1px;}
+        .avatar-wrap img { width: 120px; height: 120px; border-radius: 50%; object-fit: cover; object-position: center 20%;}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>어떤 분이 쓰면 좋을까요?</h2>
+        <h1>이런 분들께 <span style="color:#00BFA5;">강력 추천</span>합니다</h1>
+    </div>
+
+    <div class="grid">
+        <div class="card"><div class="card-icon">📚</div><p>블로그 포스팅이 늘<br>숙제처럼 느껴지는 분</p></div>
+        <div class="card"><div class="card-icon">🛍️</div><p>상품 후기글을 빠르게<br>정리하고 싶은 분</p></div>
+        <div class="card"><div class="card-icon">🔎</div><p>검색형 글 구조 잡기가<br>어렵게 느껴지는 분</p></div>
+        <div class="card"><div class="card-icon">🤯</div><p>매번 글 제목부터 막혀서<br>시간이 오래 걸리는 분</p></div>
+        <div class="card"><div class="card-icon">🤖</div><p>AI가 쓴 글이 너무 딱딱해서<br>아쉬웠던 분</p></div>
+        <div class="card"><div class="card-icon">🗣️</div><p>자연스러운 내 말투에 맞는<br>초안이 필요한 분</p></div>
+    </div>
+
+    <div class="avatar-wrap">
+        <img src="./memoji_smile.png" alt="Smile Memoji">
+        <span>"이제 글쓰기 스트레스, 훨씬 가볍게 시작해보세요!"</span>
+    </div>
+</body>
+</html>
