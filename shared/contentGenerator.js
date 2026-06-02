@@ -1579,7 +1579,7 @@ const IMAGE_QUERY_PRESETS = {
     scene: "runner wearing knee support outdoor",
     detail: "sports gear comfort checklist",
     closing: "running accessories packing checklist",
-    heroDescription: "무릎보호대와 러닝용품이 한눈에 보이는 제품 전체컷",
+    heroDescription: "상품과 주요 구성품이 한눈에 보이는 제품 전체컷",
     sceneDescription: "러닝이나 운동 중 착용감을 떠올릴 수 있는 실제 사용 장면",
     detailDescription: "착용감, 고정력, 소재를 비교할 수 있는 스포츠용품 체크 장면",
     closingDescription: "운동 전 준비물이나 사용 전 확인 포인트를 정리한 장면"

@@ -94,8 +94,8 @@ const STARTER_EXAMPLES = [
   {
     id: "review",
     label: "상품 후기 예시",
-    keyword: "무릎보호대, 러닝용품, 착용감",
-    category: "스포츠용품",
+    keyword: "수분크림 후기, 피부 보습, 데일리 크림",
+    category: "뷰티/생활용품",
     audienceType: "인플루언서/수익형",
     goal: "정보 전달"
   },
@@ -126,7 +126,7 @@ const FIELD_TOOLTIPS = {
     title: "키워드",
     description:
       "검색되고 싶은 핵심 키워드를 입력하세요. 1개만 입력해도 되고, 쉼표로 2~3개까지 입력할 수 있습니다. 첫 번째 키워드는 메인 키워드로, 나머지는 보조 키워드로 활용됩니다.",
-    example: "강남 피부관리샵, 리프팅 관리, 피부탄력 / 무릎보호대, 러닝용품, 착용감 / 육아서적 추천, 초등 독서, 부모 가이드"
+    example: "강남 피부관리샵, 리프팅 관리, 피부탄력 / 수분크림 후기, 피부 보습, 데일리 크림 / 육아서적 추천, 초등 독서, 부모 가이드"
   },
   category: {
     title: "업종/주제",
@@ -953,7 +953,7 @@ export default function ContentMaker() {
                   value={profileName}
                   onChange={(event) => setProfileName(event.target.value)}
                   className="focus-ring mt-1 min-h-10 w-full rounded-md border border-line bg-white px-3 text-sm"
-                  placeholder="예: 무릎보호대 상품 후기용"
+                  placeholder="예: 수분크림 상품 후기용"
                 />
               </label>
               <label className="block">
@@ -1752,7 +1752,7 @@ function FirstUseGuide({ compact = false, onFillExample }) {
       {!compact && (
         <ul className="grid gap-1 text-xs font-semibold leading-5 text-ink/55">
           <li>매장 홍보: 강남 피부관리샵, 리프팅 관리, 피부탄력</li>
-          <li>상품 후기: 무릎보호대, 러닝용품, 착용감</li>
+          <li>상품 후기: 수분크림 후기, 피부 보습, 데일리 크림</li>
           <li>정보글: 육아서적 추천, 초등 독서, 부모 가이드</li>
         </ul>
       )}

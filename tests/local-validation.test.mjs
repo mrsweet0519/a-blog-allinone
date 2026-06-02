@@ -52,9 +52,9 @@ assert.equal(loadAccessSession(now).code, "MGO-TEST7");
 clearAccessSession();
 assert.equal(loadAccessSession(now), null);
 
-const kneeProfile = saveWritingProfile("무릎보호대 상품 후기용", {
+const productProfile = saveWritingProfile("수분크림 상품 후기용", {
   audienceType: "인플루언서/수익형",
-  category: "스포츠용품",
+  category: "뷰티/생활용품",
   goal: "정보 전달",
   tone: "친근한"
 });
@@ -66,7 +66,7 @@ const shopProfile = saveWritingProfile("피부관리샵 프로필", {
 });
 assert.equal(loadWritingProfiles().length, 2);
 assert.equal(loadWritingProfiles()[0].name, "피부관리샵 프로필");
-assert.equal(loadWritingProfiles().find((profile) => profile.id === kneeProfile.id).values.category, "스포츠용품");
+assert.equal(loadWritingProfiles().find((profile) => profile.id === productProfile.id).values.category, "뷰티/생활용품");
 deleteWritingProfile(shopProfile.id);
 assert.equal(loadWritingProfiles().length, 1);
 const keywordProfile = saveWritingProfile("keyword style profile", { keyword: "main keyword, sub keyword" });
@@ -79,7 +79,7 @@ const finalContent = createFinalContent(
   {
     keyword: "드라이샴푸, 하얀가루, 바쁜 아침",
     category: "뷰티용품",
-    brandName: "M.GO 샘플",
+    brandName: "자체 브랜드",
     region: "",
     goal: "상품 홍보",
     audienceType: "인플루언서/수익형",
@@ -127,22 +127,22 @@ assert.ok(finalContent.seoCheck.items.find((item) => item.id === "faq-question")
 assert.ok(finalContent.seoCheck.items.find((item) => item.id === "avoid").passed);
 
 const betaForm = {
-  keyword: "이더라이트, 변비해결",
-  category: "온라인 쇼핑몰",
-  brandName: "라비크",
+  keyword: "수분크림 후기, 피부 보습",
+  category: "뷰티/생활용품",
+  brandName: "",
   region: "",
   goal: "정보 전달",
   audienceType: "인플루언서/수익형",
   tone: "친근한",
-  strengths: "성분 확인, 섭취 방식, 후기 흐름",
-  emphasisPoint: "구매 전 생활 관리 관점으로 살펴볼 기준",
+  strengths: "사용감 확인, 보습력, 후기 흐름",
+  emphasisPoint: "구매 전 데일리 케어 관점으로 살펴볼 기준",
   ctaDirection: "필요한 기준을 천천히 비교해보세요.",
-  purchaseUrl: "라비크 공식몰",
+  purchaseUrl: "온라인 판매처",
   priceInfo: "상세페이지 기준 확인",
-  contactMethod: "공식몰 문의",
+  contactMethod: "판매처 문의",
   shippingInfo: "구매처 안내 기준 확인",
   useEmoji: false,
-  avoid: "효과 보장, 치료, 완치",
+  avoid: "효과 보장, 과장 표현, 완벽",
   targetLengthOption: "2000",
   customTargetLength: "2000"
 };
@@ -150,58 +150,58 @@ const betaTopic = createTopicRecommendations(betaForm)[0];
 const betaTitles = createTitleCandidates(betaForm, betaTopic);
 assert.equal(betaTitles.length, 5);
 assert.ok(betaTitles.every((title) => Array.from(title).length <= 36));
-assert.ok(betaTitles[0].includes("이더라이트"));
+assert.ok(betaTitles[0].includes("수분크림 후기"));
 assert.ok(betaTitles[1].includes("후기"));
 const betaOutline = createOutlineSections(betaForm, betaTopic, betaTitles[0]);
 assert.equal(betaOutline.length, 5);
 const betaContent = createFinalContent(betaForm, betaTopic, betaTitles[0], betaOutline);
 const betaFirstParagraph = betaContent.body.split(/\n{2,}/u)[0].replace(/^✨\s*/u, "");
 const betaFirstSentence = betaFirstParagraph.split(/(?<=[.!?요다])\s+/u)[0];
-assert.ok(betaFirstSentence.includes("이더라이트"));
-assert.equal(betaFirstParagraph.split("이더라이트").length - 1, 3);
+assert.ok(betaFirstSentence.includes("수분크림 후기"));
+assert.equal(betaFirstParagraph.split("수분크림 후기").length - 1, 3);
 assert.ok(/후기|비교|체크/u.test(betaContent.body));
 assert.ok(!betaContent.body.includes("FAQ"));
 assert.ok(betaContent.body.includes("제품 정보 정리"));
 assert.ok(betaContent.hashtags.length >= 10 && betaContent.hashtags.length <= 15);
-assert.ok(betaContent.hashtags.includes("#이더라이트"));
+assert.ok(betaContent.hashtags.includes("#수분크림후기"));
 assert.ok(betaContent.seoCheck.items.find((item) => item.id === "first-sentence-keyword").passed);
 assert.ok(betaContent.seoCheck.items.find((item) => item.id === "first-paragraph-keyword-density").passed);
 
 const reviewTitleForm = {
   ...betaForm,
-  keyword: "변비해결, 이너라이트",
+  keyword: "데일리백 후기, 출근가방",
   brandName: "",
-  strengths: "생활 관리 기준, 섭취 전 확인, 후기 흐름",
+  strengths: "수납력 확인, 출근길 사용감, 후기 흐름",
   emphasisPoint: "구매 전 후기에서 많이 보는 기준"
 };
 const reviewTopic = createTopicRecommendations(reviewTitleForm)[0];
 const reviewTitles = createTitleCandidates(reviewTitleForm, reviewTopic);
 assert.equal(reviewTitles.length, 5);
-assert.ok(reviewTitles[0].startsWith("변비해결"));
-assert.ok(reviewTitles[1].includes("이너라이트 변비해결") && reviewTitles[1].includes("후기"));
+assert.ok(reviewTitles[0].startsWith("데일리백 후기"));
+assert.ok(reviewTitles[1].includes("출근가방 데일리백 후기") && reviewTitles[1].includes("후기"));
 assert.ok(reviewTitles[2].includes("비교"));
 assert.ok(reviewTitles[3].includes("선택"));
 assert.ok(reviewTitles[4].includes("다른 점"));
 
 const productReview = createProductReviewDraft({
-  productName: "라비크 이너라이트",
-  mainKeyword: "라비크 이너라이트, 이너뷰티, 디톡스",
+  productName: "수분크림",
+  mainKeyword: "수분크림, 피부 보습, 데일리 크림",
   experienceMemo:
-    "평소 이너뷰티, 디톡스 쪽으로 정보를 찾아보다 보니, 라비크 이너라이트처럼 간편하게 챙길 수 있는 제품이 궁금해졌습니다.\n여름이 시작되면서 다이어트 쪽으로 검색해보다가 알게 됐다.\n장 디톡스로 변비도 관리될 것 같고 라인이 점점 변화되고 있다.\n한 포씩 챙기기 쉬워 보인다.",
-  emphasisPoints: "간편함, 장 관리 루틴, 여름 라인 관리",
-  avoidWords: "무조건, 보장, 치료, 즉시효과",
+    "처음에는 보습력이 궁금해서 찾아봤어요.\n사용감이 무겁지 않은지 보고 싶었어요.\n아침저녁으로 부담 없이 쓸 수 있는 제품인지 확인하고 싶었어요.",
+  emphasisPoints: "사용감, 보습력, 데일리 케어",
+  avoidWords: "무조건, 보장, 완벽, 즉시효과",
   tone: "친근한",
   targetLength: "1500"
 });
 const productFirstParagraph = productReview.body.split(/\n{2,}/u)[0];
-assert.ok(productFirstParagraph.startsWith("라비크 이너라이트"));
-assert.equal(productFirstParagraph.split("라비크 이너라이트").length - 1, 2);
+assert.ok(productFirstParagraph.startsWith("수분크림"));
+assert.equal(productFirstParagraph.split("수분크림").length - 1, 2);
 assert.ok(/해요|더라고요|같아요/u.test(productFirstParagraph));
 assert.ok((productFirstParagraph.match(/찾아보다/gu) || []).length <= 1);
 assert.ok((productFirstParagraph.match(/궁금/gu) || []).length <= 1);
 assert.ok(!/경험 메모|OCR 원문|추출 데이터/u.test(productReview.body));
-assert.ok(!/무조건|보장|치료|즉시효과|변비도 관리될 것|라인이 점점 변화/u.test(productReview.body));
+assert.ok(!/무조건|보장|완벽|즉시효과/u.test(productReview.body));
 assert.ok(productReview.body.includes("[여기에 이미지 1을 넣어주세요:"));
-assert.ok(productReview.hashtags.includes("#라비크이너라이트후기"));
+assert.ok(productReview.hashtags.includes("#수분크림후기"));
 
 console.log("local validation passed");

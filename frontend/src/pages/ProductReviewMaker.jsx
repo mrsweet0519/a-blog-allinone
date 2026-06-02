@@ -36,7 +36,7 @@ const initialForm = {
   purchaseNotes: "",
   experienceMemo: "",
   emphasisPoints: "",
-  avoidWords: "무조건, 보장, 치료, 즉시효과",
+  avoidWords: "무조건, 보장, 완벽, 즉시효과",
   tone: "친근한",
   targetLength: "1500",
   selectedTitle: ""
@@ -126,6 +126,9 @@ export default function ProductReviewMaker() {
   const [ocrMessage, setOcrMessage] = useState("");
   const [ocrWarnings, setOcrWarnings] = useState([]);
   const [copied, setCopied] = useState("");
+  const [productInfoOpen, setProductInfoOpen] = useState(false);
+  const [rawTextOpen, setRawTextOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const isReady = useMemo(
     () => Boolean(form.productName.trim() && form.mainKeyword.trim() && form.experienceMemo.trim()),
@@ -160,11 +163,8 @@ export default function ProductReviewMaker() {
 
     setImages((current) => [...current, ...accepted.map((file) => createImageItem(file, source))]);
     setOcrStatus("idle");
-    setOcrMessage(
-      source === "paste"
-        ? "붙여넣은 이미지가 추가되었습니다. 새 캡처를 붙여넣으면 이미지가 계속 추가됩니다."
-        : "상품 상세 이미지가 추가되었습니다."
-    );
+    setProductInfoOpen(true);
+    setOcrMessage("이미지가 추가되었습니다. 상품 정보를 읽어보려면 '이미지에서 상품 정보 추출'을 눌러주세요.");
     setOcrWarnings([]);
   };
 
@@ -236,12 +236,13 @@ export default function ProductReviewMaker() {
   const extractInfoFromImages = async () => {
     if (images.length === 0) {
       setOcrStatus("manual");
-      setOcrMessage("이미지가 없어 수동 보정 영역에 직접 상품 정보를 입력하면 됩니다.");
+      setOcrMessage("상품 이미지를 넣으면 읽은 내용을 확인할 수 있습니다.");
       return;
     }
 
     setOcrStatus("reading");
-    setOcrMessage("이미지에서 상품 정보를 읽는 중입니다.");
+    setProductInfoOpen(true);
+    setOcrMessage("이미지에서 상품 정보를 읽는 중...");
     setOcrWarnings([]);
 
     const extractedTexts = [];
@@ -279,10 +280,12 @@ export default function ProductReviewMaker() {
     if (combinedText) {
       applyExtractedInfo(combinedText);
       setOcrStatus("done");
-      setOcrMessage("이미지에서 읽은 상품 정보를 보정 영역에 반영했습니다.");
+      setProductInfoOpen(true);
+      setOcrMessage("이미지에서 읽은 내용을 확인하고 필요한 부분만 수정해주세요. 수정한 내용은 후기글 생성에 반영됩니다.");
     } else {
       setOcrStatus("manual");
-      setOcrMessage("OCR로 읽은 텍스트가 없습니다. 아래 보정 영역에 상품 정보를 직접 입력해주세요.");
+      setProductInfoOpen(true);
+      setOcrMessage("이미지에서 내용을 정확히 읽지 못했습니다. 아래 영역에 상품 정보를 직접 입력해도 후기글을 만들 수 있습니다.");
     }
   };
 
@@ -348,6 +351,16 @@ export default function ProductReviewMaker() {
               {isReady ? "입력 완료" : "입력 전"}
             </span>
           </div>
+          <div className="mt-4 rounded-md border border-moss/20 bg-moss/10 p-3 text-sm leading-6 text-ink/70">
+            <p className="font-semibold">
+              상품명, 키워드, 상품 이미지, 간단한 경험 메모만 넣으면 후기형 블로그 글 초안을 만들 수 있습니다.
+            </p>
+            <ul className="mt-2 grid gap-1 text-xs font-semibold text-ink/55">
+              <li>수분크림 후기: 사용감, 보습력, 데일리 케어</li>
+              <li>무선 미니청소기 후기: 흡입력, 원룸 청소, 보관 편의성</li>
+              <li>아기 식판 후기: 세척 편의성, 흡착력, 이유식 준비</li>
+            </ul>
+          </div>
 
           <div className="mt-5 space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -357,7 +370,7 @@ export default function ProductReviewMaker() {
                   value={form.productName}
                   onChange={(event) => updateForm("productName", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 라비크 이너라이트"
+                  placeholder="예: 수분크림, 무선 미니청소기, 아기 식판"
                 />
               </label>
 
@@ -367,7 +380,7 @@ export default function ProductReviewMaker() {
                   value={form.mainKeyword}
                   onChange={(event) => updateForm("mainKeyword", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 라비크 이너라이트, 이너뷰티, 디톡스"
+                  placeholder="예: 수분크림 후기, 피부 보습, 데일리 크림"
                 />
               </label>
             </div>
@@ -391,7 +404,7 @@ export default function ProductReviewMaker() {
                     Ctrl+V로 여러 장을 붙여넣을 수 있습니다.
                   </p>
                   <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                    새 캡처를 붙여넣으면 이미지가 추가됩니다. 이미지를 여러 장 넣을수록 제품 정보 추출이 더 정확해집니다.
+                    상품 이미지나 상세페이지 캡처를 넣으면 읽은 내용을 확인하고 필요한 부분만 수정할 수 있습니다.
                   </p>
                   <label className="focus-ring mt-3 inline-flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-bold transition hover:border-moss hover:text-moss">
                     파일 여러 장 업로드
@@ -444,35 +457,6 @@ export default function ProductReviewMaker() {
               </button>
             </section>
 
-            <section className="rounded-md border border-line bg-paper p-3">
-              <h4 className="text-sm font-bold text-ink/70">이미지에서 읽은 상품 정보</h4>
-              <div className="mt-3 grid gap-3">
-                {fieldLabels.map(([field, label]) => (
-                  <label key={field} className="block">
-                    <span className="text-xs font-bold text-ink/55">{label}</span>
-                    <textarea
-                      value={form[field]}
-                      onChange={(event) => updateForm(field, event.target.value)}
-                      rows={field === "productName" || field === "brandName" ? 1 : 2}
-                      className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-2 text-sm leading-6"
-                      placeholder={`${label}을 직접 수정할 수 있습니다.`}
-                    />
-                  </label>
-                ))}
-              </div>
-            </section>
-
-            <label className="block">
-              <FieldLabel>추출 원문 보정</FieldLabel>
-              <textarea
-                value={form.productInfoText}
-                onChange={(event) => updateForm("productInfoText", event.target.value)}
-                rows={6}
-                className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-                placeholder="OCR 결과가 없거나 틀리면 상품명, 성분, 구성, 섭취/사용 방법, 특징을 직접 적어주세요."
-              />
-            </label>
-
             <label className="block">
               <FieldLabel required>내가 느낀 점 또는 쓰고 싶은 내용</FieldLabel>
               <textarea
@@ -480,58 +464,9 @@ export default function ProductReviewMaker() {
                 onChange={(event) => updateForm("experienceMemo", event.target.value)}
                 rows={6}
                 className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-                placeholder={`예: 평소 이너뷰티, 디톡스 쪽으로 정보를 찾아보다 보니 궁금해졌습니다.\n여름이 시작되면서 다이어트 쪽으로 검색해보다가 알게 됐다.\n한 포씩 챙기기 쉬워 보인다.`}
+                placeholder={`예:\n처음에는 보습력이 궁금해서 찾아봤어요.\n사용감이 무겁지 않은지 보고 싶었어요.\n아침저녁으로 부담 없이 쓸 수 있는 제품인지 확인하고 싶었어요.`}
               />
             </label>
-
-            <label className="block">
-              <FieldLabel>강조하고 싶은 포인트</FieldLabel>
-              <input
-                value={form.emphasisPoints}
-                onChange={(event) => updateForm("emphasisPoints", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 간편함, 장 관리 루틴, 여름 라인 관리"
-              />
-            </label>
-
-            <label className="block">
-              <FieldLabel>피하고 싶은 표현/금지어</FieldLabel>
-              <input
-                value={form.avoidWords}
-                onChange={(event) => updateForm("avoidWords", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 무조건, 보장, 치료, 즉시효과"
-              />
-            </label>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <FieldLabel>글 톤</FieldLabel>
-                <select
-                  value={form.tone}
-                  onChange={(event) => updateForm("tone", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                >
-                  {toneOptions.map((tone) => (
-                    <option key={tone} value={tone}>
-                      {tone}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="block">
-                <FieldLabel>목표 글자수</FieldLabel>
-                <input
-                  type="number"
-                  min="600"
-                  max="5000"
-                  value={form.targetLength}
-                  onChange={(event) => updateForm("targetLength", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                />
-              </label>
-            </div>
 
             <button
               type="button"
@@ -542,6 +477,133 @@ export default function ProductReviewMaker() {
               <WandSparkles size={18} aria-hidden="true" />
               후기글 생성
             </button>
+
+            <div className="rounded-md border border-line bg-white p-3">
+              <p className="text-sm font-bold text-ink/70">간단 설정</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <FieldLabel>글 톤</FieldLabel>
+                  <select
+                    value={form.tone}
+                    onChange={(event) => updateForm("tone", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                  >
+                    {toneOptions.map((tone) => (
+                      <option key={tone} value={tone}>
+                        {tone}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <FieldLabel>목표 글자수</FieldLabel>
+                  <input
+                    type="number"
+                    min="600"
+                    max="5000"
+                    value={form.targetLength}
+                    onChange={(event) => updateForm("targetLength", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <details
+              open={productInfoOpen}
+              onToggle={(event) => setProductInfoOpen(event.currentTarget.open)}
+              className="rounded-md border border-line bg-paper p-3"
+            >
+              <summary className="cursor-pointer list-none">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <span className="text-sm font-bold text-ink/70">사진에서 읽은 내용 / 상품 정보 보정</span>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
+                      {images.length > 0
+                        ? "읽은 내용을 확인하고 필요한 부분만 수정할 수 있습니다."
+                        : "상품 이미지를 넣으면 읽은 내용을 확인할 수 있습니다."}
+                    </p>
+                  </div>
+                  <span className="inline-flex min-h-8 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-bold text-moss">
+                    {productInfoOpen ? "접기" : "열기"}
+                  </span>
+                </div>
+              </summary>
+
+              <div className="mt-3 space-y-3">
+                <p className="rounded-md border border-moss/20 bg-white px-3 py-2 text-xs font-semibold leading-5 text-ink/60">
+                  {images.length > 0
+                    ? "이미지에서 읽은 내용을 확인하고 필요한 부분만 수정해주세요. 수정한 내용은 후기글 생성에 반영됩니다."
+                    : "이미지가 없거나 글자를 정확히 읽지 못해도 아래에 상품 정보를 직접 입력하면 후기글을 만들 수 있습니다."}
+                </p>
+                <div className="grid gap-3">
+                  {fieldLabels.map(([field, label]) => (
+                    <label key={field} className="block">
+                      <span className="text-xs font-bold text-ink/55">{label}</span>
+                      <textarea
+                        value={form[field]}
+                        onChange={(event) => updateForm(field, event.target.value)}
+                        rows={field === "productName" || field === "brandName" ? 1 : 2}
+                        className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-2 text-sm leading-6"
+                        placeholder={`${label}을 직접 수정할 수 있습니다.`}
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <details
+                  open={rawTextOpen}
+                  onToggle={(event) => setRawTextOpen(event.currentTarget.open)}
+                  className="rounded-md border border-line bg-white p-3"
+                >
+                  <summary className="cursor-pointer text-sm font-bold text-moss">
+                    추출 원문 전체 보기
+                  </summary>
+                  <label className="mt-3 block">
+                    <span className="text-xs font-bold text-ink/55">추출 원문</span>
+                    <textarea
+                      value={form.productInfoText}
+                      onChange={(event) => updateForm("productInfoText", event.target.value)}
+                      rows={6}
+                      className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
+                      placeholder="OCR 결과가 없거나 틀리면 상품명, 성분, 구성, 사용 방법, 특징을 직접 적어주세요."
+                    />
+                  </label>
+                </details>
+              </div>
+            </details>
+
+            <details
+              open={advancedOpen}
+              onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+              className="rounded-md border border-line bg-white p-3"
+            >
+              <summary className="cursor-pointer text-sm font-bold text-ink/70">
+                고급 설정
+              </summary>
+              <div className="mt-3 grid gap-3">
+                <label className="block">
+                  <FieldLabel>강조하고 싶은 포인트</FieldLabel>
+                  <input
+                    value={form.emphasisPoints}
+                    onChange={(event) => updateForm("emphasisPoints", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                    placeholder="예: 사용감, 보습력, 휴대성, 구성, 가격대"
+                  />
+                </label>
+
+                <label className="block">
+                  <FieldLabel>피하고 싶은 표현/금지어</FieldLabel>
+                  <input
+                    value={form.avoidWords}
+                    onChange={(event) => updateForm("avoidWords", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                    placeholder="예: 무조건, 보장, 완벽, 즉시효과"
+                  />
+                </label>
+              </div>
+            </details>
           </div>
         </section>
 
@@ -635,7 +697,7 @@ function ImageGrid({ images = [], onRemove, onMove, onNoteChange }) {
   }
 
   return (
-    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+    <div className="mt-3 grid auto-cols-[minmax(220px,82vw)] grid-flow-col gap-3 overflow-x-auto pb-1 sm:grid-flow-row sm:grid-cols-2 sm:overflow-visible">
       {images.map((item, index) => (
         <div key={item.id} className="rounded-md border border-line bg-white p-3">
           <div className="flex items-center justify-between gap-2">
@@ -657,22 +719,22 @@ function ImageGrid({ images = [], onRemove, onMove, onNoteChange }) {
           <div className="mt-2 overflow-hidden rounded-md border border-line bg-paper">
             <img src={item.url} alt={item.name} className="h-36 w-full object-contain" />
           </div>
-          <label className="mt-2 block">
-            <span className="text-xs font-bold text-ink/55">이미지별 메모</span>
+          <details className="mt-2 rounded-md border border-line bg-paper p-2 text-xs">
+            <summary className="cursor-pointer font-bold text-ink/60">이미지별 메모</summary>
             <textarea
               value={item.note}
               onChange={(event) => onNoteChange(item.id, event.target.value)}
               rows={2}
-              className="focus-ring mt-1 w-full rounded-md border border-line bg-paper p-2 text-xs leading-5"
-              placeholder="예: 성분표, 섭취법, 가격 정보"
+              className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-2 leading-5"
+              placeholder="예: 성분표, 사용법, 가격 정보"
             />
-          </label>
+          </details>
           {item.message && (
             <p className="mt-2 text-xs font-semibold leading-5 text-ink/55">{item.message}</p>
           )}
           {item.ocrText && (
             <details className="mt-2 text-xs">
-              <summary className="cursor-pointer font-bold text-moss">OCR 원문 보기</summary>
+              <summary className="cursor-pointer font-bold text-moss">추출 원문 보기</summary>
               <p className="mt-1 whitespace-pre-wrap rounded-md bg-paper p-2 leading-5 text-ink/60">{item.ocrText}</p>
             </details>
           )}
