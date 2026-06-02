@@ -491,6 +491,94 @@ const isLikelyCommentContent = (value = "") => {
   return /[\p{L}\p{N}]/u.test(cleaned);
 };
 
+export const CAPTURE_OCR_CONFIDENCE = {
+  BLOCK_BELOW: 0.5,
+  AUTO_FROM: 0.7
+};
+
+const COMMENT_INTENT_PATTERN =
+  /(궁금|문의|예약|가격|얼마|어디|언제|좋|괜찮|예쁘|편하|도움|후기|정보|감사|맞나요|인가요|어요|아요|네요|습니다|해요|ㅋㅋ|ㅎㅎ|\?|!)/iu;
+
+const ENGLISH_COMMENT_INTENT_PATTERN =
+  /\b(thanks?|thank you|nice|good|great|helpful|love|question|how|where|when|price|review|recommend|interested|useful)\b/iu;
+
+const isLikelyOcrNoiseText = (value = "") => {
+  const normalized = stripCaptureInlineMeta(value);
+  const compacted = compact(normalized);
+  if (!normalized) return true;
+  if (isCaptureNoiseLine(normalized)) return true;
+  if (Array.from(compacted).length < 5) return true;
+  if (/^\d+$/u.test(compacted)) return true;
+  if (/^[#@~*._\-–—|/\\()[\]{}♡♥!?·•&%+=:;"',\s]+$/u.test(normalized)) return true;
+
+  const hasHangul = /[가-힣]/u.test(normalized);
+  const hasIntent = COMMENT_INTENT_PATTERN.test(normalized) || ENGLISH_COMMENT_INTENT_PATTERN.test(normalized);
+
+  if (/^[A-Za-z\s._-]+$/u.test(normalized)) {
+    const words = normalized.split(/\s+/u).filter(Boolean);
+    const shortWordRatio = words.length
+      ? words.filter((word) => word.replace(/[^A-Za-z]/gu, "").length <= 2).length / words.length
+      : 1;
+    if (!hasIntent && (normalized.length < 20 || shortWordRatio >= 0.5)) return true;
+  }
+
+  if (!hasHangul && !hasIntent && normalized.length < 20) return true;
+  return false;
+};
+
+export const isUsableCapturedComment = (comment = {}) => {
+  const content = typeof comment === "string" ? comment : comment.content;
+  return isLikelyCommentContent(content) && !isLikelyOcrNoiseText(content);
+};
+
+export const getCaptureOcrConfidenceStatus = (confidence = 0) => {
+  const normalizedConfidence = Number.isFinite(Number(confidence)) ? Number(confidence) : 0;
+  if (normalizedConfidence < CAPTURE_OCR_CONFIDENCE.BLOCK_BELOW) return "low";
+  if (normalizedConfidence < CAPTURE_OCR_CONFIDENCE.AUTO_FROM) return "review";
+  return "auto";
+};
+
+export function assessCapturedCommentExtraction(raw = "", options = {}) {
+  const confidence = Number.isFinite(Number(options.confidence)) ? Number(options.confidence) : 0;
+  const source = options.source || "ocr";
+  const force = Boolean(options.force);
+  const parsedFromRaw = parseCapturedComments(raw);
+  const parsedComments = force ? parsedFromRaw : parsedFromRaw.filter(isUsableCapturedComment);
+  const confidenceStatus = getCaptureOcrConfidenceStatus(confidence);
+  const lowConfidence = source === "ocr" && confidenceStatus === "low";
+
+  if (!force && lowConfidence) {
+    return {
+      ok: false,
+      reason: "low_confidence",
+      confidenceStatus,
+      comments: [],
+      message: "댓글을 정확히 읽지 못했습니다. 댓글 글자가 크게 보이도록 다시 캡처하거나, 댓글 내용을 직접 입력해주세요."
+    };
+  }
+
+  if (!force && parsedComments.length === 0) {
+    return {
+      ok: false,
+      reason: raw.trim() ? "noise_or_empty" : "empty",
+      confidenceStatus,
+      comments: [],
+      message: "이미지에서 댓글을 정확히 찾지 못했습니다. 댓글 내용을 아래에 직접 붙여넣어도 대댓글을 만들 수 있습니다."
+    };
+  }
+
+  return {
+    ok: parsedComments.length > 0,
+    reason: parsedComments.length > 0 ? "parsed" : "empty",
+    confidenceStatus,
+    comments: parsedComments,
+    message:
+      parsedComments.length > 0
+        ? `${parsedComments.length}개 댓글을 자동 분리했습니다. 아래 추출 결과를 확인한 뒤 댓글 카드로 반영해주세요.`
+        : "댓글을 자동 분리하지 못했습니다. OCR 원문을 직접 수정한 뒤 다시 추출해주세요."
+  };
+}
+
 const looksLikeCaptureAuthor = (line = "", nextLine = "") => {
   const normalized = cleanCaptureAuthor(line);
   const next = stripCaptureInlineMeta(nextLine);

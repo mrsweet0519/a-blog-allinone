@@ -29,6 +29,7 @@ import { isBackendApiEnabled, postBackend, requestBackend } from "../lib/backend
 import { extractCaptureTextFromImage } from "../lib/captureOcr.js";
 import { isStaticBetaMode, STATIC_BETA_NOTICE } from "../lib/runtimeMode.js";
 import {
+  assessCapturedCommentExtraction,
   createCommentCollectionBridge,
   createCommentReplyBatch,
   createCommentReplyForOne,
@@ -36,7 +37,6 @@ import {
   generateContextualCaptureReplies,
   generateContextualCaptureReply,
   normalizeComment,
-  parseCapturedComments,
   parseManualComments,
   resolveMainKeyword
 } from "../lib/commentReplyGenerator.js";
@@ -99,8 +99,37 @@ const bridgeStatusClassName = {
 const supportedCaptureImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 const supportedCaptureImageExtensions = new Set(["png", "jpg", "jpeg", "webp"]);
 const MAX_CAPTURE_IMAGE_SIZE = 12 * 1024 * 1024;
+const MIN_CAPTURE_IMAGE_WIDTH = 600;
+const MIN_CAPTURE_IMAGE_HEIGHT = 300;
+const LOW_CAPTURE_IMAGE_SIZE = 40 * 1024;
+const OCR_LOW_CONFIDENCE_MESSAGE =
+  "댓글을 정확히 읽지 못했습니다. 댓글 글자가 크게 보이도록 다시 캡처하거나, 댓글 내용을 직접 입력해주세요.";
+const OCR_MANUAL_INPUT_MESSAGE =
+  "이미지에서 댓글을 정확히 찾지 못했습니다. 댓글 내용을 아래에 직접 붙여넣어도 대댓글을 만들 수 있습니다.";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const readImageSize = (previewUrl) =>
+  new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth || 0, height: image.naturalHeight || 0 });
+    image.onerror = () => resolve({ width: 0, height: 0 });
+    image.src = previewUrl;
+  });
+
+const getCaptureImageQualityWarnings = ({ width = 0, height = 0, size = 0 } = {}) => {
+  const warnings = [];
+
+  if ((width && width < MIN_CAPTURE_IMAGE_WIDTH) || (height && height < MIN_CAPTURE_IMAGE_HEIGHT)) {
+    warnings.push("이미지가 작거나 글자가 흐리면 댓글을 정확히 읽지 못할 수 있습니다.");
+  }
+
+  if (size > 0 && size < LOW_CAPTURE_IMAGE_SIZE) {
+    warnings.push("파일 용량이 매우 작으면 댓글 글자가 흐리게 저장됐을 수 있습니다.");
+  }
+
+  return warnings;
+};
 
 const getSupportedCaptureImageType = (file) => {
   const type = String(file?.type || "").toLowerCase();
@@ -274,7 +303,7 @@ const normalizeCaptureReviewComment = (comment = {}, index = 0, confidence = 0) 
   ...normalizeCapturedComment(comment, index),
   id: comment.id || `capture-review-${Date.now()}-${index + 1}`,
   extractionConfidence: Number.isFinite(confidence) ? confidence : 0,
-  extractionStatus: confidence > 0.7 ? "자동 추출" : "확인 필요",
+  extractionStatus: confidence >= 0.7 ? "자동 추출" : "확인 필요",
   status: "대기",
   reply: "",
   reviewed: false
@@ -353,6 +382,8 @@ export default function CommentReplyManager() {
   const automationAbortRef = useRef(null);
   const captureFileInputRef = useRef(null);
   const capturePasteZoneRef = useRef(null);
+  const captureOcrTextareaRef = useRef(null);
+  const manualInputRef = useRef(null);
   const [form, setForm] = useState(() => ({
     ...initialForm,
     ...(storedWork?.form || {})
@@ -366,9 +397,13 @@ export default function CommentReplyManager() {
     storedWork?.capture?.ocrMeta || {
       provider: "",
       confidence: 0,
-      warnings: []
+      warnings: [],
+      blocked: false,
+      blockedReason: ""
     }
   );
+  const [captureOcrEdited, setCaptureOcrEdited] = useState(false);
+  const [captureRawOpen, setCaptureRawOpen] = useState(false);
   const [captureReviewComments, setCaptureReviewComments] = useState(() =>
     (storedWork?.capture?.reviewComments || []).map((comment, index) =>
       normalizeCaptureReviewComment(comment, index, comment.extractionConfidence || storedWork?.capture?.ocrMeta?.confidence || 0)
@@ -534,28 +569,79 @@ export default function CommentReplyManager() {
     setMessage(`${parsed.length}개 댓글을 목록에 추가했습니다.`);
   };
 
-  const parseCaptureTextToReview = (rawText = captureOcrText, confidence = captureOcrMeta.confidence || 0) => {
-    const parsed = parseCapturedComments(rawText);
-    const nextReviewComments =
-      parsed.length > 0
-        ? parsed.map((comment, index) => normalizeCaptureReviewComment(comment, index, confidence))
-        : [createEmptyCaptureReviewComment()];
+  const parseCaptureTextToReview = (
+    rawText = captureOcrText,
+    confidence = captureOcrMeta.confidence || 0,
+    options = {}
+  ) => {
+    const source = options.source || (captureOcrEdited ? "manual-edit" : "ocr");
+    const assessment = assessCapturedCommentExtraction(rawText, {
+      confidence,
+      source: source === "ocr" ? "ocr" : "manual",
+      force: options.force
+    });
 
     setMode("capture");
+    setCaptureOcrMeta((current) => ({
+      ...current,
+      confidence,
+      blocked: !assessment.ok,
+      blockedReason: assessment.ok ? "" : assessment.message,
+      warnings: [
+        ...new Set([
+          ...(current.warnings || []),
+          ...(!assessment.ok ? [assessment.message] : []),
+          ...(assessment.confidenceStatus === "review" && assessment.ok
+            ? ["OCR 신뢰도가 보통입니다. 추출 댓글을 확인하고 수정해주세요."]
+            : [])
+        ])
+      ]
+    }));
+
+    if (!assessment.ok) {
+      setCaptureReviewComments([]);
+      setAutomationReport(buildReportFromComments([], { exitReason: assessment.reason }));
+      setStatus("idle");
+      setMessage(assessment.message);
+      return [];
+    }
+
+    const nextReviewComments = assessment.comments.map((comment, index) =>
+      normalizeCaptureReviewComment(comment, index, confidence)
+    );
+
     setCaptureReviewComments(nextReviewComments);
     setAutomationReport(
-      buildReportFromComments(parsed.length ? nextReviewComments : [], {
-        exitReason: parsed.length ? "capture_parsed" : "capture_needs_review"
+      buildReportFromComments(nextReviewComments, {
+        exitReason: assessment.confidenceStatus === "auto" ? "capture_parsed" : "capture_needs_review"
       })
     );
     setStatus(form.postTitle.trim() ? "ready" : "idle");
-    setMessage(
-      parsed.length
-        ? `${parsed.length}개 댓글을 자동 분리했습니다. 아래 추출 결과를 확인한 뒤 댓글 카드로 반영해주세요.`
-        : "댓글을 자동 분리하지 못했습니다. 추출 결과 카드에 직접 입력하거나 OCR 원문을 수정한 뒤 다시 분리해주세요."
-    );
+    setMessage(assessment.message);
 
     return nextReviewComments;
+  };
+
+  const parseCurrentCaptureText = () =>
+    parseCaptureTextToReview(captureOcrText, captureOcrEdited ? 1 : captureOcrMeta.confidence || 0, {
+      source: captureOcrEdited ? "manual-edit" : "ocr"
+    });
+
+  const forceParseCurrentCaptureText = () =>
+    parseCaptureTextToReview(captureOcrText, captureOcrMeta.confidence || 0, {
+      source: "ocr",
+      force: true
+    });
+
+  const focusManualCommentInput = () => {
+    setMode("manual");
+    setMessage("댓글 내용을 직접 붙여넣어도 대댓글을 만들 수 있습니다.");
+    window.setTimeout(() => manualInputRef.current?.focus(), 0);
+  };
+
+  const focusCaptureOcrText = () => {
+    setCaptureRawOpen(true);
+    window.setTimeout(() => captureOcrTextareaRef.current?.focus(), 0);
   };
 
   const applyCaptureReviewToComments = (reviewComments = captureReviewComments) => {
@@ -689,12 +775,19 @@ export default function CommentReplyManager() {
 
     const previewUrl = URL.createObjectURL(file);
     const imageType = getSupportedCaptureImageType(file);
+    const dimensions = await readImageSize(previewUrl);
+    const qualityWarnings = getCaptureImageQualityWarnings({ ...dimensions, size: file.size });
+    setCaptureOcrEdited(false);
+    setCaptureRawOpen(false);
     setCaptureImage((current) => {
       if (current?.previewUrl) URL.revokeObjectURL(current.previewUrl);
       return {
         name: file.name,
         size: file.size,
         type: imageType,
+        width: dimensions.width,
+        height: dimensions.height,
+        qualityWarnings,
         previewUrl
       };
     });
@@ -705,7 +798,9 @@ export default function CommentReplyManager() {
       setCaptureOcrMeta({
         provider: extraction.provider,
         confidence: extraction.confidence,
-        warnings: extraction.warnings || []
+        warnings: [...new Set([...(qualityWarnings || []), ...(extraction.warnings || [])])],
+        blocked: false,
+        blockedReason: ""
       });
       appendAutomationLogs(
         [
@@ -715,13 +810,18 @@ export default function CommentReplyManager() {
         extraction.warnings?.length ? "retry" : "success"
       );
 
-      const nextReviewComments = parseCaptureTextToReview(extraction.text || "", extraction.confidence || 0);
+      const nextReviewComments = parseCaptureTextToReview(extraction.text || "", extraction.confidence || 0, {
+        source: "ocr"
+      });
       const validCount = nextReviewComments.filter((comment) => comment.content.trim()).length;
+      const lowConfidence = extraction.confidence > 0 && extraction.confidence < 0.5;
       setStatus(form.postTitle.trim() ? "ready" : "idle");
       setMessage(
         validCount
           ? `${sourceLabel} 이미지에서 ${validCount}개 댓글을 분리했습니다. 추출 결과를 확인하고 댓글 카드로 반영해주세요.`
-          : `${sourceLabel} 이미지는 반영됐지만 댓글을 찾지 못했습니다. 추출 결과 영역에 댓글을 붙여넣거나 직접 수정해주세요.`
+          : lowConfidence
+            ? OCR_LOW_CONFIDENCE_MESSAGE
+            : `${sourceLabel} 이미지는 반영됐지만 댓글을 찾지 못했습니다. ${OCR_MANUAL_INPUT_MESSAGE}`
       );
     } catch (error) {
       appendAutomationLogs(`캡처 이미지 처리 실패: ${error.message}`, "fail");
@@ -752,12 +852,16 @@ export default function CommentReplyManager() {
       event.preventDefault();
       setMode("capture");
       setCaptureOcrText(pastedText);
+      setCaptureOcrEdited(true);
+      setCaptureRawOpen(true);
       setCaptureOcrMeta({
         provider: "clipboard-text",
         confidence: 1,
-        warnings: ["이미지가 아닌 텍스트를 붙여넣어 추출 텍스트로 반영했습니다."]
+        warnings: ["이미지가 아닌 텍스트를 붙여넣어 추출 텍스트로 반영했습니다."],
+        blocked: false,
+        blockedReason: ""
       });
-      parseCaptureTextToReview(pastedText, 1);
+      parseCaptureTextToReview(pastedText, 1, { source: "manual-edit" });
       appendAutomationLogs("클립보드 텍스트를 캡처 추출 텍스트로 반영했습니다.", "info");
       return;
     }
@@ -1256,7 +1360,9 @@ export default function CommentReplyManager() {
       return null;
     });
     setCaptureOcrText(nextWork.capture?.ocrText || "");
-    setCaptureOcrMeta(nextWork.capture?.ocrMeta || { provider: "", confidence: 0, warnings: [] });
+    setCaptureOcrMeta(nextWork.capture?.ocrMeta || { provider: "", confidence: 0, warnings: [], blocked: false, blockedReason: "" });
+    setCaptureOcrEdited(false);
+    setCaptureRawOpen(false);
     setCaptureReviewComments(
       (nextWork.capture?.reviewComments || []).map((comment, index) =>
         normalizeCaptureReviewComment(comment, index, comment.extractionConfidence || nextWork.capture?.ocrMeta?.confidence || 0)
@@ -1282,7 +1388,9 @@ export default function CommentReplyManager() {
       return null;
     });
     setCaptureOcrText("");
-    setCaptureOcrMeta({ provider: "", confidence: 0, warnings: [] });
+    setCaptureOcrMeta({ provider: "", confidence: 0, warnings: [], blocked: false, blockedReason: "" });
+    setCaptureOcrEdited(false);
+    setCaptureRawOpen(false);
     setCaptureReviewComments([]);
     setBridge(createCommentCollectionBridge());
     setAutomationLogs([]);
@@ -1588,6 +1696,9 @@ export default function CommentReplyManager() {
                 <p className="mt-1 text-sm font-semibold leading-6 text-ink/55">
                   캡처에서 추출한 댓글을 확인한 뒤, 전체 상호대댓글 생성을 누르면 댓글별 맞춤 답글을 만들 수 있습니다.
                 </p>
+                <p className="mt-2 text-xs font-semibold leading-5 text-ink/50">
+                  댓글 글자가 크게 보이도록 댓글 영역만 캡처해주세요. 전체 화면보다 댓글 부분만 확대해서 캡처하면 더 정확하게 읽을 수 있습니다.
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <input
@@ -1608,7 +1719,7 @@ export default function CommentReplyManager() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => parseCaptureTextToReview()}
+                  onClick={parseCurrentCaptureText}
                   disabled={automationBusy}
                   className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
                 >
@@ -1652,7 +1763,7 @@ export default function CommentReplyManager() {
                             캡처 이미지를 Ctrl+V로 붙여넣기
                           </p>
                           <p className="mt-2 text-sm font-semibold leading-6 text-ink/55">
-                            Win + Shift + S로 댓글 영역을 캡처한 뒤 이 박스를 클릭하고 붙여넣어 주세요.
+                            댓글이 작게 보이면 OCR이 정확히 읽지 못할 수 있습니다. 댓글 텍스트가 선명하게 보이도록 캡처해주세요.
                           </p>
                         </div>
                       )}
@@ -1663,11 +1774,11 @@ export default function CommentReplyManager() {
                         파일로 저장하지 않아도 캡처한 이미지를 바로 붙여넣을 수 있습니다.
                       </p>
                       <ol className="grid gap-1 text-xs font-semibold leading-5 text-ink/60">
-                        <li>1. 네이버 댓글 영역을 캡처합니다.</li>
+                        <li>1. 댓글 영역만 확대해서 캡처합니다.</li>
                         <li>2. 이 박스를 클릭합니다.</li>
                         <li>3. Ctrl+V로 붙여넣습니다.</li>
                         <li>4. 추출된 댓글을 확인하고 필요하면 수정합니다.</li>
-                        <li>5. 대댓글을 생성합니다.</li>
+                        <li>5. 전체 상호대댓글 생성을 누릅니다.</li>
                       </ol>
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -1689,8 +1800,21 @@ export default function CommentReplyManager() {
                   </div>
                 </div>
                 {captureImage && (
-                  <div className="mt-2 rounded-md bg-paper px-3 py-2 text-xs font-semibold text-ink/55">
-                    {captureImage.name} · {Math.max(1, Math.ceil(captureImage.size / 1024))}KB
+                  <div className="mt-2 rounded-md bg-paper px-3 py-2 text-xs font-semibold leading-5 text-ink/55">
+                    <p>
+                      {captureImage.name} · {Math.max(1, Math.ceil(captureImage.size / 1024))}KB
+                      {captureImage.width && captureImage.height ? ` · ${captureImage.width}x${captureImage.height}px` : ""}
+                    </p>
+                    {captureImage.qualityWarnings?.map((warning) => (
+                      <p key={warning} className="mt-1 text-[#7a5a1e]">
+                        {warning}
+                      </p>
+                    ))}
+                    {captureOcrMeta.confidence > 0 && captureOcrMeta.confidence < 0.5 && (
+                      <p className="mt-1 text-[#7a5a1e]">
+                        이미지가 작거나 글자가 흐리면 댓글을 정확히 읽지 못할 수 있습니다.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -1712,7 +1836,7 @@ export default function CommentReplyManager() {
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => parseCaptureTextToReview()}
+                    onClick={parseCurrentCaptureText}
                     disabled={automationBusy}
                     className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
                   >
@@ -1757,6 +1881,53 @@ export default function CommentReplyManager() {
                 >
                   {captureReviewGenerateHint}
                 </p>
+
+                {captureOcrMeta.blocked && (
+                  <div className="mt-3 rounded-md border border-amber/30 bg-amber/10 p-3">
+                    <p className="text-sm font-bold text-[#7a5a1e]">
+                      {captureOcrMeta.blockedReason || OCR_LOW_CONFIDENCE_MESSAGE}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-[#7a5a1e]">
+                      {OCR_MANUAL_INPUT_MESSAGE}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={focusManualCommentInput}
+                        className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
+                      >
+                        <MessageSquare size={14} aria-hidden="true" />
+                        댓글 직접 입력하기
+                      </button>
+                      <button
+                        type="button"
+                        onClick={focusCaptureOcrText}
+                        className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-amber/40 bg-white px-3 text-xs font-bold text-[#7a5a1e] transition hover:bg-amber/10"
+                      >
+                        <FileText size={14} aria-hidden="true" />
+                        OCR 원문 직접 수정
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => captureFileInputRef.current?.click()}
+                        className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-amber/40 bg-white px-3 text-xs font-bold text-[#7a5a1e] transition hover:bg-amber/10"
+                      >
+                        <Upload size={14} aria-hidden="true" />
+                        다시 캡처 업로드
+                      </button>
+                      {captureOcrText.trim() && (
+                        <button
+                          type="button"
+                          onClick={forceParseCurrentCaptureText}
+                          className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-bold text-ink/60 transition hover:border-moss hover:text-moss"
+                        >
+                          <ListChecks size={14} aria-hidden="true" />
+                          그래도 댓글 카드로 반영
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1806,22 +1977,48 @@ export default function CommentReplyManager() {
                     ))
                   ) : (
                     <div className="rounded-md border border-dashed border-line bg-paper p-4 text-sm font-semibold leading-6 text-ink/55">
-                      댓글을 찾지 못했습니다. 아래 OCR 원문 영역에 댓글을 붙여넣거나 `빈 댓글 직접 추가`로 직접 입력해주세요.
+                      이미지에서 댓글을 정확히 찾지 못했습니다. 댓글 내용을 아래에 직접 붙여넣거나 `빈 댓글 직접 추가`로 직접 입력해주세요.
                     </div>
                   )}
                 </div>
 
-                <details className="mt-4 rounded-md border border-line bg-paper p-3">
+                <details
+                  open={captureRawOpen}
+                  onToggle={(event) => setCaptureRawOpen(event.currentTarget.open)}
+                  className="mt-4 rounded-md border border-line bg-paper p-3"
+                >
                   <summary className="cursor-pointer text-sm font-bold text-ink/65">
                     OCR 원문 전체 보기 / 직접 수정
                   </summary>
+                  {(captureOcrMeta.blocked || (captureOcrMeta.confidence > 0 && captureOcrMeta.confidence < 0.5)) && (
+                    <p className="mt-3 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-xs font-semibold leading-5 text-[#7a5a1e]">
+                      아래 원문은 OCR이 잘못 읽었을 수 있습니다. 필요하면 직접 수정한 뒤 댓글 추출을 다시 눌러주세요.
+                    </p>
+                  )}
                   <textarea
+                    ref={captureOcrTextareaRef}
                     value={captureOcrText}
-                    onChange={(event) => setCaptureOcrText(event.target.value)}
+                    onChange={(event) => {
+                      setCaptureOcrText(event.target.value);
+                      setCaptureOcrEdited(true);
+                    }}
                     rows={8}
                     className="focus-ring mt-3 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
                     placeholder={"이미지에서 댓글을 자동으로 읽지 못했다면 여기에 OCR 원문이나 댓글 텍스트를 붙여넣어 주세요.\n예: 작성자: 댓글작성자\n댓글: 여기 관리 꼼꼼해 보여요"}
                   />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCaptureOcrEdited(true);
+                        parseCaptureTextToReview(captureOcrText, 1, { source: "manual-edit" });
+                      }}
+                      className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
+                    >
+                      <ListChecks size={14} aria-hidden="true" />
+                      수정한 원문에서 다시 댓글 추출
+                    </button>
+                  </div>
                   {captureOcrMeta.warnings?.length > 0 && (
                     <div className="mt-3 space-y-1 rounded-md border border-amber/30 bg-amber/10 px-3 py-2">
                       {captureOcrMeta.warnings.map((warning) => (
@@ -2048,6 +2245,7 @@ export default function CommentReplyManager() {
             </div>
 
             <textarea
+              ref={manualInputRef}
               value={manualInput}
               onChange={(event) => setManualInput(event.target.value)}
               rows={6}

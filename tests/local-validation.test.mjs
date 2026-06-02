@@ -19,6 +19,10 @@ import {
   createTopicRecommendations
 } from "../shared/contentGenerator.js";
 import {
+  assessCapturedCommentExtraction,
+  getCaptureOcrConfidenceStatus
+} from "../shared/commentReplyGenerator.js";
+import {
   createProductReviewDraft,
   extractProductInfoFieldsWithMetaFromText
 } from "../shared/productReviewGenerator.js";
@@ -250,5 +254,45 @@ const noisyProductReview = createProductReviewDraft({
 });
 assert.ok(!/@\.마우스를|이 02 03|& zg|hy/u.test(noisyProductReview.body));
 assert.ok(noisyProductReview.body.includes("50ml") || noisyProductReview.body.includes("히알루론산"));
+
+const lowConfidenceCapture = assessCapturedCommentExtraction("AE Sosa Do", {
+  confidence: 0.39,
+  source: "ocr"
+});
+assert.equal(lowConfidenceCapture.ok, false);
+assert.equal(lowConfidenceCapture.reason, "low_confidence");
+assert.equal(lowConfidenceCapture.comments.length, 0);
+assert.ok(lowConfidenceCapture.message.includes("댓글을 정확히 읽지 못했습니다"));
+
+const noisyCapture = assessCapturedCommentExtraction("AE Sosa Do", {
+  confidence: 0.82,
+  source: "ocr"
+});
+assert.equal(noisyCapture.ok, false);
+assert.equal(noisyCapture.reason, "noise_or_empty");
+assert.equal(noisyCapture.comments.length, 0);
+
+const reviewConfidenceCapture = assessCapturedCommentExtraction("작성자: 이웃님\n댓글: 예약 전에 확인할 포인트가 궁금해요", {
+  confidence: 0.62,
+  source: "ocr"
+});
+assert.equal(reviewConfidenceCapture.ok, true);
+assert.equal(getCaptureOcrConfidenceStatus(0.62), "review");
+assert.equal(reviewConfidenceCapture.comments[0].content, "예약 전에 확인할 포인트가 궁금해요");
+
+const autoConfidenceCapture = assessCapturedCommentExtraction("작성자: 이웃님\n댓글: 직접 써본 후기라 더 믿음이 가네요", {
+  confidence: 0.82,
+  source: "ocr"
+});
+assert.equal(autoConfidenceCapture.ok, true);
+assert.equal(getCaptureOcrConfidenceStatus(0.82), "auto");
+
+const forcedNoisyCapture = assessCapturedCommentExtraction("AE Sosa Do", {
+  confidence: 0.39,
+  source: "ocr",
+  force: true
+});
+assert.equal(forcedNoisyCapture.ok, true);
+assert.equal(forcedNoisyCapture.comments[0].content, "AE Sosa Do");
 
 console.log("local validation passed");
