@@ -18,7 +18,10 @@ import {
   createTitleCandidates,
   createTopicRecommendations
 } from "../shared/contentGenerator.js";
-import { createProductReviewDraft } from "../shared/productReviewGenerator.js";
+import {
+  createProductReviewDraft,
+  extractProductInfoFieldsWithMetaFromText
+} from "../shared/productReviewGenerator.js";
 
 const now = new Date(2026, 5, 1, 10, 0, 0);
 
@@ -183,6 +186,37 @@ assert.ok(reviewTitles[2].includes("비교"));
 assert.ok(reviewTitles[3].includes("선택"));
 assert.ok(reviewTitles[4].includes("다른 점"));
 
+const noisyOcrText = [
+  "@.마우스를 올려보세요.",
+  "이 02 03",
+  "& zg",
+  "hy",
+  "01",
+  "간편한 데일리 보습 루틴",
+  "성분: 히알루론산, 세라마이드 함유",
+  "용량: 50ml",
+  "사용법: 아침 저녁 적당량 사용",
+  "가격: 29,000원",
+  "주의: 직사광선을 피해서 보관"
+].join("\n");
+const ocrExtraction = extractProductInfoFieldsWithMetaFromText(noisyOcrText);
+const extractedProductInfoText = Object.values(ocrExtraction.fields).join("\n");
+assert.ok(!/@\.마우스를|이 02 03|& zg|hy|\n01\n/u.test(`\n${extractedProductInfoText}\n`));
+assert.ok(ocrExtraction.fields.features.includes("간편한 데일리 보습 루틴"));
+assert.ok(ocrExtraction.fields.ingredients.includes("히알루론산"));
+assert.ok(ocrExtraction.fields.capacity.includes("50ml"));
+assert.ok(ocrExtraction.fields.usage.includes("아침 저녁"));
+assert.ok(ocrExtraction.fields.price.includes("29,000원"));
+assert.equal(ocrExtraction.meta.capacity.status, "확인됨");
+assert.equal(ocrExtraction.meta.features.status, "확인됨");
+
+const noiseOnlyExtraction = extractProductInfoFieldsWithMetaFromText(
+  "@.마우스를 올려보세요.\n이 02 03\n& zg\nhy\n02\nQo"
+);
+assert.equal(Object.values(noiseOnlyExtraction.fields).filter(Boolean).length, 0);
+assert.equal(noiseOnlyExtraction.meta.capacity.status, "읽지 못함");
+assert.equal(noiseOnlyExtraction.meta.usage.status, "읽지 못함");
+
 const productReview = createProductReviewDraft({
   productName: "수분크림",
   mainKeyword: "수분크림, 피부 보습, 데일리 크림",
@@ -203,5 +237,18 @@ assert.ok(!/경험 메모|OCR 원문|추출 데이터/u.test(productReview.body)
 assert.ok(!/무조건|보장|완벽|즉시효과/u.test(productReview.body));
 assert.ok(productReview.body.includes("[여기에 이미지 1을 넣어주세요:"));
 assert.ok(productReview.hashtags.includes("#수분크림후기"));
+
+const noisyProductReview = createProductReviewDraft({
+  productName: "수분크림",
+  mainKeyword: "수분크림, 피부 보습, 데일리 크림",
+  productInfoText: noisyOcrText,
+  experienceMemo:
+    "처음에는 보습력이 궁금해서 찾아봤어요.\n사용감이 무겁지 않은지 보고 싶었어요.\n아침저녁으로 부담 없이 쓸 수 있는 제품인지 확인하고 싶었어요.",
+  avoidWords: "무조건, 보장, 완벽, 즉시효과",
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.ok(!/@\.마우스를|이 02 03|& zg|hy/u.test(noisyProductReview.body));
+assert.ok(noisyProductReview.body.includes("50ml") || noisyProductReview.body.includes("히알루론산"));
 
 console.log("local validation passed");

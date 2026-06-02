@@ -1,4 +1,5 @@
 export {
   createProductReviewDraft,
-  extractProductInfoFieldsFromText
+  extractProductInfoFieldsFromText,
+  extractProductInfoFieldsWithMetaFromText
 } from "@shared/productReviewGenerator.js";

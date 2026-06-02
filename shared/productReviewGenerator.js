@@ -119,52 +119,297 @@ const PRODUCT_INFO_FIELD_LABELS = {
 };
 
 const PRODUCT_INFO_FIELDS = Object.keys(PRODUCT_INFO_FIELD_LABELS);
+const FIELD_STATUS = {
+  confirmed: "확인됨",
+  review: "확인 필요",
+  missing: "읽지 못함"
+};
+
+const FIELD_STATUS_RANK = {
+  [FIELD_STATUS.confirmed]: 3,
+  [FIELD_STATUS.review]: 2,
+  [FIELD_STATUS.missing]: 1
+};
+
+const OCR_UI_NOISE_PATTERN =
+  /마우스를\s*올려보세요|클릭|더보기|상세보기|이전|다음|닫기|공유|검색|장바구니|옵션|슬라이드|페이지|hover|mouse/iu;
+const OCR_GIBBERISH_PATTERN = /^(?:[@&*#~^_=+|\\/<>[\]{}().,`'"!?%-]|\s)+$/u;
+const SHORT_LATIN_NOISE_PATTERN = /^[a-z]{1,3}$/iu;
+const NUMBER_SEQUENCE_PATTERN =
+  /^(?:[0-9０-９]{1,3}|[0-9０-９]{1,3}\s*[.)-]?|이\s*)+(?:\s+[0-9０-９]{1,3})*$/u;
+const PRODUCT_NAME_SIGNAL_PATTERN = /상품명|제품명|브랜드|브랜드명/u;
+const FEATURE_SIGNAL_PATTERN =
+  /간편|휴대|한\s*포|데일리|루틴|관리|무첨가|저자극|보습|흡수|사용감|수납|흡입|세척|구성|편의|가벼|부담|촉촉|산뜻/u;
+const INGREDIENT_SIGNAL_PATTERN =
+  /성분|원료|함유|추출물|분말|비타민|유산균|식이섬유|단백질|히알루론산|세라마이드|콜라겐|나이아신/u;
+const COMPOSITION_SIGNAL_PATTERN = /구성|세트|개입|입\b|포\b|정\b|박스|패키지|구성품|본품|리필|증정/u;
+const USAGE_SIGNAL_PATTERN = /하루|1일|1회|섭취|사용|물과\s*함께|아침|저녁|권장|적당량|발라|도포|흔들어/u;
+const PRICE_SIGNAL_PATTERN = /(?:₩|원\b|가격|할인가|판매가|정가|[0-9]{1,3}(?:,[0-9]{3})+)/u;
+const CAPACITY_SIGNAL_PATTERN = /(?:\d+(?:\.\d+)?\s*(?:g|G|kg|KG|ml|mL|ML|l|L|포|정|개입|매|박스|개|입)\b)|용량|중량|함량/u;
+const CAUTION_SIGNAL_PATTERN =
+  /주의|보관|알레르기|임산부|어린이|섭취\s*전|사용\s*전|직사광선|고온다습|질환|상담|피부\s*이상/u;
+const PURCHASE_SIGNAL_PATTERN =
+  /구매|배송|교환|반품|환불|판매처|구매처|스마트스토어|공식몰|문의|가격|구성|사용법|보관|개인차/u;
+const HEALTH_OVERCLAIM_PATTERN = /치료|효과\s*보장|즉시\s*효과|즉시효과|완치|무조건|변비\s*해결\s*보장|독소\s*제거\s*보장/u;
+
+const createEmptyProductInfoFields = () =>
+  PRODUCT_INFO_FIELDS.reduce((result, field) => ({ ...result, [field]: "" }), {});
+
+const createMissingProductInfoMeta = (reason = "이미지에서 읽은 값이 없습니다.") =>
+  PRODUCT_INFO_FIELDS.reduce(
+    (result, field) => ({
+      ...result,
+      [field]: {
+        status: FIELD_STATUS.missing,
+        confidence: 0,
+        reason,
+        source: ""
+      }
+    }),
+    {}
+  );
 
 const cleanInfoLine = (value = "") =>
   text(value)
     .replace(/^(OCR\s*원문|추출\s*데이터|추출\s*텍스트|이미지에서\s*읽은\s*상품\s*정보)\s*[:：]?\s*/u, "")
+    .replace(/[|｜]+/g, " ")
+    .replace(/[•·●○◆◇▶▷▪︎■□]+/gu, " ")
+    .replace(/^[\s\-–—_:：.,/\\|()[\]{}]+/u, "")
+    .replace(/[\s\-–—_:：.,/\\|()[\]{}]+$/u, "")
     .replace(/\s+/g, " ")
     .trim();
+
+const isLikelyOcrNoise = (value = "") => {
+  const cleaned = cleanInfoLine(value);
+  const compacted = compact(cleaned);
+  const letters = cleaned.match(/\p{L}/gu) || [];
+  const digits = cleaned.match(/\p{N}/gu) || [];
+  const symbols = cleaned.match(/[^\p{L}\p{N}\s]/gu) || [];
+
+  if (!cleaned || compacted.length < 2) return true;
+  if (OCR_UI_NOISE_PATTERN.test(cleaned)) return true;
+  if (OCR_GIBBERISH_PATTERN.test(cleaned)) return true;
+  if (NUMBER_SEQUENCE_PATTERN.test(cleaned)) return true;
+  if (/^이\s*\d{1,2}(?:\s+\d{1,2})+$/u.test(cleaned)) return true;
+  if (/^[&@#*]\s*[a-z]{1,3}$/iu.test(cleaned)) return true;
+  if (SHORT_LATIN_NOISE_PATTERN.test(cleaned) && !/[A-Z]{2,}/u.test(cleaned)) return true;
+  if (symbols.length > letters.length + digits.length && letters.length + digits.length <= 3) return true;
+  if (digits.length > 0 && letters.length <= 1 && !CAPACITY_SIGNAL_PATTERN.test(cleaned) && !PRICE_SIGNAL_PATTERN.test(cleaned)) {
+    return true;
+  }
+
+  return false;
+};
+
+const sanitizeExtractedInfoValue = (value = "") =>
+  softenSensitiveExpression(value)
+    .replace(/독소\s*제거\s*보장/gu, "클렌즈 관련 표현은 개인차가 있을 수 있음")
+    .replace(/변비\s*해결\s*보장/gu, "장 관리 루틴에 참고")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const normalizeProductInfoCandidate = (field, value = "") => {
+  let cleaned = sanitizeExtractedInfoValue(cleanInfoLine(value));
+  if (!cleaned || isLikelyOcrNoise(cleaned)) return "";
+
+  if (field === "price" && !PRICE_SIGNAL_PATTERN.test(cleaned)) return "";
+  if (field === "capacity" && !CAPACITY_SIGNAL_PATTERN.test(cleaned)) return "";
+  if (field === "usage" && !USAGE_SIGNAL_PATTERN.test(cleaned)) return "";
+  if (field === "ingredients" && !INGREDIENT_SIGNAL_PATTERN.test(cleaned)) return "";
+  if (field === "composition" && !COMPOSITION_SIGNAL_PATTERN.test(cleaned)) return "";
+  if (field === "cautions" && !CAUTION_SIGNAL_PATTERN.test(cleaned)) return "";
+
+  if (field === "features" && !FEATURE_SIGNAL_PATTERN.test(cleaned)) return "";
+  if (["productName", "brandName"].includes(field)) {
+    cleaned = cleaned.replace(/^(상품명|제품명|브랜드명|브랜드)\s*[:：]?\s*/u, "").trim();
+    const hasKorean = /\p{Script=Hangul}/u.test(cleaned);
+    const latinLength = (cleaned.match(/[a-z]/giu) || []).length;
+    if (!hasKorean && latinLength < 3) return "";
+    if (compact(cleaned).length < 2) return "";
+  }
+
+  return cleaned;
+};
+
+const createCandidateResult = ({ field, value, status, confidence, reason }) => {
+  const normalizedValue = normalizeProductInfoCandidate(field, value);
+  if (!field || !normalizedValue) return null;
+
+  return {
+    field,
+    value: normalizedValue,
+    status,
+    confidence,
+    reason
+  };
+};
 
 const classifyProductInfoLine = (line = "") => {
   const cleaned = cleanInfoLine(line);
   const [rawLabel, ...rest] = cleaned.split(/[:：]/u);
   const value = rest.join(":").trim();
   const label = text(rawLabel);
+  const hasOverclaim = HEALTH_OVERCLAIM_PATTERN.test(cleaned);
 
   if (value) {
     const field = PRODUCT_INFO_FIELDS.find((fieldKey) =>
       PRODUCT_INFO_FIELD_LABELS[fieldKey].some((candidate) => label.includes(candidate))
     );
 
-    if (field) return { field, value };
+    if (field) {
+      return createCandidateResult({
+        field,
+        value,
+        status: hasOverclaim ? FIELD_STATUS.review : FIELD_STATUS.confirmed,
+        confidence: hasOverclaim ? 0.56 : 0.88,
+        reason: hasOverclaim ? "과장 표현 가능성이 있어 확인이 필요합니다." : "라벨과 값이 함께 인식됐습니다."
+      });
+    }
   }
 
-  if (/성분|원료/u.test(cleaned)) return { field: "ingredients", value: cleaned };
-  if (/사용|섭취|하루|1일|물과/u.test(cleaned)) return { field: "usage", value: cleaned };
-  if (/주의|알레르기|임산부|질환/u.test(cleaned)) return { field: "cautions", value: cleaned };
-  if (/배송|구매|교환|환불|스마트스토어|공식몰/u.test(cleaned)) return { field: "purchaseNotes", value: cleaned };
-  if (/원|가격|할인|판매/u.test(cleaned)) return { field: "price", value: cleaned };
-  if (/g|ml|포|정|박스|개입/u.test(cleaned)) return { field: "capacity", value: cleaned };
+  if (PRICE_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "price",
+      value: cleaned,
+      status: FIELD_STATUS.confirmed,
+      confidence: 0.86,
+      reason: "가격 표현이 인식됐습니다."
+    });
+  }
 
-  return { field: "features", value: cleaned };
+  if (USAGE_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "usage",
+      value: cleaned,
+      status: /사용법|섭취법|하루|1일|1회|물과\s*함께/u.test(cleaned) ? FIELD_STATUS.confirmed : FIELD_STATUS.review,
+      confidence: /사용법|섭취법|하루|1일|1회|물과\s*함께/u.test(cleaned) ? 0.82 : 0.62,
+      reason: "사용 또는 섭취 흐름으로 보이는 표현입니다."
+    });
+  }
+
+  if (INGREDIENT_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "ingredients",
+      value: cleaned,
+      status: /성분|원료|함유/u.test(cleaned) ? FIELD_STATUS.confirmed : FIELD_STATUS.review,
+      confidence: /성분|원료|함유/u.test(cleaned) ? 0.82 : 0.62,
+      reason: "성분 또는 원료 관련 표현입니다."
+    });
+  }
+
+  if (CAUTION_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "cautions",
+      value: cleaned,
+      status: FIELD_STATUS.confirmed,
+      confidence: 0.82,
+      reason: "주의사항 관련 표현입니다."
+    });
+  }
+
+  if (CAPACITY_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "capacity",
+      value: cleaned,
+      status: /\d/u.test(cleaned) ? FIELD_STATUS.confirmed : FIELD_STATUS.review,
+      confidence: /\d/u.test(cleaned) ? 0.82 : 0.58,
+      reason: "용량 또는 수량 단위가 인식됐습니다."
+    });
+  }
+
+  if (COMPOSITION_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "composition",
+      value: cleaned,
+      status: /\d|본품|리필|구성|세트/u.test(cleaned) ? FIELD_STATUS.confirmed : FIELD_STATUS.review,
+      confidence: /\d|본품|리필|구성|세트/u.test(cleaned) ? 0.78 : 0.6,
+      reason: "구성 또는 패키지 관련 표현입니다."
+    });
+  }
+
+  if (PURCHASE_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "purchaseNotes",
+      value: cleaned,
+      status: FIELD_STATUS.review,
+      confidence: 0.58,
+      reason: "구매 전 확인할 만한 표현입니다."
+    });
+  }
+
+  if (PRODUCT_NAME_SIGNAL_PATTERN.test(cleaned) && value) {
+    return createCandidateResult({
+      field: label.includes("브랜드") ? "brandName" : "productName",
+      value,
+      status: FIELD_STATUS.review,
+      confidence: 0.6,
+      reason: "상품명 또는 브랜드명 후보입니다."
+    });
+  }
+
+  if (FEATURE_SIGNAL_PATTERN.test(cleaned)) {
+    return createCandidateResult({
+      field: "features",
+      value: cleaned,
+      status: /특징|장점|포인트|간편|무첨가|저자극|보습|사용감/u.test(cleaned)
+        ? FIELD_STATUS.confirmed
+        : FIELD_STATUS.review,
+      confidence: /특징|장점|포인트|간편|무첨가|저자극|보습|사용감/u.test(cleaned) ? 0.76 : 0.58,
+      reason: "상품 장점으로 보이는 표현입니다."
+    });
+  }
+
+  return null;
 };
 
-export const extractProductInfoFieldsFromText = (value = "") => {
-  const fields = PRODUCT_INFO_FIELDS.reduce((result, field) => ({ ...result, [field]: "" }), {});
+export const extractProductInfoFieldsWithMetaFromText = (value = "") => {
+  const fields = createEmptyProductInfoFields();
+  const meta = createMissingProductInfoMeta();
 
   text(value)
     .split(/\n|[·•]/u)
     .map(cleanInfoLine)
     .filter((line) => line.length >= 2)
+    .filter((line) => !isLikelyOcrNoise(line))
     .forEach((line) => {
-      const { field, value: fieldValue } = classifyProductInfoLine(line);
-      if (!field || !fieldValue) return;
+      const candidate = classifyProductInfoLine(line);
+      if (!candidate?.field || !candidate.value) return;
 
-      fields[field] = fields[field] ? `${fields[field]}\n${fieldValue}` : fieldValue;
+      const currentMeta = meta[candidate.field] || { status: FIELD_STATUS.missing, confidence: 0 };
+      const currentRank = FIELD_STATUS_RANK[currentMeta.status] || 0;
+      const nextRank = FIELD_STATUS_RANK[candidate.status] || 0;
+      const existingValues = fields[candidate.field]
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const duplicate = existingValues.some((item) => compact(item) === compact(candidate.value));
+
+      if (!fields[candidate.field] || nextRank > currentRank || candidate.confidence > currentMeta.confidence) {
+        fields[candidate.field] = candidate.value;
+        meta[candidate.field] = {
+          status: candidate.status,
+          confidence: candidate.confidence,
+          reason: candidate.reason,
+          source: candidate.value
+        };
+        return;
+      }
+
+      if (!duplicate && existingValues.length < 3 && nextRank >= currentRank && candidate.status === currentMeta.status) {
+        fields[candidate.field] = [...existingValues, candidate.value].join("\n");
+        meta[candidate.field] = {
+          ...currentMeta,
+          confidence: Math.max(currentMeta.confidence || 0, candidate.confidence),
+          source: fields[candidate.field]
+        };
+      }
     });
 
-  return fields;
+  return { fields, meta };
+};
+
+export const extractProductInfoFieldsFromText = (value = "") => {
+  return extractProductInfoFieldsWithMetaFromText(value).fields;
 };
 
 const getProductInfoField = (form = {}, field) =>

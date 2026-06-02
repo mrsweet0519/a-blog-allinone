@@ -17,7 +17,7 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import { extractCaptureTextFromImage } from "../lib/captureOcr.js";
 import {
   createProductReviewDraft,
-  extractProductInfoFieldsFromText
+  extractProductInfoFieldsWithMetaFromText
 } from "../lib/productReviewGenerator.js";
 
 const initialForm = {
@@ -65,6 +65,21 @@ const fieldLabels = [
   ["cautions", "주의사항"],
   ["purchaseNotes", "구매 전 확인할 점"]
 ];
+
+const createInitialFieldMeta = (reason = "아직 이미지에서 읽은 정보가 없습니다.") =>
+  Object.fromEntries(
+    fieldLabels.map(([field]) => [
+      field,
+      {
+        status: "읽지 못함",
+        confidence: 0,
+        reason,
+        source: ""
+      }
+    ])
+  );
+
+const infoFieldKeys = new Set(fieldLabels.map(([field]) => field));
 
 const stripImageMarkers = (body = "") =>
   String(body || "")
@@ -129,6 +144,7 @@ export default function ProductReviewMaker() {
   const [productInfoOpen, setProductInfoOpen] = useState(false);
   const [rawTextOpen, setRawTextOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [fieldMeta, setFieldMeta] = useState(() => createInitialFieldMeta());
 
   const isReady = useMemo(
     () => Boolean(form.productName.trim() && form.mainKeyword.trim() && form.experienceMemo.trim()),
@@ -150,6 +166,24 @@ export default function ProductReviewMaker() {
 
   const updateForm = (key, value) => {
     setForm((current) => ({ ...current, [key]: value }));
+    if (infoFieldKeys.has(key)) {
+      setFieldMeta((current) => ({
+        ...current,
+        [key]: value.trim()
+          ? {
+              status: "확인됨",
+              confidence: 1,
+              reason: "사용자가 직접 입력하거나 수정했습니다.",
+              source: value.trim()
+            }
+          : {
+              status: "읽지 못함",
+              confidence: 0,
+              reason: "값이 비어 있습니다.",
+              source: ""
+            }
+      }));
+    }
     setStatus("idle");
   };
 
@@ -215,7 +249,8 @@ export default function ProductReviewMaker() {
   };
 
   const applyExtractedInfo = (combinedText) => {
-    const extractedFields = extractProductInfoFieldsFromText(combinedText);
+    const extraction = extractProductInfoFieldsWithMetaFromText(combinedText);
+    const extractedFields = extraction.fields;
 
     setForm((current) => {
       const next = {
@@ -231,6 +266,16 @@ export default function ProductReviewMaker() {
 
       return next;
     });
+
+    setFieldMeta((current) => ({
+      ...current,
+      ...extraction.meta
+    }));
+
+    return {
+      filledCount: Object.values(extractedFields).filter((value) => value.trim()).length,
+      reviewCount: Object.values(extraction.meta).filter((item) => item.status === "확인 필요").length
+    };
   };
 
   const extractInfoFromImages = async () => {
@@ -278,10 +323,20 @@ export default function ProductReviewMaker() {
     const combinedText = mergeTextBlocks(...extractedTexts);
 
     if (combinedText) {
-      applyExtractedInfo(combinedText);
-      setOcrStatus("done");
       setProductInfoOpen(true);
-      setOcrMessage("이미지에서 읽은 내용을 확인하고 필요한 부분만 수정해주세요. 수정한 내용은 후기글 생성에 반영됩니다.");
+      const extractionSummary = applyExtractedInfo(combinedText);
+
+      if (extractionSummary.filledCount > 0) {
+        setOcrStatus("done");
+        setOcrMessage(
+          extractionSummary.reviewCount > 0
+            ? "이미지에서 읽은 정보를 정리했습니다. 확인 필요 항목은 직접 수정한 뒤 후기글 생성에 반영해주세요."
+            : "이미지에서 읽은 내용을 확인하고 필요한 부분만 수정해주세요. 수정한 내용은 후기글 생성에 반영됩니다."
+        );
+      } else {
+        setOcrStatus("manual");
+        setOcrMessage("이미지에서 내용을 정확히 읽지 못했습니다. 필요한 정보만 직접 입력해도 후기글을 만들 수 있습니다.");
+      }
     } else {
       setOcrStatus("manual");
       setProductInfoOpen(true);
@@ -534,20 +589,28 @@ export default function ProductReviewMaker() {
               <div className="mt-3 space-y-3">
                 <p className="rounded-md border border-moss/20 bg-white px-3 py-2 text-xs font-semibold leading-5 text-ink/60">
                   {images.length > 0
-                    ? "이미지에서 읽은 내용을 확인하고 필요한 부분만 수정해주세요. 수정한 내용은 후기글 생성에 반영됩니다."
+                    ? "이미지에서 읽은 정보는 초안입니다. 정확하지 않은 항목은 비워두었습니다. 필요한 정보만 직접 채워도 후기글을 만들 수 있습니다."
                     : "이미지가 없거나 글자를 정확히 읽지 못해도 아래에 상품 정보를 직접 입력하면 후기글을 만들 수 있습니다."}
                 </p>
                 <div className="grid gap-3">
                   {fieldLabels.map(([field, label]) => (
                     <label key={field} className="block">
-                      <span className="text-xs font-bold text-ink/55">{label}</span>
+                      <span className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-ink/55">{label}</span>
+                        <FieldStatusBadge meta={fieldMeta[field]} />
+                      </span>
                       <textarea
                         value={form[field]}
                         onChange={(event) => updateForm(field, event.target.value)}
                         rows={field === "productName" || field === "brandName" ? 1 : 2}
                         className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-2 text-sm leading-6"
-                        placeholder={`${label}을 직접 수정할 수 있습니다.`}
+                        placeholder={form[field] ? `${label}을 직접 수정할 수 있습니다.` : "직접 입력해도 됩니다."}
                       />
+                      {fieldMeta[field]?.reason && (
+                        <span className="mt-1 block text-[11px] font-semibold leading-4 text-ink/45">
+                          {fieldMeta[field].reason}
+                        </span>
+                      )}
                     </label>
                   ))}
                 </div>
@@ -683,6 +746,25 @@ function FieldLabel({ children, required = false }) {
           필수
         </span>
       )}
+    </span>
+  );
+}
+
+function FieldStatusBadge({ meta }) {
+  const status = meta?.status || "읽지 못함";
+  const className =
+    status === "확인됨"
+      ? "border-moss/20 bg-moss/10 text-moss"
+      : status === "확인 필요"
+        ? "border-amber/35 bg-amber/10 text-[#7a5a1e]"
+        : "border-line bg-white text-ink/45";
+
+  return (
+    <span
+      title={meta?.reason || status}
+      className={`inline-flex min-h-6 items-center rounded-md border px-2 text-[11px] font-bold ${className}`}
+    >
+      {status}
     </span>
   );
 }
