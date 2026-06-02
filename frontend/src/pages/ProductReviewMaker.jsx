@@ -143,11 +143,17 @@ export default function ProductReviewMaker() {
   const [copied, setCopied] = useState("");
   const [productInfoOpen, setProductInfoOpen] = useState(false);
   const [rawTextOpen, setRawTextOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [fieldMeta, setFieldMeta] = useState(() => createInitialFieldMeta());
 
   const isReady = useMemo(
-    () => Boolean(form.productName.trim() && form.mainKeyword.trim() && form.experienceMemo.trim()),
+    () =>
+      Boolean(
+        form.productName.trim() ||
+          form.mainKeyword.trim() ||
+          form.experienceMemo.trim() ||
+          form.productInfoText.trim() ||
+          fieldLabels.some(([field]) => form[field].trim())
+      ),
     [form]
   );
   const hasResult = Boolean(result.body);
@@ -512,59 +518,6 @@ export default function ProductReviewMaker() {
               </button>
             </section>
 
-            <label className="block">
-              <FieldLabel required>내가 느낀 점 또는 쓰고 싶은 내용</FieldLabel>
-              <textarea
-                value={form.experienceMemo}
-                onChange={(event) => updateForm("experienceMemo", event.target.value)}
-                rows={6}
-                className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-                placeholder={`예:\n처음에는 보습력이 궁금해서 찾아봤어요.\n사용감이 무겁지 않은지 보고 싶었어요.\n아침저녁으로 부담 없이 쓸 수 있는 제품인지 확인하고 싶었어요.`}
-              />
-            </label>
-
-            <button
-              type="button"
-              onClick={() => generateReview()}
-              disabled={!isReady || status === "generating" || isReading}
-              className="focus-ring inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
-            >
-              <WandSparkles size={18} aria-hidden="true" />
-              후기글 생성
-            </button>
-
-            <div className="rounded-md border border-line bg-white p-3">
-              <p className="text-sm font-bold text-ink/70">간단 설정</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <label className="block">
-                  <FieldLabel>글 톤</FieldLabel>
-                  <select
-                    value={form.tone}
-                    onChange={(event) => updateForm("tone", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  >
-                    {toneOptions.map((tone) => (
-                      <option key={tone} value={tone}>
-                        {tone}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="block">
-                  <FieldLabel>목표 글자수</FieldLabel>
-                  <input
-                    type="number"
-                    min="600"
-                    max="5000"
-                    value={form.targetLength}
-                    onChange={(event) => updateForm("targetLength", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  />
-                </label>
-              </div>
-            </div>
-
             <details
               open={productInfoOpen}
               onToggle={(event) => setProductInfoOpen(event.currentTarget.open)}
@@ -637,15 +590,47 @@ export default function ProductReviewMaker() {
               </div>
             </details>
 
-            <details
-              open={advancedOpen}
-              onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
-              className="rounded-md border border-line bg-white p-3"
-            >
-              <summary className="cursor-pointer text-sm font-bold text-ink/70">
-                고급 설정
-              </summary>
-              <div className="mt-3 grid gap-3">
+            <label className="block">
+              <FieldLabel required>내가 느낀 점 또는 쓰고 싶은 내용</FieldLabel>
+              <textarea
+                value={form.experienceMemo}
+                onChange={(event) => updateForm("experienceMemo", event.target.value)}
+                rows={6}
+                className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
+                placeholder={`예:\n처음에는 보습력이 궁금해서 찾아봤어요.\n사용감이 무겁지 않은지 보고 싶었어요.\n아침저녁으로 부담 없이 쓸 수 있는 제품인지 확인하고 싶었어요.`}
+              />
+            </label>
+
+            <div className="rounded-md border border-line bg-white p-3">
+              <p className="text-sm font-bold text-ink/70">간단 설정</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <FieldLabel>글 톤</FieldLabel>
+                  <select
+                    value={form.tone}
+                    onChange={(event) => updateForm("tone", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                  >
+                    {toneOptions.map((tone) => (
+                      <option key={tone} value={tone}>
+                        {tone}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
+                  <FieldLabel>목표 글자수</FieldLabel>
+                  <input
+                    type="number"
+                    min="600"
+                    max="5000"
+                    value={form.targetLength}
+                    onChange={(event) => updateForm("targetLength", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                  />
+                </label>
+
                 <label className="block">
                   <FieldLabel>강조하고 싶은 포인트</FieldLabel>
                   <input
@@ -666,7 +651,24 @@ export default function ProductReviewMaker() {
                   />
                 </label>
               </div>
-            </details>
+            </div>
+
+            <div className="rounded-md border border-moss/20 bg-moss/10 p-3">
+              <p className="text-xs font-semibold leading-5 text-ink/60">
+                {isReady
+                  ? "입력한 상품 정보와 경험 메모를 바탕으로 후기글을 생성합니다."
+                  : "상품명, 키워드, 이미지 정보, 경험 메모 중 하나 이상을 입력해주세요."}
+              </p>
+              <button
+                type="button"
+                onClick={() => generateReview()}
+                disabled={!isReady || status === "generating" || isReading}
+                className="focus-ring mt-2 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
+              >
+                <WandSparkles size={18} aria-hidden="true" />
+                후기글 생성
+              </button>
+            </div>
           </div>
         </section>
 
@@ -681,7 +683,7 @@ export default function ProductReviewMaker() {
 
           {!hasResult && (
             <div className="mt-5 grid min-h-[420px] place-items-center rounded-lg border border-dashed border-line bg-paper p-6 text-center text-sm font-semibold leading-6 text-ink/55">
-              상품명, 메인 키워드, 경험 메모를 입력한 뒤 후기글 생성을 누르세요.
+              상품명, 키워드, 이미지 정보, 경험 메모 중 하나 이상을 입력한 뒤 후기글 생성을 누르세요.
             </div>
           )}
 
