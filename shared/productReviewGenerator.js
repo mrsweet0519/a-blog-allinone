@@ -40,7 +40,7 @@ const splitMemoLines = (value = "") =>
 const createSentence = (value, tone = "친근한") => ensureSentence(softenForTone(value, tone), tone);
 
 const createSection = (heading, paragraphs = [], tone = "친근한") =>
-  [`**${heading}**`, ...paragraphs.map((item) => createSentence(item, tone))].filter(Boolean).join("\n\n");
+  [heading, ...paragraphs.map((item) => createSentence(item, tone))].filter(Boolean).join("\n\n");
 
 const normalizeBody = (value = "") =>
   String(value ?? "")

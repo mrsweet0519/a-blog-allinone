@@ -190,6 +190,135 @@ assert.ok(reviewTitles[2].includes("비교"));
 assert.ok(reviewTitles[3].includes("선택"));
 assert.ok(reviewTitles[4].includes("다른 점"));
 
+const betaProductReviewForm = {
+  keyword: "수분크림 후기, 피부 보습, 데일리 크림",
+  category: "상품 리뷰",
+  brandName: "",
+  region: "",
+  goal: "상품 홍보",
+  audienceType: "인플루언서/수익형",
+  tone: "친근한",
+  strengths: "사용감 확인, 보습감, 데일리 루틴",
+  emphasisPoint: "구매 전 데일리 케어 관점으로 볼 기준",
+  ctaDirection: "필요한 기준을 천천히 비교해보세요.",
+  useEmoji: false,
+  avoid: "효과 보장, 과장 표현, 완벽",
+  targetLengthOption: "2000",
+  customTargetLength: "2000"
+};
+const betaProductTopic = createTopicRecommendations(betaProductReviewForm)[0];
+const betaProductTitle = createTitleCandidates(betaProductReviewForm, betaProductTopic)[0];
+const betaProductOutline = createOutlineSections(betaProductReviewForm, betaProductTopic, betaProductTitle);
+const editedProductOutline = [
+  {
+    heading: "수분크림 후기 구매 이유를 바꾼 소제목",
+    note: "피부 보습 기준을 첫 문단에 자연스럽게 반영"
+  },
+  {
+    heading: "새로 추가한 데일리 크림 보습 체크",
+    note: "데일리 크림 메모 반영"
+  },
+  {
+    heading: betaProductOutline[2],
+    note: ""
+  },
+  {
+    heading: betaProductOutline[1],
+    note: "순서 변경 확인"
+  }
+];
+const betaProductContent = createFinalContent(
+  betaProductReviewForm,
+  betaProductTopic,
+  betaProductTitle,
+  editedProductOutline
+);
+assert.ok(betaProductContent.body.includes("수분크림 후기 구매 이유를 바꾼 소제목"));
+assert.ok(betaProductContent.body.includes("새로 추가한 데일리 크림 보습 체크"));
+assert.ok(betaProductContent.body.includes("사용자 메모: 데일리 크림 메모 반영"));
+assert.ok(
+  betaProductContent.body.indexOf("새로 추가한 데일리 크림 보습 체크") <
+    betaProductContent.body.indexOf(betaProductOutline[2])
+);
+assert.ok(!betaProductContent.body.includes("삭제 테스트용 소제목"));
+assert.ok(!/(^|\n)\s*\*\s+|(^|\n)\s*\*\*.+\*\*/u.test(betaProductContent.body));
+assert.ok(/했어요|더라고요|같아요|좋겠어요/u.test(betaProductContent.body));
+assert.equal(betaProductContent.contentPackage.faqItems.length, 3);
+assert.ok(betaProductContent.seoCheck.items.find((item) => item.id === "heading-stars-removed").passed);
+
+const betaComparisonForm = {
+  ...betaProductReviewForm,
+  category: "비교형",
+  audienceType: "사업자/매장 홍보",
+  goal: "정보 전달",
+  tone: "차분한"
+};
+const betaComparisonTopic = createTopicRecommendations(betaComparisonForm)[0];
+const betaComparisonTitle = createTitleCandidates(betaComparisonForm, betaComparisonTopic)[2];
+const betaComparisonOutline = createOutlineSections(betaComparisonForm, betaComparisonTopic, betaComparisonTitle);
+assert.notDeepEqual(betaComparisonOutline, betaProductOutline);
+assert.ok(betaComparisonOutline.join(" ").includes("비교"));
+
+const betaRestaurantForm = {
+  keyword: "부천 가족외식, 부천 맛집, 아이랑 식당",
+  category: "맛집 리뷰",
+  brandName: "",
+  region: "부천",
+  goal: "방문 유도",
+  audienceType: "사업자/매장 홍보",
+  tone: "친근한",
+  strengths: "",
+  emphasisPoint: "",
+  ctaDirection: "",
+  useEmoji: false,
+  avoid: "무조건, 보장",
+  targetLengthOption: "2000",
+  customTargetLength: "2000"
+};
+const betaRestaurantTopic = createTopicRecommendations(betaRestaurantForm)[0];
+const betaRestaurantTitle = createTitleCandidates(betaRestaurantForm, betaRestaurantTopic)[0];
+const betaRestaurantOutline = createOutlineSections(betaRestaurantForm, betaRestaurantTopic, betaRestaurantTitle);
+const betaRestaurantContent = createFinalContent(
+  betaRestaurantForm,
+  betaRestaurantTopic,
+  betaRestaurantTitle,
+  betaRestaurantOutline
+);
+assert.ok(betaRestaurantOutline.join(" ").includes("주차"));
+assert.ok(betaRestaurantContent.body.includes("주차: [확인 필요]"));
+assert.ok(betaRestaurantContent.body.includes("대표 메뉴"));
+assert.ok(betaRestaurantContent.body.includes("아이 동반"));
+assert.ok(betaRestaurantContent.body.includes("[확인 필요]"));
+assert.equal(
+  betaRestaurantContent.seoCheck.items.find((item) => item.id === "sponsorship-disclosure").detail,
+  "[협찬 여부 확인 필요]"
+);
+
+const betaInfoForm = {
+  keyword: "초등 독서노트, 독서 습관, 부모 가이드",
+  category: "정보글",
+  brandName: "",
+  region: "",
+  goal: "정보 전달",
+  audienceType: "사업자/매장 홍보",
+  tone: "차분한",
+  strengths: "독서 습관 점검, 부모 가이드",
+  emphasisPoint: "아이 성향에 맞는 독서 기록 방식",
+  ctaDirection: "가정 상황에 맞는 기준부터 확인해보세요.",
+  useEmoji: false,
+  avoid: "",
+  targetLengthOption: "2000",
+  customTargetLength: "2000"
+};
+const betaInfoTopic = createTopicRecommendations(betaInfoForm)[0];
+const betaInfoTitle = createTitleCandidates(betaInfoForm, betaInfoTopic)[0];
+const betaInfoOutline = createOutlineSections(betaInfoForm, betaInfoTopic, betaInfoTitle);
+const betaInfoContent = createFinalContent(betaInfoForm, betaInfoTopic, betaInfoTitle, betaInfoOutline);
+assert.ok(betaInfoOutline.join(" ").includes("체크리스트"));
+assert.ok(betaInfoContent.body.includes("FAQ"));
+assert.ok((betaInfoContent.body.match(/^Q\.\s/gmu) || []).length >= 3);
+assert.equal(betaInfoContent.contentPackage.faqItems.length, 3);
+
 const noisyOcrText = [
   "@.마우스를 올려보세요.",
   "이 02 03",

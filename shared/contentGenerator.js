@@ -148,6 +148,38 @@ const getKeywordContext = (form = {}) => parseKeywordInput(form.keyword);
 const getMainKeyword = (form = {}) => getKeywordContext(form).mainKeyword || text(form.keyword);
 const getSecondaryKeywords = (form = {}) => getKeywordContext(form).secondaryKeywords;
 const getBrandKeywords = (form = {}) => getKeywordContext(form).brandKeywords;
+const getExpandedSecondaryKeywords = (form = {}, limit = 5) => {
+  const keyword = getMainKeyword(form);
+  const rawKeywords = getKeywordContext(form).rawKeywords.slice(1);
+
+  return uniqueText([
+    ...rawKeywords,
+    ...getSecondaryKeywords(form),
+    keyword ? `${keyword} 후기` : "",
+    keyword ? `${keyword} 비교` : "",
+    keyword ? `${keyword} 체크리스트` : "",
+    text(form.region) ? `${text(form.region)} ${keyword}` : "",
+    text(form.category)
+  ])
+    .filter((item) => compact(item) !== compact(keyword))
+    .slice(0, limit);
+};
+
+const SPONSORSHIP_DISCLOSURES = {
+  "직접 구매": "이 글은 직접 구매 후 작성한 내돈내산 후기입니다.",
+  "제품 제공": "이 글은 제품을 제공받아 실제 사용 후 작성한 후기입니다.",
+  "식사권 제공": "이 글은 업체로부터 식사권을 제공받아 직접 방문 후 작성한 후기입니다.",
+  "협찬/체험단": "이 글은 협찬 또는 체험단 혜택을 제공받아 실제 경험을 바탕으로 작성한 후기입니다."
+};
+
+const getSponsorshipType = (form = {}) =>
+  text(form.sponsorshipType || form.disclosureType || form.adDisclosure);
+
+const createDisclosureNotice = (form = {}) => {
+  const sponsorshipType = getSponsorshipType(form);
+
+  return SPONSORSHIP_DISCLOSURES[sponsorshipType] || "";
+};
 
 const applyAvoidWords = (value, avoidWords) =>
   avoidWords.reduce((result, word) => result.replaceAll(word, "해당 표현"), value);
@@ -615,6 +647,99 @@ const isReviewLikePost = (form = {}, selectedTitle = "", outlineSections = []) =
   );
 };
 
+const resolveContentType = (form = {}, selectedTitle = "", selectedTopic = "", outlineSections = []) => {
+  const source = [
+    text(form.category),
+    text(form.goal),
+    selectedTitle,
+    selectedTopic,
+    normalizeOutlineSections(outlineSections).join(" ")
+  ].join(" ");
+
+  if (/맛집|카페|아이와|갈만한|방문형|매장형|매장|식당|주차|예약|웨이팅|좌석|메뉴|재방문/u.test(source)) {
+    return "visit";
+  }
+  if (/비교형|비교|장단점|다른 점|차이/u.test(source)) return "comparison";
+  if (/상품 리뷰|상품형|상품|제품|생활용품|계절템|온라인 쇼핑몰|구매|재구매|사용감/u.test(source)) {
+    return "product";
+  }
+  if (/후기형|후기|리뷰|직접|써보기|사용\/방문|좋았던 점|아쉬웠던 점/u.test(source)) return "review";
+  if (getAudienceType(form) === "인플루언서/수익형") return "review";
+
+  return "info";
+};
+
+const CONTENT_TYPE_LABELS = {
+  info: "정보형",
+  review: "후기형",
+  comparison: "비교형",
+  visit: "방문형/매장형",
+  product: "상품형"
+};
+
+const getContentTypeLabel = (form = {}, selectedTitle = "", selectedTopic = "", outlineSections = []) =>
+  CONTENT_TYPE_LABELS[resolveContentType(form, selectedTitle, selectedTopic, outlineSections)] || "정보형";
+
+const pickRolesByCount = (roles = [], count = 4) => {
+  if (roles.length <= count) return roles;
+  if (count <= 1) return roles.slice(0, count);
+
+  return [...roles.slice(0, count - 1), roles.at(-1)];
+};
+
+const CONTENT_TYPE_OUTLINE_ROLES = {
+  info: ["기준 정리", "체크리스트", "자주 묻는 질문", "구매/방문 전 확인 포인트", "정보 정리"],
+  review: ["알게 된 이유", "실제 사용/방문 상황", "좋았던 점", "아쉬웠던 점", "이런 분께 추천"],
+  comparison: ["비교 기준", "다른 점", "장단점", "선택 전 확인할 점", "표/체크리스트"],
+  visit: ["위치와 방문 상황", "주차/예약/웨이팅", "좌석과 아이 동반", "메뉴/가격", "재방문 의사"],
+  product: ["구매 이유", "사용 전 기대", "실제 사용감", "품질/구성/가격대", "추천 대상", "재구매 의향"]
+};
+
+const createContentTypeHeading = ({ contentType, role, keyword, secondaryCue, region, category }) => {
+  const localCue = region ? `${region} ` : "";
+
+  const headings = {
+    info: {
+      "기준 정리": `${keyword} 기준 정리`,
+      체크리스트: `${keyword} 체크리스트`,
+      "자주 묻는 질문": `${keyword} 자주 묻는 질문`,
+      "구매/방문 전 확인 포인트": `${keyword} 전 확인 포인트`,
+      "정보 정리": `${keyword} 정보 정리`
+    },
+    review: {
+      "알게 된 이유": `${keyword}를 알게 된 이유`,
+      "실제 사용/방문 상황": `실제로 확인한 ${secondaryCue || category || "상황"}`,
+      "좋았던 점": `좋았던 점`,
+      "아쉬웠던 점": `아쉬웠던 점`,
+      "이런 분께 추천": `이런 분께 추천해요`
+    },
+    comparison: {
+      "비교 기준": `${keyword} 비교 기준`,
+      "다른 점": `${secondaryCue || keyword}와 다른 점`,
+      장단점: `장점과 아쉬운 점`,
+      "선택 전 확인할 점": `선택 전 확인할 점`,
+      "표/체크리스트": `한눈에 보는 체크리스트`
+    },
+    visit: {
+      "위치와 방문 상황": `${localCue}${keyword} 위치와 방문 상황`,
+      "주차/예약/웨이팅": `주차, 예약, 웨이팅 확인`,
+      "좌석과 아이 동반": `좌석과 아이 동반 여부`,
+      "메뉴/가격": `대표 메뉴와 가격 정보`,
+      "재방문 의사": `재방문 전 확인할 점`
+    },
+    product: {
+      "구매 이유": `${keyword}를 보게 된 이유`,
+      "사용 전 기대": `사용 전 기대했던 부분`,
+      "실제 사용감": `실제 사용감`,
+      "품질/구성/가격대": `품질, 구성, 가격대`,
+      "추천 대상": `이런 분께 추천해요`,
+      "재구매 의향": `재구매 전 확인할 점`
+    }
+  };
+
+  return headings[contentType]?.[role] || `${keyword} ${role}`;
+};
+
 const getReviewSubjectType = (form = {}) => {
   const category = text(form.category);
   const goal = text(form.goal);
@@ -757,9 +882,30 @@ const createOpeningParagraph = (form, selectedOpeningSentence = "", selectedTitl
   const selected = text(selectedOpeningSentence);
   const naturalKeyword = createNaturalKeywordVariant(form);
   const tone = normalizeTone(form.tone);
+  const contentType = resolveContentType(form, selectedTitle);
 
   if (isReviewLikePost(form, selectedTitle)) {
     return createReviewOpeningParagraph(form, selectedOpeningSentence);
+  }
+
+  if (contentType === "visit") {
+    return [
+      `${keyword} 방문 전에는 위치, 주차, 예약, 메뉴처럼 실제로 움직일 때 필요한 정보를 먼저 확인하면 좋아요.`,
+      `${region ? `${region}에서 ` : ""}${asObject(keyword)} 찾는 분들은 아이 동반, 좌석, 웨이팅처럼 당일 만족도에 영향을 주는 항목도 함께 봅니다.`,
+      `제공되지 않은 정보는 임의로 채우지 않고 [확인 필요]로 남겨두면 방문 전 다시 점검하기 쉬워요.`
+    ]
+      .map((sentence) => createSentence(sentence, tone))
+      .join(" ");
+  }
+
+  if (contentType === "comparison") {
+    return [
+      `${asObject(keyword)} 비교할 때는 장점만 나열하기보다 같은 기준으로 차이를 보는 게 좋습니다.`,
+      `${secondaryKeywords[0] || "가격과 구성"}까지 함께 놓고 보면 선택 전 확인할 부분이 더 분명해집니다.`,
+      `확인되지 않은 비교 정보는 [확인 필요]로 남겨두고, 실제로 확인 가능한 기준부터 정리하겠습니다.`
+    ]
+      .map((sentence) => createSentence(sentence, tone))
+      .join(" ");
   }
 
   const firstSentence =
@@ -785,10 +931,25 @@ const createTopicBridgeParagraph = (form, selectedTopic, selectedTitle, titleAng
   const audienceType = getAudienceType(form);
   const topicCue = stripMainKeyword(selectedTopic || selectedTitle || titleAngle, keyword, "") || "확인 기준";
   const tone = normalizeTone(form.tone);
+  const contentType = resolveContentType(form, selectedTitle, selectedTopic);
 
   if (isReviewLikePost(form, selectedTitle)) {
     return createSentence(
       `${asObject(topicCue)} 중심으로 보면 장점을 나열하기보다 찾게 된 이유, 관심이 간 부분, 루틴으로 볼 지점이 자연스럽게 이어지는지가 중요합니다. 아래 내용은 직접 효과를 단정하지 않고 후기처럼 편하게 읽히도록 정리했습니다`,
+      tone
+    );
+  }
+
+  if (contentType === "visit") {
+    return createSentence(
+      `${asObject(topicCue)} 중심으로 보면 위치, 주차, 예약, 좌석, 메뉴 정보를 한 번에 확인할 수 있어야 합니다. 아래 내용은 제공되지 않은 값은 [확인 필요]로 남기면서 방문 전 체크하기 좋게 정리했습니다`,
+      tone
+    );
+  }
+
+  if (contentType === "comparison") {
+    return createSentence(
+      `${asObject(topicCue)} 중심으로 보면 비슷한 선택지도 기준을 나눠야 차이가 보입니다. 아래 내용은 장단점과 선택 전 체크리스트가 분리되어 보이도록 정리했습니다`,
       tone
     );
   }
@@ -821,8 +982,6 @@ const createFaqItems = (form, selectedTitle = "") => {
   const audienceType = getAudienceType(form);
   const emphasis = getEmphasis(form);
   const brand = getBrandLabel(form);
-  const targetLength = resolveTargetLength(form);
-  const wantsThreeQuestions = targetLength >= 1700 || /비교|기준|확인/u.test(text(selectedTitle));
 
   if (audienceType === "인플루언서/수익형") {
     return [
@@ -838,7 +997,7 @@ const createFaqItems = (form, selectedTitle = "") => {
         question: `어떤 기준으로 ${keyword}를 고르면 좋나요?`,
         answer: `${emphasis}처럼 직접 체감할 수 있는 기준과 후기 흐름이 자연스럽게 연결되는지 보는 편이 좋습니다.`
       }
-    ].slice(0, wantsThreeQuestions ? 3 : 2);
+    ].slice(0, 3);
   }
 
   return [
@@ -854,7 +1013,7 @@ const createFaqItems = (form, selectedTitle = "") => {
       question: `어떤 기준으로 ${keyword}를 비교하면 좋나요?`,
       answer: `${emphasis}처럼 실제 이용 흐름에서 체감되는 부분과 상담 안내가 자연스럽게 이어지는지 보면 좋습니다.`
     }
-  ].slice(0, wantsThreeQuestions ? 3 : 2);
+  ].slice(0, 3);
 };
 
 const createFaqSection = (form, selectedTitle = "") => {
@@ -976,12 +1135,34 @@ const createFlowBlocks = ({ form, cta }) => {
   };
 };
 
-const normalizeOutlineSections = (outlineSections = []) =>
+const normalizeOutlineItems = (outlineSections = []) =>
   outlineSections
-    .map((item) => (typeof item === "string" ? item : item?.heading))
-    .map(text)
-    .filter(Boolean)
+    .map((item) => {
+      if (typeof item === "string") {
+        return {
+          heading: text(item),
+          note: ""
+        };
+      }
+
+      return {
+        heading: text(item?.heading),
+        note: text(item?.note || item?.memo)
+      };
+    })
+    .filter((item) => item.heading)
     .slice(0, 6);
+
+const normalizeOutlineSections = (outlineSections = []) =>
+  normalizeOutlineItems(outlineSections).map((item) => item.heading);
+
+const createOutlineNoteSentence = (note = "", tone = "") => {
+  const normalizedNote = text(note);
+
+  if (!normalizedNote) return "";
+
+  return createSentence(`사용자 메모: ${normalizedNote}`, tone);
+};
 
 export function getOutlineSectionCount(form = {}) {
   const target = resolveTargetLength(form);
@@ -1048,13 +1229,33 @@ const createOutlineHeading = ({ role, keyword, secondaryCue, brand, audienceLabe
 export function createOutlineSections(form, selectedTopic, selectedTitle) {
   const keyword = getMainKeyword(form);
   const goal = text(form.goal);
+  const category = text(form.category);
+  const region = text(form.region);
   const brand = getBrandLabel(form);
   const audienceProfile = getAudienceProfile(form);
   const titleAngle = createTitleAngle(selectedTitle, keyword, goal);
   const avoidWords = splitAvoidWords(form.avoid);
   const secondaryCue = getSecondaryKeywords(form)[0] || stripMainKeyword(selectedTopic, keyword, "") || "";
   const count = getOutlineSectionCount(form);
+  const contentType = resolveContentType(form, selectedTitle, selectedTopic);
+  const typedRoles = pickRolesByCount(CONTENT_TYPE_OUTLINE_ROLES[contentType] || [], count);
   const roles = OUTLINE_ROLES_BY_COUNT[count] ?? OUTLINE_ROLES_BY_COUNT[4];
+
+  if (typedRoles.length > 0) {
+    return typedRoles
+      .map((role) =>
+        createContentTypeHeading({
+          contentType,
+          role,
+          keyword,
+          secondaryCue,
+          region,
+          category
+        })
+      )
+      .map((section) => applyAvoidWords(section, avoidWords))
+      .slice(0, count);
+  }
 
   if (isReviewLikePost(form, selectedTitle)) {
     const subjectType = getReviewSubjectType(form);
@@ -1109,9 +1310,12 @@ export function createOutlineSections(form, selectedTopic, selectedTitle) {
 }
 
 const formatHeading = (heading) => {
-  const cleaned = text(heading).replace(/^\*\*(.+)\*\*$/u, "$1");
+  const cleaned = text(heading)
+    .replace(/^\*\*(.+)\*\*$/u, "$1")
+    .replace(/^\*\s*/u, "")
+    .trim();
 
-  return cleaned ? `**${cleaned}**` : "";
+  return cleaned;
 };
 
 const createSection = (heading, paragraphs, tone = "") =>
@@ -1157,7 +1361,7 @@ const createBusinessInfoSection = (form = {}) => {
   const entries = getBusinessInfoEntries(form);
 
   return [
-    "**제품/매장 정보 정리**",
+    "제품/매장 정보 정리",
     "마지막으로 제품이나 매장 정보를 한 번 더 정리해두면 방문이나 구매 전 확인하기 좋습니다.",
     ...entries.map(([label, value]) => `${label}: ${value}`)
   ].join("\n\n");
@@ -1181,10 +1385,194 @@ const createReviewProductInfoSection = (form = {}) => {
   ].filter(([, value]) => value);
 
   return [
-    "**제품 정보 정리**",
+    "제품 정보 정리",
     createSentence("마지막으로 구매나 비교 전에 다시 보기 쉽게 기본 정보를 정리해두면 좋습니다", tone),
     ...entries.map(([label, value]) => `${label}: ${value}`)
   ].join("\n\n");
+};
+
+const valueOrNeedsCheck = (value) => text(value) || "[확인 필요]";
+
+const createCategoryInfoSummarySection = (form = {}, contentType = "") => {
+  if (contentType === "visit") {
+    const rows = [
+      ["위치", text(form.address) || text(form.region) || "[확인 필요]"],
+      ["주차", "[확인 필요]"],
+      ["예약", text(form.contactMethod) || "[확인 필요]"],
+      ["웨이팅", "[확인 필요]"],
+      ["좌석", "[확인 필요]"],
+      ["대표 메뉴/가격", text(form.priceInfo) || "[확인 필요]"],
+      ["아이 동반", "[확인 필요]"],
+      ["재방문 의사", "[확인 필요]"]
+    ];
+
+    return ["업체 정보 정리", ...rows.map(([label, value]) => `${label}: ${value}`)].join("\n\n");
+  }
+
+  if (contentType === "product") {
+    const rows = [
+      ["제품/브랜드명", valueOrNeedsCheck(form.brandName || getMainKeyword(form))],
+      ["가격대", valueOrNeedsCheck(form.priceInfo)],
+      ["구매처", valueOrNeedsCheck(form.purchaseUrl)],
+      ["배송/교환 정보", valueOrNeedsCheck(form.shippingInfo)],
+      ["문의 방법", valueOrNeedsCheck(form.contactMethod)]
+    ];
+
+    return ["상품 정보 정리", ...rows.map(([label, value]) => `${label}: ${value}`)].join("\n\n");
+  }
+
+  return createBusinessInfoSection(form);
+};
+
+const createTypedSectionParagraphs = ({
+  form,
+  heading,
+  note = "",
+  index = 0,
+  contentType,
+  selectedTopic,
+  selectedTitle,
+  cta
+}) => {
+  const keyword = getMainKeyword(form);
+  const category = text(form.category);
+  const brand = getBrandLabel(form);
+  const region = text(form.region);
+  const tone = normalizeTone(form.tone);
+  const secondaryCue = getExpandedSecondaryKeywords(form, 3)[0] || "비교 기준";
+  const strengthText = createHumanList(getStrengths(form));
+  const emphasis = getEmphasis(form);
+  const noteSentence = createOutlineNoteSentence(note, tone);
+  const noteBlock = noteSentence ? [noteSentence] : [];
+  const safeCta = cta || createCtaSentence(form);
+
+  const blocks = {
+    info: [
+      [
+        `${keyword}는 먼저 기준을 짧게 잡아두면 이해하기 쉽습니다.`,
+        `${secondaryCue}까지 함께 보면 정보가 흩어지지 않고 구매나 방문 전 판단 흐름이 분명해집니다.`
+      ],
+      [
+        `체크리스트로 보면 첫째 목적, 둘째 실제 사용 상황, 셋째 비용이나 조건, 넷째 나에게 맞는지입니다.`,
+        `확인되지 않은 세부 정보는 단정하지 않고 [확인 필요]로 남겨두는 편이 안전합니다.`
+      ],
+      [
+        `Q. ${keyword}를 볼 때 가장 먼저 확인할 점은 무엇인가요?`,
+        `A. 내 상황에서 왜 필요한지와 ${secondaryCue}가 함께 맞는지부터 보면 좋습니다.`,
+        `Q. 정보가 부족하면 어떻게 정리하면 좋나요?`,
+        `A. 제공되지 않은 값은 [확인 필요]로 표시하고 임의로 채우지 않는 것이 좋습니다.`
+      ],
+      [
+        `구매나 방문 전에는 가격, 위치, 구성, 예약 가능 여부처럼 나중에 다시 찾게 되는 항목을 먼저 확인해두면 편합니다.`,
+        `${keyword} 관련 정보가 많아도 이 기준만 잡아두면 모바일에서 빠르게 판단하기 쉽습니다.`
+      ],
+      [
+        `${keyword}의 핵심은 한 문장으로 정리하면 "내 상황에 필요한 기준을 먼저 확인하고 부족한 정보는 [확인 필요]로 남기는 것"입니다.`,
+        `${safeCta}`
+      ]
+    ],
+    review: [
+      [
+        `${keyword}를 알게 된 이유는 ${secondaryCue} 쪽으로 정보를 찾아보다가 내 상황에도 맞을지 궁금해졌기 때문입니다.`,
+        `직접 경험을 임의로 단정하기보다, 제공된 정보와 확인 가능한 기준 중심으로 후기처럼 자연스럽게 정리해보려고 해요.`
+      ],
+      [
+        `실제 사용이나 방문 상황은 사람마다 다를 수 있어서, 여기서는 ${category || keyword}를 볼 때 확인하면 좋은 흐름을 중심으로 보겠습니다.`,
+        `${brand}의 ${strengthText} 같은 부분이 내 상황과 맞는지 함께 보면 좋겠어요.`
+      ],
+      [
+        `좋았던 점으로 볼 수 있는 부분은 ${emphasis}입니다.`,
+        `이 포인트가 설명만 따로 있는 게 아니라 사용 전 기대, 비교 기준, 구매 전 확인점과 이어질 때 훨씬 자연스럽게 느껴졌어요.`
+      ],
+      [
+        `아쉬운 점은 아직 제공되지 않은 세부 정보가 있으면 바로 판단하기 어렵다는 점입니다.`,
+        `가격, 구성, 위치, 실제 사용 기간처럼 확인되지 않은 항목은 [확인 필요]로 남겨두고 보는 게 좋겠더라고요.`
+      ],
+      [
+        `${keyword}는 비슷한 정보를 여러 번 비교하고 있거나, 내 생활 패턴에 맞는지 차분히 보고 싶은 분께 잘 맞을 것 같아요.`,
+        `${safeCta}`
+      ]
+    ],
+    comparison: [
+      [
+        `${keyword}를 비교할 때는 먼저 같은 기준을 놓고 보는 것이 중요합니다.`,
+        `가격, 구성, 사용 상황, 후기 흐름을 따로 보면 비슷해 보이지만 한 번에 놓고 보면 차이가 보입니다.`
+      ],
+      [
+        `${secondaryCue || brand}와 다른 점은 장점 하나보다 실제 상황에서 어떤 불편을 줄여주는지로 보는 편이 좋습니다.`,
+        `제공되지 않은 비교 대상 정보는 임의로 만들지 않고 [확인 필요]로 표시해두겠습니다.`
+      ],
+      [
+        `장점은 ${strengthText}처럼 바로 이해되는 기준이 있다는 점입니다.`,
+        `아쉬운 점은 ${emphasis}을 확인할 수 있는 근거가 부족하면 선택까지 이어지기 어렵다는 점입니다.`
+      ],
+      [
+        `선택 전에는 나에게 꼭 필요한 조건과 있으면 좋은 조건을 나누면 좋습니다.`,
+        `${keyword}는 이 두 가지를 구분해두면 과한 기대 없이 현실적으로 비교할 수 있습니다.`
+      ],
+      [
+        `체크리스트: 목적에 맞는지, 가격대가 맞는지, 실제 사용 흐름이 자연스러운지, 확인되지 않은 정보가 표시됐는지 보면 됩니다.`,
+        `${safeCta}`
+      ]
+    ],
+    visit: [
+      [
+        `${region ? `${region}에서 ` : ""}${keyword} 방문 전 살펴본다면 위치와 이동 동선을 먼저 확인하는 편이 좋습니다.`,
+        `정확한 주소나 이동 시간은 제공된 정보가 없으면 [확인 필요]로 남겨두는 것이 안전합니다.`
+      ],
+      [
+        `주차, 예약, 웨이팅은 방문 만족도에 바로 영향을 주는 항목입니다.`,
+        `현재 입력값 기준으로 주차: [확인 필요], 예약: ${text(form.contactMethod) || "[확인 필요]"}, 웨이팅: [확인 필요]입니다.`
+      ],
+      [
+        `아이와 함께 가거나 오래 머무를 계획이라면 좌석 간격, 유모차 이동, 화장실, 소음 정도를 함께 보는 게 좋습니다.`,
+        `아이 동반 가능 여부와 좌석 정보는 [확인 필요]로 표시해두겠습니다.`
+      ],
+      [
+        `대표 메뉴와 가격은 방문 전 가장 많이 다시 확인하는 정보입니다.`,
+        `입력된 가격 정보는 ${text(form.priceInfo) || "[확인 필요]"}이며, 대표 메뉴는 [확인 필요]입니다.`
+      ],
+      [
+        `재방문 의사는 분위기보다 실제 편의 정보가 맞을 때 자연스럽게 생깁니다.`,
+        `방문 전 체크할 값이 채워지면 글의 신뢰도도 훨씬 올라갑니다. ${safeCta}`
+      ]
+    ],
+    product: [
+      [
+        `${keyword}를 보게 된 이유는 ${secondaryCue}처럼 구매 전 궁금한 기준이 있었기 때문입니다.`,
+        `사용자가 직접 제공하지 않은 경험은 단정하지 않고, 확인 가능한 제품 정보와 비교 흐름 중심으로 정리해볼게요.`
+      ],
+      [
+        `사용 전에는 ${emphasis} 부분이 실제 생활에 맞을지 가장 궁금해집니다.`,
+        `좋다는 말보다 가격대, 구성, 사용 방법이 내 루틴에 맞는지 보는 게 더 현실적이더라고요.`
+      ],
+      [
+        `실제 사용감은 제품을 직접 써본 정보가 있을 때 가장 정확하게 쓸 수 있습니다.`,
+        `현재 제공된 정보가 부족한 사용감은 [확인 필요]로 두고, 대신 구매 전 확인할 기준을 중심으로 보겠습니다.`
+      ],
+      [
+        `품질, 구성, 가격대는 한 번에 묶어서 보는 편이 좋습니다.`,
+        `가격대: ${text(form.priceInfo) || "[확인 필요]"}, 구매처: ${text(form.purchaseUrl) || "[확인 필요]"}, 배송/교환: ${text(form.shippingInfo) || "[확인 필요]"}입니다.`
+      ],
+      [
+        `${keyword}는 ${secondaryCue}를 기준으로 비교하고 있거나, 구매 전 정보를 차분히 모으는 분께 잘 맞을 것 같아요.`,
+        `${safeCta}`
+      ],
+      [
+        `재구매 의향은 실제 사용 기간과 만족 포인트가 확인된 뒤 판단하는 게 자연스럽습니다.`,
+        `아직 확인되지 않은 값은 [확인 필요]로 남겨두고, 구매 전에는 구성과 사용 기준을 다시 보면 좋겠어요.`
+      ]
+    ]
+  };
+
+  const selectedBlocks = blocks[contentType] || blocks.info;
+  const paragraphs = selectedBlocks[index] || selectedBlocks.at(-1) || [];
+
+  return [...noteBlock, ...paragraphs].map((paragraph) =>
+    typeof paragraph === "string" && /^(Q\.|A\.|체크리스트:|가격대:|주차:)/u.test(paragraph)
+      ? paragraph
+      : paragraph
+  );
 };
 
 const createReviewPostBody = (
@@ -1195,52 +1583,45 @@ const createReviewPostBody = (
   writingChoices = {}
 ) => {
   const keyword = getMainKeyword(form);
-  const subjectType = getReviewSubjectType(form);
-  const cueText = createReviewCueText(form);
-  const highlightText = createHumanList(getReviewHighlights(form));
-  const emphasis = text(form.emphasisPoint) || `${highlightText}을 실제 루틴에 넣기 쉬운지`;
   const selectedOpeningSentence =
     text(writingChoices.selectedOpeningSentence) || text(form.selectedOpeningSentence);
   const selectedCtaSentence = text(writingChoices.selectedCtaSentence) || text(form.selectedCtaSentence);
   const cta = createCtaSentence(form, selectedCtaSentence);
-  const normalizedOutline = normalizeOutlineSections(outlineSections);
-  const heading = (index, fallback) => normalizedOutline[index] || fallback;
   const tone = normalizeTone(form.tone);
+  const contentType = resolveContentType(form, selectedTitle, selectedTopic, outlineSections);
+  const normalizedOutlineItems = normalizeOutlineItems(outlineSections);
+  const outlineItems =
+    normalizedOutlineItems.length >= 3
+      ? normalizedOutlineItems
+      : normalizeOutlineItems(createOutlineSections(form, selectedTopic, selectedTitle));
   const intro = [
     `${form.useEmoji ? "✨ " : ""}${createReviewOpeningParagraph(form, selectedOpeningSentence)}`,
     createTopicBridgeParagraph(form, selectedTopic, selectedTitle, selectedTitle)
   ];
-  const sections = [
-    createSection(heading(0, `${keyword}를 찾게 된 이유`), [
-      `${cueText}에 관심이 생기면 처음에는 좋은 말보다 왜 지금 이 주제가 필요해졌는지가 더 먼저 떠오릅니다.`,
-      `저도 이 제품을 볼 때 바로 결론을 내리기보다 내 생활 패턴에서 부담 없이 이어갈 수 있는지부터 살펴보는 편이 자연스럽다고 느꼈습니다.`
-    ], tone),
-    createSection(heading(1, `내 상황에서 궁금했던 부분`), [
-      `특히 몸 관리, 사용 편의성, 구매 전 확인할 정보가 한꺼번에 보이면 오히려 무엇을 먼저 봐야 할지 헷갈릴 수 있습니다.`,
-      `그래서 이 제품도 좋은 후기만 보기보다 내 고민과 비슷한 상황에서 어떤 포인트를 확인했는지 차근차근 보는 쪽이 도움이 됩니다.`
-    ], tone),
-    createSection(heading(2, `${asObject(subjectType)} 보고 관심이 간 이유`), [
-      `${asObject(subjectType)} 볼 때 눈에 들어온 부분은 ${highlightText} 같은 부분이었습니다.`,
-      `${emphasis} 같은 포인트가 분명하면 광고 문구처럼 느껴지기보다 실제로 살펴볼 이유가 생깁니다.`,
-      `다만 건강, 다이어트, 컨디션 관련 내용은 개인차가 크기 때문에 특정 효과를 단정하기보다 구성과 섭취 또는 사용 흐름을 먼저 확인하는 편이 좋습니다.`
-    ], tone),
-    createSection(heading(3, `사용 방법이나 루틴으로 볼 부분`), [
-      `이 제품을 루틴으로 본다면 하루 중 언제 챙기기 편한지, 보관이나 휴대가 번거롭지 않은지부터 확인하면 좋습니다.`,
-      `상세페이지나 안내 이미지가 있다면 용량, 구성, 섭취 또는 사용 방법, 주의사항을 함께 보면서 내 생활 패턴에 맞을지 판단해보면 됩니다.`
-    ], tone),
-    createSection(heading(4, `이런 분께 맞을 것 같은 이유`), [
-      `${cueText} 정보를 이미 여러 번 찾아본 분이라면 ${keyword}처럼 한눈에 확인할 수 있는 선택지가 편하게 느껴질 수 있습니다.`,
-      `복잡한 관리보다 가볍게 시작할 수 있는 루틴을 원하거나, 구매 전 필요한 정보를 차분히 비교하고 싶은 분에게 잘 맞을 것 같습니다.`
-    ], tone),
-    createSection(heading(5, `구매 전 확인하면 좋을 점`), [
-      `구매 전에는 성분이나 구성, 섭취 또는 사용 방법, 보관법, 교환 가능 여부처럼 나중에 다시 찾게 되는 내용을 먼저 확인해보세요.`,
-      `후기만 보고 바로 결정하기보다 내 몸 상태나 생활 패턴에 맞는지 살펴보는 과정이 필요합니다.`,
-      `${cta}`
-    ], tone),
-    createReviewProductInfoSection(form)
-  ];
+  const sections = outlineItems.map((item, index) =>
+    createSection(
+      item.heading,
+      createTypedSectionParagraphs({
+        form,
+        heading: item.heading,
+        note: item.note,
+        index,
+        contentType,
+        selectedTopic,
+        selectedTitle,
+        cta
+      }),
+      tone
+    )
+  );
+  const informationSection =
+    contentType === "product"
+      ? createReviewProductInfoSection(form)
+      : contentType === "visit"
+        ? createCategoryInfoSummarySection(form, contentType)
+        : createBusinessInfoSection(form);
 
-  return normalizeBlogBody([...intro, ...sections].join("\n\n"));
+  return normalizeBlogBody([createDisclosureNotice(form), ...intro, ...sections, informationSection].join("\n\n"));
 };
 
 const createReaderFacingPostBody = (
@@ -1260,31 +1641,37 @@ const createReaderFacingPostBody = (
   const titleAngle = createTitleAngle(selectedTitle, keyword, goal);
   const audienceProfile = getAudienceProfile(form);
   const tone = normalizeTone(form.tone);
-  const normalizedOutline = normalizeOutlineSections(outlineSections);
-  const outline =
-    normalizedOutline.length >= 3
-      ? normalizedOutline
-      : createOutlineSections(form, selectedTopic, selectedTitle);
+  const contentType = resolveContentType(form, selectedTitle, selectedTopic, outlineSections);
+  const normalizedOutlineItems = normalizeOutlineItems(outlineSections);
+  const outlineItems =
+    normalizedOutlineItems.length >= 3
+      ? normalizedOutlineItems
+      : normalizeOutlineItems(createOutlineSections(form, selectedTopic, selectedTitle));
+  const outline = outlineItems.map((item) => item.heading);
 
-  if (isReviewLikePost(form, selectedTitle, outline)) {
-    return createReviewPostBody(form, selectedTopic, selectedTitle, outline, writingChoices);
+  if (isReviewLikePost(form, selectedTitle, outlineItems)) {
+    return createReviewPostBody(form, selectedTopic, selectedTitle, outlineItems, writingChoices);
   }
 
-  const flowBlocks = createFlowBlocks({ form, cta });
   const intro = [
     `${form.useEmoji ? "✨ " : ""}${createOpeningParagraph(form, selectedOpeningSentence, selectedTitle)}`,
     createTopicBridgeParagraph(form, selectedTopic, selectedTitle, titleAngle)
   ];
-  const blockOrder = ["criteria", "experience", "purchase", "faqContext", "extra"];
-  const sectionBlocks = outline.map((heading, index) => {
-    const blockKey = index === outline.length - 1 ? "action" : blockOrder[index] ?? "extra";
-    const baseBlocks = flowBlocks[blockKey] ?? flowBlocks.extra;
-
-    return {
-      heading,
-      paragraphs: [createHeadingLead(heading, index, audienceProfile.label), ...baseBlocks]
-    };
-  });
+  const sectionBlocks = outlineItems.map((item, index) => ({
+    heading: item.heading,
+    paragraphs: [
+      ...createTypedSectionParagraphs({
+        form,
+        heading: item.heading,
+        note: item.note,
+        index,
+        contentType,
+        selectedTopic,
+        selectedTitle,
+        cta
+      })
+    ]
+  }));
   const contextualDetails =
     audienceProfile.label === "인플루언서/수익형"
       ? [
@@ -1307,9 +1694,10 @@ const createReaderFacingPostBody = (
   const faqSection = shouldIncludeFaqBlock(form, selectedTitle, outline)
     ? createFaqSection(form, selectedTitle)
     : "";
-  const businessInfoSection = createBusinessInfoSection(form);
+  const businessInfoSection = createCategoryInfoSummarySection(form, contentType);
 
   return normalizeBlogBody([
+    createDisclosureNotice(form),
     ...intro,
     ...sectionBlocks.map((section) => createSection(section.heading, section.paragraphs, tone)),
     businessInfoSection,
@@ -1510,16 +1898,24 @@ export function createTitleCandidates(form, selectedTopic) {
   const region = text(form.region);
   const regionPhrase = getRegionPhrase(form);
   const audienceType = getAudienceType(form);
+  const contentType = resolveContentType(form, "", selectedTopic);
   const naturalKeyword = createNaturalKeywordVariant(form);
   const reviewKeyword = createReviewKeywordPhrase(form);
   const brandCue = getBrandKeywords(form)[0] || text(form.brandName);
   const avoidWords = splitAvoidWords(form.avoid);
   const isInfluencer = audienceType === "인플루언서/수익형";
   const isProductLike = goal === "상품 홍보" || /쇼핑몰|상품|제품|후기/u.test(`${form.category} ${selectedTopic}`);
-  const infoTitle = `${keyword} 처음 볼 때 확인할 기준`;
+  const infoTitle =
+    contentType === "visit"
+      ? `${regionPhrase}${keyword} 방문 전 확인할 기준`
+      : contentType === "product"
+        ? `${keyword} 후기 전 확인할 기준`
+        : `${keyword} 처음 볼 때 확인할 기준`;
   const reviewTitle = isInfluencer
     ? `${reviewKeyword} 직접 알아본 후기`
-    : goal === "상품 홍보"
+    : contentType === "visit"
+      ? `${regionPhrase}${keyword} 방문 후기 체크포인트`
+      : goal === "상품 홍보"
       ? `${reviewKeyword} 후기처럼 정리한 체크포인트`
       : `${reviewKeyword} 선택 전 확인할 후기 포인트`;
   const comparisonTitle =
@@ -1531,6 +1927,8 @@ export function createTitleCandidates(form, selectedTopic) {
     : `${keyword} 선택 전 볼 포인트`;
   const clickTitle = isInfluencer
     ? `${reviewKeyword}, 비슷해 보여도 다른 점`
+    : contentType === "visit"
+      ? `${regionPhrase}${keyword} 저장해둘 방문 포인트`
     : region
       ? `${regionPhrase}${keyword} 문의 전 많이 묻는 점`
       : `${naturalKeyword} 놓치기 쉬운 체크포인트`;
@@ -1774,7 +2172,17 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
   })).slice(0, getImageSuggestionCount(form));
 }
 
-const isBodyHeadingParagraph = (paragraph = "") => /^\*\*.+\*\*$/u.test(text(paragraph));
+const isBodyHeadingParagraph = (paragraph = "") => {
+  const value = text(paragraph);
+
+  if (!value) return false;
+  if (/^\*\*.+\*\*$/u.test(value)) return true;
+  if (/^\[여기에 이미지 \d+을 넣어주세요/u.test(value)) return true;
+  if (/^(Q\.|A\.|[-•]|\d+\.)/u.test(value)) return false;
+  if (value.includes(":")) return false;
+
+  return Array.from(value).length <= 42 && !/[.!?。]$/u.test(value);
+};
 
 const getDistributedMarkerPositions = (count, candidateCount) => {
   if (candidateCount <= 0) return [];
@@ -2091,6 +2499,12 @@ const createSeoCheck = (
     faqCount >= 2 ||
     /무엇인가요|누구에게 필요한가요|어떤 기준|확인해야 하나요|\?/u.test(markedBody) ||
     (reviewLike && /이런 분께 맞을 것|구매 전 확인/u.test(markedBody));
+  const sponsorshipType = getSponsorshipType(form);
+  const disclosureNotice = createDisclosureNotice(form);
+  const hasMarkdownHeadingStars = /(^|\n)\s*\*\s+|(^|\n)\s*\*\*.+\*\*/u.test(markedBody);
+  const hasNeedsCheckMarkers = markedBody.includes("[확인 필요]");
+  const hasInfoSummary = /업체 정보 정리|상품 정보 정리|제품 정보 정리|제품\/매장 정보 정리/u.test(markedBody);
+  const hasDirectExperienceClaim = /직접\s*(써봤|사용했|먹어봤|다녀왔|방문했|구매했)/u.test(markedBody);
   const forbiddenFound = avoidWords.filter((word) => combinedForChecks.includes(word));
   const overclaimFound = overclaimWords.filter((word) => combinedForChecks.includes(word));
   const items = [
@@ -2206,6 +2620,48 @@ const createSeoCheck = (
       label: "금지어 없음",
       passed: forbiddenFound.length === 0,
       detail: forbiddenFound.length > 0 ? forbiddenFound.join(", ") : "금지어 없음"
+    },
+    {
+      id: "unverified-info-marked",
+      label: "확인되지 않은 정보 표시 여부",
+      passed: hasNeedsCheckMarkers || !/주차|예약|가격|구매처|배송|대표 메뉴|아이 동반/u.test(markedBody),
+      detail: hasNeedsCheckMarkers ? "[확인 필요] 표시 확인" : "확인 필요 항목 없음"
+    },
+    {
+      id: "sponsorship-disclosure",
+      label: "협찬/체험단 표시 여부",
+      passed: Boolean(sponsorshipType && disclosureNotice && markedBody.includes(disclosureNotice)),
+      detail: sponsorshipType ? `${sponsorshipType} 표시 확인` : "[협찬 여부 확인 필요]"
+    },
+    {
+      id: "experience-source",
+      label: "실제 경험 기반 여부",
+      passed: !hasDirectExperienceClaim || Boolean(text(form.strengths) || text(form.emphasisPoint)),
+      detail: hasDirectExperienceClaim ? "직접 경험 표현 확인 필요" : "임의 직접 경험 단정 없음"
+    },
+    {
+      id: "photo-guide",
+      label: "사진 가이드 포함 여부",
+      passed: imageSuggestions.length > 0,
+      detail: imageSuggestions.length > 0 ? `${imageSuggestions.length}개 사진 배치 가이드` : "사진 가이드 없음"
+    },
+    {
+      id: "info-summary",
+      label: "업체/상품 정보 정리 여부",
+      passed: hasInfoSummary,
+      detail: hasInfoSummary ? "정보 정리 섹션 포함" : "정보 정리 섹션 확인 필요"
+    },
+    {
+      id: "hashtag-count",
+      label: "해시태그 10~15개 포함 여부",
+      passed: hashtags.length >= 10 && hashtags.length <= 15,
+      detail: `${hashtags.length}개`
+    },
+    {
+      id: "heading-stars-removed",
+      label: "소제목 별표 제거 여부",
+      passed: !hasMarkdownHeadingStars,
+      detail: hasMarkdownHeadingStars ? "별표 형식 소제목 확인 필요" : "별표 없는 소제목"
     }
   ];
 
@@ -2370,6 +2826,135 @@ const createStrategyMemo = (
   bodyLength: body.length
 });
 
+const createPackageInfoSummary = (form = {}, contentType = "") => {
+  if (contentType === "visit") {
+    return [
+      ["위치", text(form.address) || text(form.region) || "[확인 필요]"],
+      ["주차", "[확인 필요]"],
+      ["예약", text(form.contactMethod) || "[확인 필요]"],
+      ["웨이팅", "[확인 필요]"],
+      ["좌석", "[확인 필요]"],
+      ["대표 메뉴/가격", text(form.priceInfo) || "[확인 필요]"],
+      ["아이 동반", "[확인 필요]"],
+      ["재방문 의사", "[확인 필요]"]
+    ];
+  }
+
+  if (contentType === "product") {
+    return [
+      ["제품/브랜드명", text(form.brandName) || getMainKeyword(form) || "[확인 필요]"],
+      ["가격대", text(form.priceInfo) || "[확인 필요]"],
+      ["구매처", text(form.purchaseUrl) || "[확인 필요]"],
+      ["배송/교환 정보", text(form.shippingInfo) || "[확인 필요]"],
+      ["문의 방법", text(form.contactMethod) || "[확인 필요]"]
+    ];
+  }
+
+  const businessEntries = getBusinessInfoEntries(form);
+  return businessEntries.length > 0 ? businessEntries : [["추가 정보", "[확인 필요]"]];
+};
+
+const createRecommendedFor = (form = {}, contentType = "") => {
+  const keyword = getMainKeyword(form);
+  const secondaryKeywords = getExpandedSecondaryKeywords(form, 3);
+  const secondaryCue = secondaryKeywords[0] || "선택 기준";
+
+  const items = {
+    info: [
+      `${keyword} 기준을 빠르게 정리하고 싶은 분`,
+      `${secondaryCue}까지 함께 확인하고 싶은 분`,
+      "확인되지 않은 정보를 구분해서 글을 쓰고 싶은 분"
+    ],
+    review: [
+      "후기처럼 자연스럽게 읽히는 글이 필요한 분",
+      `${keyword}를 내 상황에 맞춰 비교하고 싶은 분`,
+      "과장 없이 경험형 흐름을 만들고 싶은 분"
+    ],
+    comparison: [
+      `${keyword}와 비슷한 선택지를 비교하는 분`,
+      "장단점을 한눈에 보고 싶은 분",
+      "구매 전 체크리스트가 필요한 분"
+    ],
+    visit: [
+      `${keyword} 방문 전 정보를 확인하는 분`,
+      "주차, 예약, 좌석, 아이 동반 여부가 중요한 분",
+      "가족 외식이나 방문 동선을 미리 보고 싶은 분"
+    ],
+    product: [
+      `${keyword} 구매 전 사용감과 구성을 보고 싶은 분`,
+      "가격대와 구매처를 함께 확인하고 싶은 분",
+      "재구매 의향까지 현실적으로 보고 싶은 분"
+    ]
+  };
+
+  return items[contentType] || items.info;
+};
+
+const createHomeFeedClickPoint = (form = {}, selectedTitle = "", imageSuggestions = [], contentType = "") => {
+  const keyword = getMainKeyword(form);
+  const typeLabel = CONTENT_TYPE_LABELS[contentType] || "정보형";
+  const firstImage = imageSuggestions[0];
+
+  return {
+    situationTitle: selectedTitle || `${keyword} 전 확인할 기준`,
+    thumbnailCopy:
+      contentType === "visit"
+        ? "방문 전 이것만 체크"
+        : contentType === "product"
+          ? "구매 전 확인 포인트"
+          : contentType === "comparison"
+            ? "비교 기준 한눈에"
+            : "저장해둘 체크리스트",
+    firstImageCandidate: firstImage?.title || "대표 이미지",
+    saveAsset: `${typeLabel} 글에는 체크리스트/가격표/장단점표 중 하나를 이미지나 본문 중간에 넣으면 저장 가능성이 올라갑니다.`
+  };
+};
+
+const createContentPackage = ({
+  form,
+  selectedTopic,
+  selectedTitle,
+  outlineSections,
+  openingSentenceCandidates,
+  imageSuggestions,
+  hashtags,
+  seoCheck,
+  body
+}) => {
+  const keyword = getMainKeyword(form);
+  const contentType = resolveContentType(form, selectedTitle, selectedTopic, outlineSections);
+  const secondaryKeywords = getExpandedSecondaryKeywords(form, 5);
+  const titleCandidates = createTitleCandidates(form, selectedTopic);
+  const faqItems = createFaqItems(form, selectedTitle).slice(0, 3);
+  const sponsorshipType = getSponsorshipType(form);
+
+  return {
+    mainKeyword: keyword,
+    secondaryKeywords,
+    searchIntentAnalysis: {
+      contentType: CONTENT_TYPE_LABELS[contentType] || "정보형",
+      summary: `${keyword}를 찾는 독자가 ${secondaryKeywords[0] || "기준"}와 구매/방문 전 확인점을 빠르게 파악하려는 의도입니다.`
+    },
+    homeFeedClickPoint: createHomeFeedClickPoint(form, selectedTitle, imageSuggestions, contentType),
+    titleCandidates,
+    finalRecommendedTitle: selectedTitle,
+    openingSentenceCandidates: openingSentenceCandidates.slice(0, 3),
+    blogBody: body,
+    photoGuide: imageSuggestions.map((item) => ({
+      title: item.title,
+      insertAfter: item.insertAfter,
+      guide: item.directShotGuide || item.description,
+      thumbnailCopy: item.markerGuide
+    })),
+    infoSummary: createPackageInfoSummary(form, contentType),
+    recommendedFor: createRecommendedFor(form, contentType),
+    faqItems,
+    hashtags,
+    finalChecklist: seoCheck?.items || [],
+    sponsorshipCheck: sponsorshipType ? `${sponsorshipType} 표시 확인` : "[협찬 여부 확인 필요]"
+  };
+};
+
 export function createFinalContent(
   form,
   selectedTopic,
@@ -2383,9 +2968,12 @@ export function createFinalContent(
   const tone = text(form.tone);
   const avoidWords = splitAvoidWords(form.avoid);
   const keywordPlan = createKeywordOptimizationPlan(form);
-  const resolvedOutline = normalizeOutlineSections(outlineSections);
-  const finalOutline =
-    resolvedOutline.length >= 3 ? resolvedOutline : createOutlineSections(form, selectedTopic, selectedTitle);
+  const resolvedOutlineItems = normalizeOutlineItems(outlineSections);
+  const finalOutlineItems =
+    resolvedOutlineItems.length >= 3
+      ? resolvedOutlineItems
+      : normalizeOutlineItems(createOutlineSections(form, selectedTopic, selectedTitle));
+  const finalOutline = finalOutlineItems.map((item) => item.heading);
   const openingSentenceCandidates = createOpeningSentenceCandidates(form);
   const ctaCandidates = createCtaCandidates(form);
   const selectedOpeningSentence =
@@ -2398,7 +2986,7 @@ export function createFinalContent(
   const hashtagGroups = createHashtagGroups(form);
   const hashtags = flattenHashtagGroups(hashtagGroups);
   const basePostBody = applyAvoidWords(
-    buildPostBody(form, selectedTopic, selectedTitle, finalOutline, {
+    buildPostBody(form, selectedTopic, selectedTitle, finalOutlineItems, {
       selectedOpeningSentence,
       selectedCtaSentence
     }),
@@ -2431,6 +3019,17 @@ export function createFinalContent(
     keywordOptimization,
     seoCheck
   );
+  const contentPackage = createContentPackage({
+    form,
+    selectedTopic,
+    selectedTitle,
+    outlineSections: finalOutline,
+    openingSentenceCandidates,
+    imageSuggestions,
+    hashtags,
+    seoCheck,
+    body: postBody
+  });
 
   return {
     outlineSections: finalOutline,
@@ -2444,7 +3043,8 @@ export function createFinalContent(
     seoCheck,
     imageSuggestions,
     strategyMemo,
-    keywordOptimization
+    keywordOptimization,
+    contentPackage
   };
 }
 

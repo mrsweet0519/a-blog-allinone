@@ -1,4 +1,6 @@
 import {
+  ArrowDown,
+  ArrowUp,
   Check,
   ChevronDown,
   CircleHelp,
@@ -50,6 +52,7 @@ const initialForm = {
   purchaseUrl: "",
   contactMethod: "",
   shippingInfo: "",
+  sponsorshipType: "",
   useEmoji: true,
   avoid: "",
   targetLengthOption: "1500",
@@ -78,6 +81,7 @@ const WRITING_PROFILE_FIELDS = [
   "purchaseUrl",
   "contactMethod",
   "shippingInfo",
+  "sponsorshipType",
   "targetLengthOption",
   "customTargetLength"
 ];
@@ -213,6 +217,11 @@ const FIELD_TOOLTIPS = {
     description: "상품형 글에서 구매 전 확인할 배송이나 교환 정보를 입력하세요.",
     example: "평일 오후 2시 전 주문 당일 출고, 단순 변심 교환 가능"
   },
+  sponsorshipType: {
+    title: "협찬 여부",
+    description: "직접 구매, 제품 제공, 식사권 제공처럼 표시해야 할 경제적 이해관계가 있을 때만 선택하세요.",
+    example: "직접 구매 / 제품 제공 / 식사권 제공"
+  },
   useEmoji: {
     title: "이모지 사용",
     description: "본문 첫머리에 가벼운 이모지를 넣을지 선택합니다.",
@@ -248,7 +257,8 @@ const emptyResult = {
   imageSuggestions: [],
   strategyMemo: null,
   seoCheck: null,
-  keywordOptimization: null
+  keywordOptimization: null,
+  contentPackage: null
 };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -288,16 +298,18 @@ const toOutlineItems = (items = []) =>
   items
     .map((item, index) => {
       if (typeof item === "string") {
-        return {
-          id: `outline-${index + 1}`,
-          heading: item,
-          selected: true
-        };
+      return {
+        id: `outline-${index + 1}`,
+        heading: item,
+        note: "",
+        selected: true
+      };
       }
 
       return {
         id: item.id || `outline-${index + 1}`,
         heading: item.heading || "",
+        note: item.note || item.memo || "",
         selected: item.selected !== false
       };
     })
@@ -309,6 +321,17 @@ const getSelectedOutlineHeadings = (outlineSections = []) =>
     .filter((item) => item.selected !== false)
     .map((item) => item.heading.trim())
     .filter(Boolean)
+    .slice(0, OUTLINE_MAX);
+
+const getSelectedOutlineItems = (outlineSections = []) =>
+  outlineSections
+    .filter((item) => item.selected !== false)
+    .map((item) => ({
+      id: item.id,
+      heading: String(item.heading || "").trim(),
+      note: String(item.note || "").trim()
+    }))
+    .filter((item) => item.heading)
     .slice(0, OUTLINE_MAX);
 
 const normalizeResult = (storedResult = {}) => ({
@@ -329,7 +352,8 @@ const normalizeResult = (storedResult = {}) => ({
   selectedCtaSentence: storedResult.selectedCtaSentence || "",
   hashtagGroups: storedResult.hashtagGroups || [],
   seoCheck: storedResult.seoCheck || null,
-  imageSuggestions: storedResult.imageSuggestions || []
+  imageSuggestions: storedResult.imageSuggestions || [],
+  contentPackage: storedResult.contentPackage || null
 });
 
 const stripImageInsertionMarkers = (body = "") =>
@@ -341,10 +365,21 @@ const stripImageInsertionMarkers = (body = "") =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
+const stripMarkdownHeadingStars = (body = "") =>
+  String(body || "")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^\s*\*\*(.+?)\*\*\s*$/u, "$1")
+        .replace(/^\s*\*\s+/u, "")
+        .trimEnd()
+    )
+    .join("\n");
+
 const normalizeClipboardBody = (body = "", { includeImageMarkers = false } = {}) => {
   const source = includeImageMarkers ? String(body || "") : stripImageInsertionMarkers(body);
 
-  return source
+  return stripMarkdownHeadingStars(source)
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -398,7 +433,11 @@ export default function ContentMaker() {
     () => getSelectedOutlineHeadings(result.outlineSections),
     [result.outlineSections]
   );
-  const hasOutline = selectedOutlineHeadings.length >= OUTLINE_MIN && selectedOutlineHeadings.length <= OUTLINE_MAX;
+  const selectedOutlineItems = useMemo(
+    () => getSelectedOutlineItems(result.outlineSections),
+    [result.outlineSections]
+  );
+  const hasOutline = selectedOutlineItems.length >= OUTLINE_MIN && selectedOutlineItems.length <= OUTLINE_MAX;
   const hasWritingChoices = Boolean(result.selectedOpeningSentence && result.selectedCtaSentence);
   const hasFinal = Boolean(result.body && result.hashtags.length > 0);
   const hasWritingProfiles = writingProfiles.length > 0;
@@ -450,7 +489,8 @@ export default function ContentMaker() {
         "strengths",
         "emphasisPoint",
         "ctaDirection",
-        "audienceType"
+        "audienceType",
+        "sponsorshipType"
       ].includes(key)
     ) {
       setResult((current) => ({
@@ -466,7 +506,8 @@ export default function ContentMaker() {
         imageSuggestions: [],
         strategyMemo: null,
         seoCheck: null,
-        keywordOptimization: null
+        keywordOptimization: null,
+        contentPackage: null
       }));
       return;
     }
@@ -544,7 +585,8 @@ export default function ContentMaker() {
       imageSuggestions: [],
       strategyMemo: null,
       seoCheck: null,
-      keywordOptimization: null
+      keywordOptimization: null,
+      contentPackage: null
     }));
     setEditing(false);
     setStatus("generated");
@@ -580,7 +622,8 @@ export default function ContentMaker() {
       imageSuggestions: [],
       strategyMemo: null,
       seoCheck: null,
-      keywordOptimization: null
+      keywordOptimization: null,
+      contentPackage: null
     }));
     setStatus("generated");
   };
@@ -601,7 +644,8 @@ export default function ContentMaker() {
       imageSuggestions: [],
       strategyMemo: null,
       seoCheck: null,
-      keywordOptimization: null
+      keywordOptimization: null,
+      contentPackage: null
     }));
     setEditing(false);
     setStatus("generated");
@@ -649,7 +693,8 @@ export default function ContentMaker() {
       imageSuggestions: [],
       strategyMemo: null,
       seoCheck: null,
-      keywordOptimization: null
+      keywordOptimization: null,
+      contentPackage: null
     }));
     setStatus("generated");
   };
@@ -666,12 +711,12 @@ export default function ContentMaker() {
         ...form,
         selectedTopic: result.selectedTopic,
         selectedTitle: result.selectedTitle,
-        outlineSections: selectedOutlineHeadings,
+        outlineSections: selectedOutlineItems,
         selectedOpeningSentence: result.selectedOpeningSentence,
         selectedCtaSentence: result.selectedCtaSentence
       },
       () =>
-        createFinalContent(form, result.selectedTopic, result.selectedTitle, selectedOutlineHeadings, {
+        createFinalContent(form, result.selectedTopic, result.selectedTitle, selectedOutlineItems, {
           selectedOpeningSentence: result.selectedOpeningSentence,
           selectedCtaSentence: result.selectedCtaSentence
         })
@@ -837,7 +882,8 @@ export default function ContentMaker() {
       imageSuggestions: [],
       strategyMemo: null,
       seoCheck: null,
-      keywordOptimization: null
+      keywordOptimization: null,
+      contentPackage: null
     }));
     setDraftId(null);
     setEditing(false);
@@ -855,6 +901,7 @@ export default function ContentMaker() {
           {
             id: `outline-${Date.now()}`,
             heading: `새 소제목 ${current.outlineSections.length + 1}`,
+            note: "",
             selected: true
           }
         ],
@@ -864,7 +911,8 @@ export default function ContentMaker() {
         imageSuggestions: [],
         strategyMemo: null,
         seoCheck: null,
-        keywordOptimization: null
+        keywordOptimization: null,
+        contentPackage: null
       };
     });
     setDraftId(null);
@@ -890,7 +938,39 @@ export default function ContentMaker() {
         imageSuggestions: [],
         strategyMemo: null,
         seoCheck: null,
-        keywordOptimization: null
+        keywordOptimization: null,
+        contentPackage: null
+      };
+    });
+    setDraftId(null);
+    setEditing(false);
+    setStatus("generated");
+  };
+
+  const moveOutlineSection = (id, direction) => {
+    setResult((current) => {
+      const currentIndex = current.outlineSections.findIndex((item) => item.id === id);
+      const nextIndex = currentIndex + direction;
+
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= current.outlineSections.length) {
+        return current;
+      }
+
+      const nextOutline = [...current.outlineSections];
+      const [movedItem] = nextOutline.splice(currentIndex, 1);
+      nextOutline.splice(nextIndex, 0, movedItem);
+
+      return {
+        ...current,
+        outlineSections: nextOutline,
+        body: "",
+        hashtags: [],
+        hashtagGroups: [],
+        imageSuggestions: [],
+        strategyMemo: null,
+        seoCheck: null,
+        keywordOptimization: null,
+        contentPackage: null
       };
     });
     setDraftId(null);
@@ -908,7 +988,8 @@ export default function ContentMaker() {
       imageSuggestions: [],
       strategyMemo: null,
       seoCheck: null,
-      keywordOptimization: null
+      keywordOptimization: null,
+      contentPackage: null
     }));
     setDraftId(null);
     setEditing(false);
@@ -1416,6 +1497,21 @@ export default function ContentMaker() {
                     </label>
                   </div>
 
+                  <label className="block">
+                    <FieldLabel tooltip={FIELD_TOOLTIPS.sponsorshipType}>협찬 여부</FieldLabel>
+                    <select
+                      value={form.sponsorshipType}
+                      onChange={(event) => updateForm("sponsorshipType", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                    >
+                      <option value="">미입력 - 검수표에 확인 필요 표시</option>
+                      <option value="직접 구매">직접 구매</option>
+                      <option value="제품 제공">제품 제공</option>
+                      <option value="식사권 제공">식사권 제공</option>
+                      <option value="협찬/체험단">협찬/체험단</option>
+                    </select>
+                  </label>
+
                   <label className="flex min-h-12 items-center justify-between gap-4 rounded-md border border-line bg-paper px-3">
                     <FieldLabel tooltip={FIELD_TOOLTIPS.useEmoji}>이모지 사용</FieldLabel>
                     <input
@@ -1577,7 +1673,7 @@ export default function ContentMaker() {
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">2. 선택한 글 방향 기준 제목 4개</h4>
+                <h4 className="text-sm font-bold text-ink/70">2. 선택한 글 방향 기준 제목 5개</h4>
                 <button
                   type="button"
                   onClick={generateTitles}
@@ -1616,6 +1712,7 @@ export default function ContentMaker() {
                 onChange={updateOutlineSection}
                 onAdd={addOutlineSection}
                 onDelete={deleteOutlineSection}
+                onMove={moveOutlineSection}
               />
             </div>
 
@@ -1648,7 +1745,7 @@ export default function ContentMaker() {
                   disabled={!hasOutline || !hasWritingChoices || status === "generating"}
                   className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
                 >
-                  본문 생성
+                  이 개요로 본문 생성
                 </button>
               </div>
 
@@ -1793,6 +1890,130 @@ function FirstUseGuide({ compact = false, onFillExample }) {
   );
 }
 
+const isBodyDisplayHeading = (paragraph = "") => {
+  const value = String(paragraph || "").trim();
+
+  if (!value) return false;
+  if (/^\[여기에 이미지 \d+을 넣어주세요/u.test(value)) return false;
+  if (/^(Q\.|A\.|[-•]|\d+\.)/u.test(value)) return false;
+  if (value.includes(":")) return false;
+
+  return Array.from(value).length <= 42 && !/[.!?。]$/u.test(value);
+};
+
+function BodyPreview({ body = "" }) {
+  const paragraphs = stripMarkdownHeadingStars(body)
+    .split(/\n{2,}/u)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="mt-2 max-h-[560px] overflow-auto rounded-md border border-line bg-paper p-4 text-sm leading-7 text-ink/80">
+      {paragraphs.map((paragraph, index) => {
+        const isImageMarker = /^\[여기에 이미지 \d+을 넣어주세요/u.test(paragraph);
+
+        if (isBodyDisplayHeading(paragraph)) {
+          return (
+            <p key={`${paragraph}-${index}`} className="mt-5 first:mt-0 text-base font-bold text-ink">
+              {paragraph}
+            </p>
+          );
+        }
+
+        return (
+          <p
+            key={`${paragraph}-${index}`}
+            className={`mt-3 whitespace-pre-wrap first:mt-0 ${
+              isImageMarker
+                ? "rounded-md border border-moss/20 bg-white px-3 py-2 text-xs font-semibold text-moss"
+                : ""
+            }`}
+          >
+            {paragraph}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function ContentPackagePanel({ packageData }) {
+  if (!packageData) return null;
+
+  const checklist = packageData.finalChecklist || [];
+
+  return (
+    <section className="rounded-md border border-line bg-white p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs font-bold text-moss">원고 패키지</p>
+          <h5 className="mt-1 text-base font-bold text-ink">2. SEO/AEO/GEO 생성 결과</h5>
+        </div>
+        <span className="rounded-md bg-paper px-3 py-1 text-xs font-bold text-ink/60">
+          {packageData.searchIntentAnalysis?.contentType}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <PackageBlock title="메인 키워드" items={[packageData.mainKeyword]} />
+        <PackageBlock title="보조 키워드 5개" items={packageData.secondaryKeywords} />
+        <PackageBlock title="검색 의도 분석" items={[packageData.searchIntentAnalysis?.summary]} />
+        <PackageBlock
+          title="홈피드 클릭 포인트"
+          items={[
+            packageData.homeFeedClickPoint?.situationTitle,
+            packageData.homeFeedClickPoint?.thumbnailCopy,
+            packageData.homeFeedClickPoint?.saveAsset
+          ]}
+        />
+        <PackageBlock title="제목 후보 5개" items={packageData.titleCandidates} />
+        <PackageBlock title="최종 추천 제목" items={[packageData.finalRecommendedTitle]} />
+        <PackageBlock title="첫 문장 후보 3개" items={packageData.openingSentenceCandidates} />
+        <PackageBlock
+          title="사진 배치 가이드"
+          items={(packageData.photoGuide || []).map((item) => `${item.title}: ${item.insertAfter}`)}
+        />
+        <PackageBlock
+          title="업체/상품 정보 정리"
+          items={(packageData.infoSummary || []).map(([label, value]) => `${label}: ${value}`)}
+        />
+        <PackageBlock title="이런 분께 추천해요" items={packageData.recommendedFor} />
+        <PackageBlock
+          title="FAQ 3개"
+          items={(packageData.faqItems || []).map((item) => `Q. ${item.question} A. ${item.answer}`)}
+        />
+        <PackageBlock title="해시태그 10~15개" items={[packageData.hashtags?.join(" ")]} />
+      </div>
+
+      <div className="mt-3 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm font-semibold text-[#7a5a1e]">
+        {packageData.sponsorshipCheck}
+      </div>
+      {checklist.length > 0 && (
+        <p className="mt-2 text-xs font-semibold text-ink/55">
+          최종 검수표 {checklist.filter((item) => item.passed).length}/{checklist.length}개 통과
+        </p>
+      )}
+    </section>
+  );
+}
+
+function PackageBlock({ title, items = [] }) {
+  const displayItems = items.map((item) => String(item || "").trim()).filter(Boolean);
+
+  return (
+    <div className="rounded-md border border-line bg-paper p-3">
+      <p className="text-xs font-bold text-ink/55">{title}</p>
+      <ul className="mt-2 space-y-1 text-sm leading-6 text-ink/75">
+        {displayItems.length > 0 ? (
+          displayItems.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)
+        ) : (
+          <li>[확인 필요]</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
 function FinalResultPanel({
   result,
   editing,
@@ -1821,21 +2042,24 @@ function FinalResultPanel({
         )}
       </div>
 
+      <ContentPackagePanel packageData={result.contentPackage} />
+
       <div>
-        <h5 className="text-sm font-bold text-ink/70">2. 게시용 본문</h5>
-        <textarea
-          value={result.body}
-          onChange={(event) => onBodyChange(event.target.value)}
-          readOnly={!editing}
-          rows={15}
-          className={`focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-7 whitespace-pre-wrap ${
-            editing ? "bg-white" : ""
-          }`}
-        />
+        <h5 className="text-sm font-bold text-ink/70">3. 블로그 본문</h5>
+        {editing ? (
+          <textarea
+            value={result.body}
+            onChange={(event) => onBodyChange(event.target.value)}
+            rows={15}
+            className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-7 whitespace-pre-wrap"
+          />
+        ) : (
+          <BodyPreview body={result.body} />
+        )}
       </div>
 
       <div>
-        <h5 className="text-sm font-bold text-ink/70">3. 해시태그 그룹</h5>
+        <h5 className="text-sm font-bold text-ink/70">4. 해시태그 그룹</h5>
         {editing ? (
           <textarea
             value={result.hashtags.join(" ")}
@@ -1851,7 +2075,7 @@ function FinalResultPanel({
       <SeoAeoCheckPanel seoCheck={result.seoCheck} />
 
       <div>
-        <h5 className="text-sm font-bold text-ink/70">5. 복사 옵션</h5>
+        <h5 className="text-sm font-bold text-ink/70">6. 복사 옵션</h5>
         <div className="mt-2 grid gap-2 lg:grid-cols-3">
           <button
             type="button"
@@ -1990,7 +2214,14 @@ const SEO_CHECK_LABELS = {
   "faq-question": "FAQ 또는 질문형 답변 구조가 포함됨",
   overclaim: "과장 표현 없음",
   cta: "마무리 CTA가 자연스럽게 들어감",
-  avoid: "금지어 없음"
+  avoid: "금지어 없음",
+  "unverified-info-marked": "확인되지 않은 정보 표시 여부",
+  "sponsorship-disclosure": "협찬/체험단 표시 여부",
+  "experience-source": "실제 경험 기반 여부",
+  "photo-guide": "사진 가이드 포함 여부",
+  "info-summary": "업체/상품 정보 정리 여부",
+  "hashtag-count": "해시태그 10~15개 포함 여부",
+  "heading-stars-removed": "소제목 별표 제거 여부"
 };
 
 const createSeoChecklist = (seoCheck) => {
@@ -2029,7 +2260,7 @@ function SeoAeoCheckPanel({ seoCheck }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-bold text-moss">글 구성 체크</p>
-          <h5 className="mt-1 text-base font-bold text-ink">4. 블로그 글 구조 점검</h5>
+          <h5 className="mt-1 text-base font-bold text-ink">5. 최종 검수표</h5>
           <p className="mt-1 text-sm leading-6 text-ink/65">
             제목, 첫 문단, 소제목, 키워드, 마무리 문장이 검색자가 궁금해할 내용에 맞게 구성됐는지 확인합니다.
           </p>
@@ -2235,7 +2466,7 @@ function WritingChoiceGroup({ title, items, selected, emptyText, onSelect }) {
   );
 }
 
-function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDelete }) {
+function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDelete, onMove }) {
   const isValid = selectedCount >= OUTLINE_MIN && selectedCount <= OUTLINE_MAX;
   const canAdd = items.length > 0 && items.length < OUTLINE_MAX;
 
@@ -2293,6 +2524,26 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
                   className="focus-ring min-h-10 flex-1 rounded-md border border-line bg-white px-3 text-sm font-semibold"
                   placeholder={`소제목 ${index + 1}`}
                 />
+                <div className="grid grid-cols-2 gap-1 sm:w-20">
+                  <button
+                    type="button"
+                    onClick={() => onMove(item.id, -1)}
+                    disabled={index === 0}
+                    className="focus-ring inline-flex min-h-10 items-center justify-center rounded-md border border-line bg-white text-ink/55 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/25"
+                    aria-label="소제목 위로 이동"
+                  >
+                    <ArrowUp size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onMove(item.id, 1)}
+                    disabled={index === items.length - 1}
+                    className="focus-ring inline-flex min-h-10 items-center justify-center rounded-md border border-line bg-white text-ink/55 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/25"
+                    aria-label="소제목 아래로 이동"
+                  >
+                    <ArrowDown size={14} aria-hidden="true" />
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => onDelete(item.id)}
@@ -2303,6 +2554,13 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
                   삭제
                 </button>
               </div>
+              <textarea
+                value={item.note || ""}
+                onChange={(event) => onChange(item.id, "note", event.target.value)}
+                rows={2}
+                className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                placeholder="이 소제목에 반영할 간단 메모를 입력하세요."
+              />
             </div>
           );
         })}

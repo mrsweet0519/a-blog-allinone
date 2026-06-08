@@ -7,6 +7,15 @@ export const STORAGE_KEYS = {
 
 export const makerOptions = {
   categories: [
+    "정보글",
+    "후기형",
+    "비교형",
+    "맛집 리뷰",
+    "카페 리뷰",
+    "아이와 갈만한 곳",
+    "상품 리뷰",
+    "생활용품/계절템",
+    "체험단/협찬 리뷰",
     "피부관리샵",
     "스포츠용품",
     "육아/도서",

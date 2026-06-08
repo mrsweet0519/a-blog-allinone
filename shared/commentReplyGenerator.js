@@ -1,3 +1,5 @@
+import { ensureSentence, normalizeTone, softenForTone } from "./toneEngine.js";
+
 export const COMMENT_TYPES = [
   "구매의사형",
   "기대감표현형",
@@ -217,6 +219,13 @@ const TYPE_TERMS = {
 };
 
 const text = (value) => String(value ?? "").trim();
+
+const polishReplyForTone = (reply = "", tone = "친근한") => {
+  const normalizedTone = normalizeTone(tone);
+  const polished = softenForTone(reply, normalizedTone);
+
+  return ensureSentence(polished, normalizedTone).replace(/\s+/g, " ").trim();
+};
 
 const normalizeSpaces = (value) => text(value).replace(/\s+/g, " ");
 
@@ -1474,7 +1483,7 @@ export function createCommentReplyForOne(form = {}, comment = {}, previousReplie
     mainKeyword,
     useKeyword
   });
-  const reply = chooseReply(candidates, previousForChoice, seed);
+  const reply = polishReplyForTone(chooseReply(candidates, previousForChoice, seed), form.tone);
   const forbiddenWordsFound = findForbiddenWords(reply, forbiddenWords);
   const duplicateRisk = assessDuplicateRisk(reply, previousForChoice);
   const needsReview =
@@ -1663,7 +1672,7 @@ export function generateContextualCaptureReply(comment = {}, context = {}, previ
     options.regenerate && normalizedComment.reply
       ? unique([normalizedComment.reply, ...previousReplies])
       : previousReplies;
-  const reply = chooseReply(candidates, previousForChoice, seed);
+  const reply = polishReplyForTone(chooseReply(candidates, previousForChoice, seed), context.tone);
   const forbiddenWordsFound = findForbiddenWords(reply, forbiddenWords);
   const duplicateRisk = assessDuplicateRisk(reply, previousForChoice);
   const needsReview =
