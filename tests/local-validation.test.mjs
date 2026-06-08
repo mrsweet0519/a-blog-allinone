@@ -246,6 +246,38 @@ assert.ok(/했어요|더라고요|같아요|좋겠어요/u.test(betaProductConte
 assert.equal(betaProductContent.contentPackage.faqItems.length, 3);
 assert.ok(betaProductContent.seoCheck.items.find((item) => item.id === "heading-stars-removed").passed);
 
+const uxEditedTopicForm = {
+  keyword: "수분크림 후기, 피부 보습, 데일리 크림",
+  category: "상품 리뷰",
+  brandName: "",
+  region: "",
+  goal: "정보 전달",
+  audienceType: "인플루언서/수익형",
+  tone: "친근한",
+  strengths: "사용감 확인, 보습감, 데일리 루틴",
+  emphasisPoint: "건조한 피부에 맞는 수분크림 선택 기준",
+  ctaDirection: "필요한 기준을 천천히 비교해보세요.",
+  useEmoji: false,
+  avoid: "효과 보장, 과장 표현",
+  targetLengthOption: "1500",
+  customTargetLength: "1500"
+};
+const uxEditedTopic = "건조한 피부에 수분크림을 고를 때 확인한 기준";
+const uxEditedTitles = createTitleCandidates(uxEditedTopicForm, uxEditedTopic);
+assert.equal(uxEditedTitles.length, 5);
+assert.ok(uxEditedTitles[0].includes("수분크림 후기"));
+const uxEditedOutline = createOutlineSections(uxEditedTopicForm, uxEditedTopic, uxEditedTitles[0]);
+const uxEditedContent = createFinalContent(
+  uxEditedTopicForm,
+  uxEditedTopic,
+  uxEditedTitles[0],
+  uxEditedOutline
+);
+assert.equal(uxEditedContent.strategyMemo.selectedTopic, uxEditedTopic);
+assert.equal(uxEditedContent.contentPackage.finalRecommendedTitle, uxEditedTitles[0]);
+assert.ok(uxEditedContent.body.includes(uxEditedOutline[0]));
+assert.ok(!/(^|\n)\s*\*\s+|(^|\n)\s*\*\*.+\*\*/u.test(uxEditedContent.body));
+
 const betaComparisonForm = {
   ...betaProductReviewForm,
   category: "비교형",

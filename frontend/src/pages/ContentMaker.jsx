@@ -23,8 +23,7 @@ import {
   createOpeningSentenceCandidates,
   createOutlineSections,
   createTitleCandidates,
-  createTopicRecommendations,
-  getTargetLengthRange
+  createTopicRecommendations
 } from "../lib/contentGenerator.js";
 import { isBackendApiEnabled, postBackend } from "../lib/backendApi.js";
 import {
@@ -61,6 +60,7 @@ const initialForm = {
 
 const OUTLINE_MIN = 3;
 const OUTLINE_MAX = 6;
+const TOPIC_MAX = 5;
 
 const WRITING_PROFILE_FIELDS = [
   "keyword",
@@ -229,13 +229,33 @@ const FIELD_TOOLTIPS = {
   }
 };
 
-const TITLE_TYPES = ["정보형", "후기형", "비교형", "선택형", "클릭형"];
+const TITLE_TYPES = ["검색형", "후기형", "비교형", "선택형", "클릭형"];
 const TITLE_CANDIDATE_LABELS = TITLE_TYPES.map((type) => `${type} 제목`);
+const PRIMARY_TITLE_INDEXES = [0, 1, 4];
 
 const inferTitleType = (titles = [], selectedTitle = "") => {
   const index = titles.indexOf(selectedTitle);
 
   return index >= 0 ? TITLE_TYPES[index] || "미분류" : "";
+};
+
+const resetAfterTopicChange = {
+  titles: [],
+  selectedTitle: "",
+  selectedTitleType: "",
+  outlineSections: [],
+  openingSentenceCandidates: [],
+  selectedOpeningSentence: "",
+  ctaCandidates: [],
+  selectedCtaSentence: "",
+  body: "",
+  hashtags: [],
+  hashtagGroups: [],
+  imageSuggestions: [],
+  strategyMemo: null,
+  seoCheck: null,
+  keywordOptimization: null,
+  contentPackage: null
 };
 
 const emptyResult = {
@@ -423,7 +443,6 @@ export default function ContentMaker() {
   const [profileName, setProfileName] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const range = useMemo(() => getTargetLengthRange(form), [form]);
   const isFormReady = useMemo(() => isReadyForm(form), [form]);
   const hasTopics = result.topics.length > 0;
   const hasSelectedTopic = Boolean(result.selectedTopic);
@@ -568,26 +587,53 @@ export default function ContentMaker() {
   };
 
   const selectTopic = (topic) => {
+    const selectedTopic = String(topic || "");
+
+    if (!selectedTopic.trim()) return;
+
     setResult((current) => ({
       ...current,
-      selectedTopic: topic,
-      titles: [],
-      selectedTitle: "",
-      selectedTitleType: "",
-      outlineSections: [],
-      openingSentenceCandidates: [],
-      selectedOpeningSentence: "",
-      ctaCandidates: [],
-      selectedCtaSentence: "",
-      body: "",
-      hashtags: [],
-      hashtagGroups: [],
-      imageSuggestions: [],
-      strategyMemo: null,
-      seoCheck: null,
-      keywordOptimization: null,
-      contentPackage: null
+      selectedTopic,
+      ...resetAfterTopicChange
     }));
+    setEditing(false);
+    setStatus("generated");
+  };
+
+  const updateTopicCandidate = (index, value) => {
+    setResult((current) => {
+      const previousTopic = current.topics[index] || "";
+      const topics = current.topics.map((topic, topicIndex) =>
+        topicIndex === index ? value : topic
+      );
+      const isSelectedTopic = current.selectedTopic === previousTopic;
+      const selectedTopic = isSelectedTopic ? (value.trim() ? value : "") : current.selectedTopic;
+
+      return {
+        ...current,
+        topics,
+        selectedTopic,
+        ...(isSelectedTopic ? resetAfterTopicChange : {})
+      };
+    });
+    setDraftId(null);
+    setEditing(false);
+    setStatus("generated");
+  };
+
+  const addTopicCandidate = () => {
+    setResult((current) => {
+      if (current.topics.length >= TOPIC_MAX) return current;
+
+      return {
+        ...current,
+        topics: [
+          ...current.topics,
+          `새 글 방향 ${current.topics.length + 1}`
+        ]
+      };
+    });
+    setDraftId(null);
     setEditing(false);
     setStatus("generated");
   };
@@ -1663,17 +1709,20 @@ export default function ContentMaker() {
           )}
 
           <div className="mt-5 space-y-6">
-            <SelectableList
+            <EditableTopicList
               title="1. 글 방향 3개"
               items={result.topics}
               selected={result.selectedTopic}
               emptyText="입력값을 채우고 글 방향 생성을 누르면 후보가 표시됩니다."
+              canAdd={result.topics.length > 0 && result.topics.length < TOPIC_MAX}
+              onChange={updateTopicCandidate}
               onSelect={selectTopic}
+              onAdd={addTopicCandidate}
             />
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">2. 선택한 글 방향 기준 제목 5개</h4>
+                <h4 className="text-sm font-bold text-ink/70">2. 선택한 글 방향 기준 제목 고르기</h4>
                 <button
                   type="button"
                   onClick={generateTitles}
@@ -1683,11 +1732,9 @@ export default function ContentMaker() {
                   제목 생성
                 </button>
               </div>
-              <SelectableList
+              <TitleCandidateList
                 items={result.titles}
                 selected={result.selectedTitle}
-                itemTypes={TITLE_TYPES}
-                itemLabels={TITLE_CANDIDATE_LABELS}
                 emptyText="글 방향을 하나 선택한 뒤 제목 생성을 누르세요."
                 onSelect={selectTitle}
               />
@@ -1695,20 +1742,26 @@ export default function ContentMaker() {
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">3. 목표 글자수 맞춤 개요 소제목</h4>
+                <div>
+                  <h4 className="text-sm font-bold text-ink/70">3. 본문 구성 수정</h4>
+                  <p className="mt-1 text-xs leading-5 text-ink/55">
+                    글에 들어갈 순서를 직접 바꿀 수 있어요. 필요 없는 항목은 삭제하고,
+                    추가하고 싶은 내용은 메모에 적어주세요.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={generateOutline}
                   disabled={!hasSelectedTitle || status === "generating"}
                   className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
                 >
-                  개요 생성
+                  글 구성 만들기
                 </button>
               </div>
               <OutlineEditor
                 items={result.outlineSections}
                 selectedCount={selectedOutlineHeadings.length}
-                emptyText="제목을 하나 선택한 뒤 개요 생성을 누르세요."
+                emptyText="제목을 하나 선택한 뒤 글 구성 만들기를 누르세요."
                 onChange={updateOutlineSection}
                 onAdd={addOutlineSection}
                 onDelete={deleteOutlineSection}
@@ -1723,14 +1776,14 @@ export default function ContentMaker() {
                   title="첫 문장 후보"
                   items={result.openingSentenceCandidates}
                   selected={result.selectedOpeningSentence}
-                  emptyText="개요를 생성하면 첫 문장 후보가 표시됩니다."
+                  emptyText="글 구성을 만들면 첫 문장 후보가 표시됩니다."
                   onSelect={(value) => selectWritingChoice("selectedOpeningSentence", value)}
                 />
                 <WritingChoiceGroup
                   title="CTA 후보"
                   items={result.ctaCandidates}
                   selected={result.selectedCtaSentence}
-                  emptyText="개요를 생성하면 CTA 후보가 표시됩니다."
+                  emptyText="글 구성을 만들면 CTA 후보가 표시됩니다."
                   onSelect={(value) => selectWritingChoice("selectedCtaSentence", value)}
                 />
               </div>
@@ -1745,13 +1798,13 @@ export default function ContentMaker() {
                   disabled={!hasOutline || !hasWritingChoices || status === "generating"}
                   className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
                 >
-                  이 개요로 본문 생성
+                  이 구성으로 본문 만들기
                 </button>
               </div>
 
               {!hasFinal && (
                 <div className="mt-2 grid min-h-[220px] place-items-center rounded-lg border border-dashed border-line bg-paper p-6 text-center text-sm text-ink/60">
-                  개요 소제목과 첫 문장, CTA를 선택하면 네이버에 옮겨 쓸 게시용 본문을 생성할 수 있습니다.
+                  글 구성과 첫 문장, CTA를 선택하면 네이버에 옮겨 쓸 게시용 본문을 생성할 수 있습니다.
                 </div>
               )}
 
@@ -1760,7 +1813,6 @@ export default function ContentMaker() {
                   <FinalResultPanel
                     result={result}
                     editing={editing}
-                    range={range}
                     onCopy={copyResult}
                     onImageChange={updateImageSuggestion}
                     onTitleChange={(value) =>
@@ -1937,62 +1989,69 @@ function BodyPreview({ body = "" }) {
   );
 }
 
-function ContentPackagePanel({ packageData }) {
+function DetailedAnalysisPanel({ packageData }) {
   if (!packageData) return null;
 
-  const checklist = packageData.finalChecklist || [];
-
   return (
-    <section className="rounded-md border border-line bg-white p-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-xs font-bold text-moss">원고 패키지</p>
-          <h5 className="mt-1 text-base font-bold text-ink">2. SEO/AEO/GEO 생성 결과</h5>
-        </div>
-        <span className="rounded-md bg-paper px-3 py-1 text-xs font-bold text-ink/60">
-          {packageData.searchIntentAnalysis?.contentType}
-        </span>
-      </div>
+    <details className="rounded-md border border-line bg-white p-4">
+      <summary className="cursor-pointer text-sm font-bold text-ink/70">
+        8. 상세 분석 보기
+      </summary>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <PackageBlock title="메인 키워드" items={[packageData.mainKeyword]} />
-        <PackageBlock title="보조 키워드 5개" items={packageData.secondaryKeywords} />
-        <PackageBlock title="검색 의도 분석" items={[packageData.searchIntentAnalysis?.summary]} />
+        <PackageBlock title="보조 키워드" items={packageData.secondaryKeywords} />
+        <PackageBlock title="사람들이 궁금해할 내용" items={[packageData.searchIntentAnalysis?.summary]} />
         <PackageBlock
-          title="홈피드 클릭 포인트"
+          title="클릭을 높이는 포인트"
           items={[
             packageData.homeFeedClickPoint?.situationTitle,
             packageData.homeFeedClickPoint?.thumbnailCopy,
             packageData.homeFeedClickPoint?.saveAsset
           ]}
         />
-        <PackageBlock title="제목 후보 5개" items={packageData.titleCandidates} />
-        <PackageBlock title="최종 추천 제목" items={[packageData.finalRecommendedTitle]} />
-        <PackageBlock title="첫 문장 후보 3개" items={packageData.openingSentenceCandidates} />
-        <PackageBlock
-          title="사진 배치 가이드"
-          items={(packageData.photoGuide || []).map((item) => `${item.title}: ${item.insertAfter}`)}
-        />
+        <PackageBlock title="제목 후보 전체" items={packageData.titleCandidates} />
+        <PackageBlock title="첫 문장 후보" items={packageData.openingSentenceCandidates} />
         <PackageBlock
           title="업체/상품 정보 정리"
           items={(packageData.infoSummary || []).map(([label, value]) => `${label}: ${value}`)}
         />
-        <PackageBlock title="이런 분께 추천해요" items={packageData.recommendedFor} />
-        <PackageBlock
-          title="FAQ 3개"
-          items={(packageData.faqItems || []).map((item) => `Q. ${item.question} A. ${item.answer}`)}
-        />
-        <PackageBlock title="해시태그 10~15개" items={[packageData.hashtags?.join(" ")]} />
       </div>
+    </details>
+  );
+}
 
-      <div className="mt-3 rounded-md border border-amber/30 bg-amber/10 px-3 py-2 text-sm font-semibold text-[#7a5a1e]">
-        {packageData.sponsorshipCheck}
+function ResultListPanel({ title, items = [], emptyText = "[확인 필요]" }) {
+  const displayItems = items.map((item) => String(item || "").trim()).filter(Boolean);
+
+  return (
+    <section className="rounded-md border border-line bg-white p-4">
+      <h5 className="text-sm font-bold text-ink/70">{title}</h5>
+      <ul className="mt-2 space-y-2 text-sm leading-6 text-ink/75">
+        {displayItems.length > 0 ? (
+          displayItems.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)
+        ) : (
+          <li>{emptyText}</li>
+        )}
+      </ul>
+    </section>
+  );
+}
+
+function FaqPanel({ items = [] }) {
+  if (!items.length) return null;
+
+  return (
+    <section className="rounded-md border border-line bg-white p-4">
+      <h5 className="text-sm font-bold text-ink/70">6. FAQ</h5>
+      <div className="mt-2 space-y-3">
+        {items.map((item, index) => (
+          <div key={`${item.question}-${index}`} className="rounded-md border border-line bg-paper p-3">
+            <p className="text-sm font-bold text-ink/75">Q. {item.question}</p>
+            <p className="mt-1 text-sm leading-6 text-ink/65">A. {item.answer}</p>
+          </div>
+        ))}
       </div>
-      {checklist.length > 0 && (
-        <p className="mt-2 text-xs font-semibold text-ink/55">
-          최종 검수표 {checklist.filter((item) => item.passed).length}/{checklist.length}개 통과
-        </p>
-      )}
     </section>
   );
 }
@@ -2017,13 +2076,14 @@ function PackageBlock({ title, items = [] }) {
 function FinalResultPanel({
   result,
   editing,
-  range,
   onCopy,
   onImageChange,
   onTitleChange,
   onBodyChange,
   onHashtagsChange
 }) {
+  const packageData = result.contentPackage;
+
   return (
     <div className="mt-5 space-y-5 border-t border-line pt-5">
       <div className="rounded-md border border-line bg-white p-4">
@@ -2042,10 +2102,8 @@ function FinalResultPanel({
         )}
       </div>
 
-      <ContentPackagePanel packageData={result.contentPackage} />
-
       <div>
-        <h5 className="text-sm font-bold text-ink/70">3. 블로그 본문</h5>
+        <h5 className="text-sm font-bold text-ink/70">2. 블로그 본문</h5>
         {editing ? (
           <textarea
             value={result.body}
@@ -2059,7 +2117,7 @@ function FinalResultPanel({
       </div>
 
       <div>
-        <h5 className="text-sm font-bold text-ink/70">4. 해시태그 그룹</h5>
+        <h5 className="text-sm font-bold text-ink/70">3. 해시태그</h5>
         {editing ? (
           <textarea
             value={result.hashtags.join(" ")}
@@ -2072,10 +2130,18 @@ function FinalResultPanel({
         )}
       </div>
 
-      <SeoAeoCheckPanel seoCheck={result.seoCheck} />
+      <ImageSuggestionList items={result.imageSuggestions} editing={editing} onChange={onImageChange} />
+
+      <ResultListPanel title="5. 이런 분께 추천해요" items={packageData?.recommendedFor || []} />
+
+      <FaqPanel items={packageData?.faqItems || []} />
+
+      <BlogStructureCheckPanel seoCheck={result.seoCheck} />
+
+      <DetailedAnalysisPanel packageData={packageData} />
 
       <div>
-        <h5 className="text-sm font-bold text-ink/70">6. 복사 옵션</h5>
+        <h5 className="text-sm font-bold text-ink/70">복사하기</h5>
         <div className="mt-2 grid gap-2 lg:grid-cols-3">
           <button
             type="button"
@@ -2104,9 +2170,6 @@ function FinalResultPanel({
         </div>
       </div>
 
-      <ImageSuggestionList items={result.imageSuggestions} editing={editing} onChange={onImageChange} />
-
-      <StrategyMemo result={result} range={range} />
     </div>
   );
 }
@@ -2204,7 +2267,7 @@ const SEO_CHECK_LABELS = {
   "first-paragraph-answer": "첫 문단이 정보형 답변으로 시작함",
   "secondary-keywords": "보조 키워드가 본문과 소제목에 자연스럽게 분산됨",
   "title-body-match": "제목과 본문 주제가 일치함",
-  "search-intent-goal-match": "검색 의도와 글 목적이 일치함",
+  "search-intent-goal-match": "사람들이 궁금해할 내용과 글 목적이 일치함",
   "outline-body-linked": "소제목이 본문 내용과 연결됨",
   "experience-comparison-check": "경험/후기/비교/체크포인트 중 하나 이상 포함",
   "keyword-overuse": "키워드 과다 반복 없음",
@@ -2230,7 +2293,7 @@ const createSeoChecklist = (seoCheck) => {
   if (items.length > 0) {
     return items.map((item) => ({
       id: item.id,
-      label: item.label || SEO_CHECK_LABELS[item.id] || item.id,
+      label: SEO_CHECK_LABELS[item.id] || item.label || item.id,
       detail: item.detail || "",
       passed: item?.passed === true
     }));
@@ -2248,7 +2311,7 @@ const createSeoChecklist = (seoCheck) => {
   });
 };
 
-function SeoAeoCheckPanel({ seoCheck }) {
+function BlogStructureCheckPanel({ seoCheck }) {
   if (!seoCheck) return null;
 
   const checklist = createSeoChecklist(seoCheck);
@@ -2259,10 +2322,10 @@ function SeoAeoCheckPanel({ seoCheck }) {
     <section className="rounded-md border border-moss/25 bg-moss/10 p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-bold text-moss">글 구성 체크</p>
-          <h5 className="mt-1 text-base font-bold text-ink">5. 최종 검수표</h5>
+          <p className="text-xs font-bold text-moss">블로그 글 구조 점검</p>
+          <h5 className="mt-1 text-base font-bold text-ink">7. 글 발행 전 확인사항</h5>
           <p className="mt-1 text-sm leading-6 text-ink/65">
-            제목, 첫 문단, 소제목, 키워드, 마무리 문장이 검색자가 궁금해할 내용에 맞게 구성됐는지 확인합니다.
+            제목, 첫 문단, 글 구성, 키워드, 마무리 문장이 사람들이 궁금해할 내용에 맞게 구성됐는지 확인합니다.
           </p>
         </div>
         <span className="inline-flex min-h-8 items-center justify-center rounded-md bg-white px-3 text-xs font-bold text-moss">
@@ -2382,6 +2445,138 @@ function StrategyMemo({ result, range }) {
   );
 }
 
+const getPrimaryTitleIndexes = (items = []) => {
+  const allIndexes = items.map((_, index) => index);
+  const preferredIndexes = [...PRIMARY_TITLE_INDEXES, ...allIndexes];
+
+  return Array.from(new Set(preferredIndexes))
+    .filter((index) => index < items.length)
+    .slice(0, Math.min(3, items.length));
+};
+
+function EditableTopicList({
+  title,
+  items,
+  selected,
+  emptyText,
+  canAdd,
+  onChange,
+  onSelect,
+  onAdd
+}) {
+  return (
+    <div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h4 className="text-sm font-bold text-ink/70">{title}</h4>
+          <p className="mt-1 text-xs leading-5 text-ink/55">
+            마음에 드는 방향을 고른 뒤 문구를 직접 고쳐 쓸 수 있어요.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={!canAdd}
+          className="focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-3 text-xs font-bold text-moss transition hover:border-moss disabled:cursor-not-allowed disabled:text-ink/30"
+        >
+          <Plus size={14} aria-hidden="true" />
+          글 방향 추가
+        </button>
+      </div>
+
+      <div className="mt-2 space-y-2">
+        {items.map((item, index) => {
+          const isSelected = selected === item;
+          const canSelect = Boolean(String(item || "").trim());
+
+          return (
+            <div
+              key={`topic-${index}`}
+              className={`rounded-md border p-3 transition ${
+                isSelected ? "border-moss bg-moss/10" : "border-line bg-paper"
+              }`}
+            >
+              <div className="flex items-start gap-2">
+                <span className="mt-2 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current text-xs font-bold text-moss">
+                  {isSelected ? <Check size={13} aria-hidden="true" /> : index + 1}
+                </span>
+                <textarea
+                  value={item}
+                  onChange={(event) => onChange(index, event.target.value)}
+                  rows={2}
+                  className="focus-ring min-h-16 flex-1 rounded-md border border-line bg-white p-3 text-sm font-semibold leading-6"
+                  placeholder="예: 건조한 피부에 수분크림을 고를 때 확인한 기준"
+                />
+              </div>
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => onSelect(item)}
+                  disabled={!canSelect}
+                  className={`focus-ring inline-flex min-h-9 items-center justify-center gap-1 rounded-md px-3 text-xs font-bold transition disabled:cursor-not-allowed disabled:bg-ink/20 ${
+                    isSelected
+                      ? "bg-moss text-white"
+                      : "border border-line bg-white text-ink/60 hover:border-moss hover:text-moss"
+                  }`}
+                >
+                  {isSelected ? "선택됨" : "이 방향 선택"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+
+        {items.length === 0 && (
+          <div className="rounded-lg border border-dashed border-line bg-paper p-5 text-center text-sm text-ink/60">
+            {emptyText}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TitleCandidateList({ items, selected, emptyText, onSelect }) {
+  const [showAll, setShowAll] = useState(false);
+  const primaryIndexes = getPrimaryTitleIndexes(items);
+  const hiddenIndexes = items
+    .map((_, index) => index)
+    .filter((index) => !primaryIndexes.includes(index));
+  const displayIndexes = showAll ? [...primaryIndexes, ...hiddenIndexes] : primaryIndexes;
+
+  useEffect(() => {
+    setShowAll(false);
+  }, [items]);
+
+  return (
+    <div>
+      <SelectableList
+        items={displayIndexes.map((index) => items[index])}
+        selected={selected}
+        itemTypes={displayIndexes.map((index) => TITLE_TYPES[index] || "미분류")}
+        itemLabels={displayIndexes.map((index) => TITLE_CANDIDATE_LABELS[index] || "제목 후보")}
+        emptyText={emptyText}
+        onSelect={onSelect}
+      />
+
+      {hiddenIndexes.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAll((current) => !current)}
+          className="focus-ring mt-2 inline-flex min-h-9 items-center justify-center gap-1 rounded-md border border-line bg-white px-3 text-xs font-bold text-ink/60 transition hover:border-moss hover:text-moss"
+        >
+          <ChevronDown
+            size={14}
+            className={showAll ? "rotate-180 transition" : "transition"}
+            aria-hidden="true"
+          />
+          {showAll ? "제목 접기" : "제목 더 보기"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function SelectableList({ title, items, selected, itemTypes = [], itemLabels = [], emptyText, onSelect }) {
   return (
     <div className={title ? "" : "mt-2"}>
@@ -2393,7 +2588,7 @@ function SelectableList({ title, items, selected, itemTypes = [], itemLabels = [
           return (
             <button
               type="button"
-              key={item}
+              key={`${index}-${item}`}
               onClick={() => onSelect(item, itemTypes[index] || "", index)}
               className={`focus-ring block w-full rounded-md border px-3 py-3 text-left text-sm transition ${
                 isSelected
@@ -2475,7 +2670,7 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
       {items.length > 0 && (
         <div className="mb-2 flex flex-col gap-2 rounded-md border border-line bg-paper px-3 py-2 text-xs font-semibold text-ink/60 sm:flex-row sm:items-center sm:justify-between">
           <p>
-            선택된 소제목 {selectedCount}개 / 권장 {OUTLINE_MIN}~{OUTLINE_MAX}개
+            선택된 항목 {selectedCount}개 / 권장 {OUTLINE_MIN}~{OUTLINE_MAX}개
             {!isValid && (
               <span className="ml-2 text-coral">
                 본문 생성 전 {OUTLINE_MIN}~{OUTLINE_MAX}개로 맞춰주세요.
@@ -2489,7 +2684,7 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
             className="focus-ring inline-flex min-h-8 items-center justify-center gap-1 rounded-md bg-white px-2.5 text-xs font-bold text-moss transition hover:bg-moss hover:text-white disabled:cursor-not-allowed disabled:text-ink/30"
           >
             <Plus size={14} aria-hidden="true" />
-            소제목 추가
+            항목 추가
           </button>
         </div>
       )}
@@ -2522,7 +2717,7 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
                   value={item.heading}
                   onChange={(event) => onChange(item.id, "heading", event.target.value)}
                   className="focus-ring min-h-10 flex-1 rounded-md border border-line bg-white px-3 text-sm font-semibold"
-                  placeholder={`소제목 ${index + 1}`}
+                  placeholder={`항목 ${index + 1}`}
                 />
                 <div className="grid grid-cols-2 gap-1 sm:w-20">
                   <button
@@ -2530,7 +2725,7 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
                     onClick={() => onMove(item.id, -1)}
                     disabled={index === 0}
                     className="focus-ring inline-flex min-h-10 items-center justify-center rounded-md border border-line bg-white text-ink/55 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/25"
-                    aria-label="소제목 위로 이동"
+                    aria-label="항목 위로 이동"
                   >
                     <ArrowUp size={14} aria-hidden="true" />
                   </button>
@@ -2539,7 +2734,7 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
                     onClick={() => onMove(item.id, 1)}
                     disabled={index === items.length - 1}
                     className="focus-ring inline-flex min-h-10 items-center justify-center rounded-md border border-line bg-white text-ink/55 transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/25"
-                    aria-label="소제목 아래로 이동"
+                    aria-label="항목 아래로 이동"
                   >
                     <ArrowDown size={14} aria-hidden="true" />
                   </button>
@@ -2554,13 +2749,24 @@ function OutlineEditor({ items, selectedCount, emptyText, onChange, onAdd, onDel
                   삭제
                 </button>
               </div>
-              <textarea
-                value={item.note || ""}
-                onChange={(event) => onChange(item.id, "note", event.target.value)}
-                rows={2}
-                className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
-                placeholder="이 소제목에 반영할 간단 메모를 입력하세요."
-              />
+              <label className="mt-2 block">
+                <span className="flex flex-wrap items-center gap-2 text-xs font-bold text-ink/55">
+                  추가 메모
+                  <span className="rounded-md bg-white px-2 py-0.5 text-[11px] text-ink/45">
+                    선택 입력
+                  </span>
+                </span>
+                <textarea
+                  value={item.note || ""}
+                  onChange={(event) => onChange(item.id, "note", event.target.value)}
+                  rows={2}
+                  className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                  placeholder="예: 발림감은 좋았지만 향은 조금 강했어요."
+                />
+              </label>
+              <p className="mt-1 text-xs leading-5 text-ink/50">
+                이 부분에 꼭 넣고 싶은 내용을 적어주세요. 안 적어도 괜찮아요.
+              </p>
             </div>
           );
         })}
@@ -2592,10 +2798,10 @@ function ImageSuggestionList({ items = [], editing, onChange }) {
     <div>
       <div className="flex items-center gap-2">
         <Image size={17} className="text-moss" aria-hidden="true" />
-        <h5 className="text-sm font-bold text-ink/70">이미지 삽입 추천 {items.length}개</h5>
+        <h5 className="text-sm font-bold text-ink/70">4. 사진 배치 가이드</h5>
       </div>
       <p className="mt-2 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm leading-6 text-ink/70">
-        블로그용 이미지는 직접 촬영을 우선 추천합니다. AI 프롬프트는 티스토리, SNS, 참고 이미지 제작용으로 활용해보세요.
+        본문 흐름에 맞춰 사진을 넣기 좋은 위치를 정리했습니다. 직접 촬영하거나 참고 이미지를 준비할 때 활용해보세요.
       </p>
       <div className="mt-3 grid gap-2">
         {items.map((item) => {
