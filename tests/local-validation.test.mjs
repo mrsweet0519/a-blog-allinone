@@ -416,6 +416,71 @@ const noisyProductReview = createProductReviewDraft({
 assert.ok(!/@\.마우스를|이 02 03|& zg|hy/u.test(noisyProductReview.body));
 assert.ok(noisyProductReview.body.includes("50ml") || noisyProductReview.body.includes("히알루론산"));
 
+const restaurantPhotoReview = createProductReviewDraft({
+  mainKeyword: "역삼역 호홀이 반점 리뷰",
+  category: "restaurant",
+  experienceMemo:
+    "탕수육이 바삭했고 어향가지가 맛있었어요. 4명이 먹기 좋았고 직장인 회식 장소로 괜찮아 보였어요.",
+  imageContext: [
+    { index: 1, name: "hoholi-entrance.jpg", note: "입구와 외관" },
+    { index: 2, name: "crispy-tangsuyuk.jpg", note: "탕수육이 바삭했던 사진" },
+    { index: 3, name: "eohyang-gaji.jpg", note: "어향가지 메뉴" }
+  ],
+  imageCount: 3,
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.ok(restaurantPhotoReview.body.includes("메뉴와 맛"));
+assert.ok(restaurantPhotoReview.body.includes("분위기와 동행"));
+assert.ok(restaurantPhotoReview.body.includes("가격과 주문 전 확인할 점"));
+assert.ok(restaurantPhotoReview.body.includes("재방문 기준"));
+assert.ok(restaurantPhotoReview.body.includes("직장인 회식"));
+assert.ok(restaurantPhotoReview.body.includes("[여기에 이미지 1을 넣어주세요"));
+assert.ok(restaurantPhotoReview.body.includes("[여기에 이미지 3을 넣어주세요"));
+assert.ok(!/(^|\n)\s*\*\s+|(^|\n)\s*\*\*.+\*\*/u.test(restaurantPhotoReview.body));
+
+const creamPhotoReview = createProductReviewDraft({
+  mainKeyword: "수분크림 직접 써본 후기",
+  category: "product",
+  experienceMemo:
+    "발림감은 가볍고 향은 은은했어요. 아침저녁으로 쓰기 좋았고 끈적임은 적은 편이었어요.",
+  imageContext: [
+    { index: 1, name: "cream-package.jpg", note: "제품 패키지" },
+    { index: 2, name: "cream-texture.jpg", note: "가벼운 발림감" },
+    { index: 3, name: "cream-label.jpg", ocrText: "용량 50ml" }
+  ],
+  imageCount: 3,
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.ok(creamPhotoReview.body.includes("사용감과 향"));
+assert.ok(creamPhotoReview.body.includes("좋았던 점"));
+assert.ok(creamPhotoReview.body.includes("아쉬운 점"));
+assert.ok(creamPhotoReview.body.includes("이런 분께 추천해요"));
+assert.ok(creamPhotoReview.body.includes("발림감"));
+assert.ok(creamPhotoReview.body.includes("[여기에 이미지 2을 넣어주세요"));
+
+const kidsPlacePhotoReview = createProductReviewDraft({
+  mainKeyword: "아이랑 다녀온 실내 체험공간 후기",
+  category: "kids-place",
+  experienceMemo:
+    "아이가 체험을 좋아했고 부모 대기 공간도 편했어요. 주차는 확인이 필요해요.",
+  imageContext: [
+    { index: 1, name: "kids-space.jpg", note: "실내 체험공간 전체" },
+    { index: 2, name: "activity-zone.jpg", note: "아이가 좋아한 체험" },
+    { index: 3, name: "parent-waiting.jpg", note: "부모 대기 공간" }
+  ],
+  imageCount: 3,
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.ok(kidsPlacePhotoReview.body.includes("아이 반응"));
+assert.ok(kidsPlacePhotoReview.body.includes("동선과 체험 흐름"));
+assert.ok(kidsPlacePhotoReview.body.includes("부모 대기와 피로도"));
+assert.ok(kidsPlacePhotoReview.body.includes("주차와 다시 갈 기준"));
+assert.ok(kidsPlacePhotoReview.body.includes("주차는 확인이 필요"));
+assert.ok(kidsPlacePhotoReview.body.includes("[여기에 이미지 3을 넣어주세요"));
+
 const lowConfidenceCapture = assessCapturedCommentExtraction("AE Sosa Do", {
   confidence: 0.39,
   source: "ocr"

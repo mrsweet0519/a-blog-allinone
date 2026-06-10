@@ -1,6 +1,5 @@
 import {
   Archive,
-  LayoutDashboard,
   LogOut,
   MessageSquare,
   PackageSearch,
@@ -14,12 +13,11 @@ import EnvironmentBanner from "./EnvironmentBanner.jsx";
 import { getAccessDaysRemaining } from "../lib/accessControl.js";
 
 const navItems = [
-  { to: "/", label: "대시보드", icon: LayoutDashboard },
-  { to: "/maker", label: "콘텐츠 메이커", icon: WandSparkles },
-  { to: "/product-review-maker", label: "상품 후기 메이커", icon: PackageSearch },
-  { to: "/comment-replies", label: "댓글 응답 관리", icon: MessageSquare },
-  { to: "/storage", label: "내 보관함", icon: Archive },
-  { to: "/settings", label: "고급 설정", icon: Settings2 }
+  { to: "/product-review-maker", label: "사진으로 리뷰글 만들기", icon: PackageSearch },
+  { to: "/maker", label: "키워드로 정보글 만들기", icon: WandSparkles },
+  { to: "/comment-replies", label: "댓글 답변 만들기", icon: MessageSquare },
+  { to: "/storage", label: "보관함", icon: Archive },
+  { to: "/settings", label: "설정", icon: Settings2 }
 ];
 
 export default function AppLayout({ children, accessSession, accessMessage = "", onLogout }) {

@@ -8,6 +8,7 @@ import {
   Loader2,
   PackageSearch,
   RefreshCw,
+  Save,
   Trash2,
   Upload,
   WandSparkles
@@ -19,6 +20,7 @@ import {
   createProductReviewDraft,
   extractProductInfoFieldsWithMetaFromText
 } from "../lib/productReviewGenerator.js";
+import { saveDraft } from "../lib/localDrafts.js";
 
 const initialForm = {
   productName: "",
@@ -36,6 +38,7 @@ const initialForm = {
   purchaseNotes: "",
   experienceMemo: "",
   emphasisPoints: "",
+  sponsorshipType: "",
   avoidWords: "무조건, 보장, 완벽, 즉시효과",
   tone: "친근한",
   targetLength: "1500",
@@ -51,6 +54,16 @@ const emptyResult = {
 };
 
 const toneOptions = ["친근한", "차분한", "전문적인", "활기찬"];
+const reviewCategoryOptions = [
+  { value: "", label: "자동 추정" },
+  { value: "restaurant", label: "맛집/카페 후기" },
+  { value: "product", label: "상품 후기" },
+  { value: "kids-place", label: "아이 동반 장소 후기" },
+  { value: "place", label: "장소/체험 후기" },
+  { value: "education", label: "교육/강의 후기" }
+];
+const sponsorshipOptions = ["직접 구매", "제품 제공", "식사권 제공", "협찬/체험단"];
+const MAX_REVIEW_IMAGES = 10;
 const supportedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 const fieldLabels = [
@@ -144,17 +157,26 @@ export default function ProductReviewMaker() {
   const [productInfoOpen, setProductInfoOpen] = useState(false);
   const [rawTextOpen, setRawTextOpen] = useState(false);
   const [fieldMeta, setFieldMeta] = useState(() => createInitialFieldMeta());
+  const [draftId, setDraftId] = useState("");
+  const [draftMessage, setDraftMessage] = useState("");
 
-  const isReady = useMemo(
+  const reviewTopic = useMemo(
+    () => form.mainKeyword.trim() || form.productName.trim(),
+    [form.mainKeyword, form.productName]
+  );
+  const hasSeedInput = useMemo(
     () =>
+      images.length > 0 ||
       Boolean(
-        form.productName.trim() ||
-          form.mainKeyword.trim() ||
-          form.experienceMemo.trim() ||
+        form.experienceMemo.trim() ||
           form.productInfoText.trim() ||
           fieldLabels.some(([field]) => form[field].trim())
       ),
-    [form]
+    [form, images.length]
+  );
+  const isReady = useMemo(
+    () => Boolean(reviewTopic && hasSeedInput),
+    [hasSeedInput, reviewTopic]
   );
   const hasResult = Boolean(result.body);
   const isReading = ocrStatus === "reading" || images.some((item) => item.ocrStatus === "reading");
@@ -191,6 +213,8 @@ export default function ProductReviewMaker() {
       }));
     }
     setStatus("idle");
+    setDraftId("");
+    setDraftMessage("");
   };
 
   const appendImages = (files, source = "upload") => {
@@ -201,11 +225,23 @@ export default function ProductReviewMaker() {
       return;
     }
 
-    setImages((current) => [...current, ...accepted.map((file) => createImageItem(file, source))]);
+    setImages((current) => {
+      const remainingSlots = Math.max(0, MAX_REVIEW_IMAGES - current.length);
+      const nextFiles = accepted.slice(0, remainingSlots);
+      const overflowCount = accepted.length - nextFiles.length;
+
+      if (overflowCount > 0) {
+        setOcrWarnings([`사진은 최대 ${MAX_REVIEW_IMAGES}장까지 넣을 수 있어요. ${overflowCount}장은 제외했습니다.`]);
+      } else {
+        setOcrWarnings([]);
+      }
+
+      return [...current, ...nextFiles.map((file) => createImageItem(file, source))];
+    });
     setOcrStatus("idle");
-    setProductInfoOpen(true);
-    setOcrMessage("이미지가 추가되었습니다. 상품 정보를 읽어보려면 '이미지에서 상품 정보 추출'을 눌러주세요.");
-    setOcrWarnings([]);
+    setOcrMessage("사진이 추가되었습니다. 필요한 경우 자세한 설정에서 사진 속 글자를 읽을 수 있습니다.");
+    setDraftId("");
+    setDraftMessage("");
   };
 
   const handleImageChange = (event) => {
@@ -284,6 +320,40 @@ export default function ProductReviewMaker() {
     };
   };
 
+  const getImageContext = () =>
+    images.map((item, index) => ({
+      index: index + 1,
+      name: item.name,
+      source: item.source,
+      note: item.note,
+      ocrText: item.ocrText
+    }));
+
+  const createReviewPayload = (selectedTitle = "") => {
+    const imageContext = getImageContext();
+    const imageText = mergeTextBlocks(
+      ...imageContext.map((item) =>
+        [
+          `사진 ${item.index}: ${item.name}`,
+          item.note ? `사진 메모: ${item.note}` : "",
+          item.ocrText ? `사진에서 읽은 내용: ${item.ocrText}` : ""
+        ].filter(Boolean).join("\n")
+      )
+    );
+    const topic = reviewTopic || form.mainKeyword || form.productName;
+
+    return {
+      ...form,
+      productName: form.productName || topic,
+      mainKeyword: topic,
+      keyword: topic,
+      productInfoText: mergeTextBlocks(form.productInfoText, imageText),
+      selectedTitle: selectedTitle || form.selectedTitle,
+      imageContext,
+      imageCount: images.length
+    };
+  };
+
   const extractInfoFromImages = async () => {
     if (images.length === 0) {
       setOcrStatus("manual");
@@ -353,25 +423,47 @@ export default function ProductReviewMaker() {
   const generateReview = (selectedTitle = "") => {
     if (!isReady) return;
 
-    const draft = createProductReviewDraft({
-      ...form,
-      selectedTitle: selectedTitle || form.selectedTitle
-    });
+    const payload = createReviewPayload(selectedTitle);
+    const draft = createProductReviewDraft(payload);
 
     setResult(draft);
     setForm((current) => ({ ...current, selectedTitle: draft.selectedTitle }));
     setStatus("generated");
+    setDraftId("");
+    setDraftMessage("");
   };
 
   const selectTitle = (title) => {
-    const draft = createProductReviewDraft({
-      ...form,
-      selectedTitle: title
-    });
+    const draft = createProductReviewDraft(createReviewPayload(title));
 
     setForm((current) => ({ ...current, selectedTitle: title }));
     setResult(draft);
     setStatus("generated");
+    setDraftId("");
+    setDraftMessage("");
+  };
+
+  const saveCurrentDraft = () => {
+    if (!hasResult) return;
+
+    const saved = saveDraft(
+      {
+        ...createReviewPayload(result.selectedTitle),
+        keyword: reviewTopic,
+        targetLengthOption: form.targetLength,
+        customTargetLength: form.targetLength
+      },
+      {
+        ...result,
+        selectedTopic: "사진 기반 리뷰글",
+        selectedTitleType: "사진 리뷰"
+      },
+      draftId
+    );
+
+    setDraftId(saved.id);
+    setDraftMessage("보관함에 저장했습니다.");
+    setStatus("saved");
   };
 
   const copyText = async (mode) => {
@@ -379,7 +471,7 @@ export default function ProductReviewMaker() {
 
     const value =
       mode === "body"
-        ? resultToClipboard(result, { includeImageMarkers: false })
+        ? stripImageMarkers(result.body)
         : mode === "hashtags"
           ? result.hashtags.join(" ")
           : mode === "images"
@@ -398,8 +490,12 @@ export default function ProductReviewMaker() {
     <div className="min-w-0 space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <p className="text-sm font-semibold text-coral">후기형 포스팅 작업 화면</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">상품 후기 메이커</h2>
+          <p className="text-sm font-semibold text-coral">사진과 메모 기반 블로그 초안</p>
+          <h2 className="mt-1 text-3xl font-bold tracking-normal">사진으로 리뷰글 만들기</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/60">
+            사진과 메모만 넣으면 블로그 후기 초안을 만들어드립니다. 맛집, 상품, 아이와 간 장소,
+            체험단 글을 복사하기 좋은 형태로 빠르게 정리해요.
+          </p>
         </div>
         <StatusBadge status={status} />
       </header>
@@ -407,47 +503,35 @@ export default function ProductReviewMaker() {
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(360px,0.4fr)_minmax(0,0.6fr)]">
         <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold">입력값</h3>
+            <h3 className="text-lg font-bold">리뷰글 만들기</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
               {isReady ? "입력 완료" : "입력 전"}
             </span>
           </div>
           <div className="mt-4 rounded-md border border-moss/20 bg-moss/10 p-3 text-sm leading-6 text-ink/70">
             <p className="font-semibold">
-              상품명, 키워드, 상품 이미지, 간단한 경험 메모만 넣으면 후기형 블로그 글 초안을 만들 수 있습니다.
+              사진과 메모만 넣으면 블로그 후기 초안이 나옵니다.
             </p>
             <ul className="mt-2 grid gap-1 text-xs font-semibold text-ink/55">
-              <li>수분크림 후기: 사용감, 보습력, 데일리 케어</li>
-              <li>무선 미니청소기 후기: 흡입력, 원룸 청소, 보관 편의성</li>
-              <li>아기 식판 후기: 세척 편의성, 흡착력, 이유식 준비</li>
+              <li>맛집 후기: 메뉴, 분위기, 동행, 재방문 기준</li>
+              <li>상품 후기: 사용감, 장점, 아쉬운 점, 추천 대상</li>
+              <li>장소 후기: 동선, 주차, 아이 반응, 부모 피로도</li>
             </ul>
           </div>
 
           <div className="mt-5 space-y-5">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block">
-                <FieldLabel required>상품명/브랜드명</FieldLabel>
-                <input
-                  value={form.productName}
-                  onChange={(event) => updateForm("productName", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 수분크림, 무선 미니청소기, 아기 식판"
-                />
-              </label>
-
-              <label className="block">
-                <FieldLabel required>메인 키워드</FieldLabel>
-                <input
-                  value={form.mainKeyword}
-                  onChange={(event) => updateForm("mainKeyword", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                  placeholder="예: 수분크림 후기, 피부 보습, 데일리 크림"
-                />
-              </label>
-            </div>
+            <label className="block">
+              <FieldLabel required>어떤 글을 쓸까요?</FieldLabel>
+              <input
+                value={form.mainKeyword}
+                onChange={(event) => updateForm("mainKeyword", event.target.value)}
+                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                placeholder="예: 역삼역 중식당 회식 후기 / 수분크림 직접 써본 후기 / 아이랑 다녀온 부천 키즈카페 후기"
+              />
+            </label>
 
             <section>
-              <FieldLabel>상품 상세 이미지 붙여넣기</FieldLabel>
+              <FieldLabel>사진 추가</FieldLabel>
               <div
                 ref={pasteAreaRef}
                 role="button"
@@ -462,13 +546,13 @@ export default function ProductReviewMaker() {
                 <div className="flex flex-col items-center justify-center text-center">
                   <Upload size={24} className="text-moss" aria-hidden="true" />
                   <p className="mt-2 text-sm font-bold text-ink/70">
-                    Ctrl+V로 여러 장을 붙여넣을 수 있습니다.
+                    사진은 최대 {MAX_REVIEW_IMAGES}장까지 넣을 수 있어요.
                   </p>
                   <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                    상품 이미지나 상세페이지 캡처를 넣으면 읽은 내용을 확인하고 필요한 부분만 수정할 수 있습니다.
+                    파일을 올리거나 Ctrl+V로 붙여넣어도 됩니다. 사진이 없으면 기억나는 내용만 적어도 괜찮아요.
                   </p>
                   <label className="focus-ring mt-3 inline-flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-bold transition hover:border-moss hover:text-moss">
-                    파일 여러 장 업로드
+                    사진 업로드
                     <input
                       type="file"
                       multiple
@@ -505,111 +589,59 @@ export default function ProductReviewMaker() {
                 onRemove={removeImage}
                 onMove={moveImage}
                 onNoteChange={updateImageNote}
+                showDetails={false}
               />
-
-              <button
-                type="button"
-                onClick={extractInfoFromImages}
-                disabled={isReading}
-                className="focus-ring mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
-              >
-                {isReading ? <Loader2 size={17} className="animate-spin" aria-hidden="true" /> : <FileText size={17} aria-hidden="true" />}
-                이미지에서 상품 정보 추출
-              </button>
             </section>
 
-            <details
-              open={productInfoOpen}
-              onToggle={(event) => setProductInfoOpen(event.currentTarget.open)}
-              className="rounded-md border border-line bg-paper p-3"
-            >
-              <summary className="cursor-pointer list-none">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <span className="text-sm font-bold text-ink/70">사진에서 읽은 내용 / 상품 정보 보정</span>
-                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                      {images.length > 0
-                        ? "읽은 내용을 확인하고 필요한 부분만 수정할 수 있습니다."
-                        : "상품 이미지를 넣으면 읽은 내용을 확인할 수 있습니다."}
-                    </p>
-                  </div>
-                  <span className="inline-flex min-h-8 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-bold text-moss">
-                    {productInfoOpen ? "접기" : "열기"}
-                  </span>
-                </div>
-              </summary>
-
-              <div className="mt-3 space-y-3">
-                <p className="rounded-md border border-moss/20 bg-white px-3 py-2 text-xs font-semibold leading-5 text-ink/60">
-                  {images.length > 0
-                    ? "이미지에서 읽은 정보는 초안입니다. 정확하지 않은 항목은 비워두었습니다. 필요한 정보만 직접 채워도 후기글을 만들 수 있습니다."
-                    : "이미지가 없거나 글자를 정확히 읽지 못해도 아래에 상품 정보를 직접 입력하면 후기글을 만들 수 있습니다."}
-                </p>
-                <div className="grid gap-3">
-                  {fieldLabels.map(([field, label]) => (
-                    <label key={field} className="block">
-                      <span className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-ink/55">{label}</span>
-                        <FieldStatusBadge meta={fieldMeta[field]} />
-                      </span>
-                      <textarea
-                        value={form[field]}
-                        onChange={(event) => updateForm(field, event.target.value)}
-                        rows={field === "productName" || field === "brandName" ? 1 : 2}
-                        className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-2 text-sm leading-6"
-                        placeholder={form[field] ? `${label}을 직접 수정할 수 있습니다.` : "직접 입력해도 됩니다."}
-                      />
-                      {fieldMeta[field]?.reason && (
-                        <span className="mt-1 block text-[11px] font-semibold leading-4 text-ink/45">
-                          {fieldMeta[field].reason}
-                        </span>
-                      )}
-                    </label>
-                  ))}
-                </div>
-
-                <details
-                  open={rawTextOpen}
-                  onToggle={(event) => setRawTextOpen(event.currentTarget.open)}
-                  className="rounded-md border border-line bg-white p-3"
-                >
-                  <summary className="cursor-pointer text-sm font-bold text-moss">
-                    추출 원문 전체 보기
-                  </summary>
-                  <label className="mt-3 block">
-                    <span className="text-xs font-bold text-ink/55">추출 원문</span>
-                    <textarea
-                      value={form.productInfoText}
-                      onChange={(event) => updateForm("productInfoText", event.target.value)}
-                      rows={6}
-                      className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-                      placeholder="OCR 결과가 없거나 틀리면 상품명, 성분, 구성, 사용 방법, 특징을 직접 적어주세요."
-                    />
-                  </label>
-                </details>
-              </div>
-            </details>
-
             <label className="block">
-              <FieldLabel required>내가 느낀 점 또는 쓰고 싶은 내용</FieldLabel>
+              <FieldLabel>기억나는 내용</FieldLabel>
               <textarea
                 value={form.experienceMemo}
                 onChange={(event) => updateForm("experienceMemo", event.target.value)}
                 rows={6}
                 className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-                placeholder={`예:\n처음에는 보습력이 궁금해서 찾아봤어요.\n사용감이 무겁지 않은지 보고 싶었어요.\n아침저녁으로 부담 없이 쓸 수 있는 제품인지 확인하고 싶었어요.`}
+                placeholder={`예: 탕수육이 바삭했고, 4명이 먹기 좋았어요. 주차는 확인 필요해요.\n예: 발림감은 가볍고 향은 은은했어요. 아침저녁으로 쓰기 좋았어요.\n예: 아이가 체험을 좋아했고, 부모 대기 공간도 편했어요.`}
               />
             </label>
 
-            <div className="rounded-md border border-line bg-white p-3">
-              <p className="text-sm font-bold text-ink/70">간단 설정</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <details className="rounded-md border border-line bg-paper p-3">
+              <summary className="cursor-pointer list-none">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <span className="text-sm font-bold text-ink/70">자세한 설정</span>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
+                      글 톤, 협찬 표시, 사진 속 글자 읽기, 이미지별 메모는 필요할 때만 열어보세요.
+                    </p>
+                  </div>
+                  <span className="inline-flex min-h-8 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-bold text-moss">
+                    선택 입력
+                  </span>
+                </div>
+              </summary>
+
+              <div className="mt-4 space-y-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <FieldLabel>카테고리</FieldLabel>
+                    <select
+                      value={form.category}
+                      onChange={(event) => updateForm("category", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                    >
+                      {reviewCategoryOptions.map((option) => (
+                        <option key={option.value || "auto"} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
                 <label className="block">
                   <FieldLabel>글 톤</FieldLabel>
                   <select
                     value={form.tone}
                     onChange={(event) => updateForm("tone", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
                   >
                     {toneOptions.map((tone) => (
                       <option key={tone} value={tone}>
@@ -627,17 +659,33 @@ export default function ProductReviewMaker() {
                     max="5000"
                     value={form.targetLength}
                     onChange={(event) => updateForm("targetLength", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
                   />
                 </label>
+
+                  <label className="block">
+                    <FieldLabel>협찬 여부</FieldLabel>
+                    <select
+                      value={form.sponsorshipType}
+                      onChange={(event) => updateForm("sponsorshipType", event.target.value)}
+                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                    >
+                      <option value="">선택 안 함</option>
+                      {sponsorshipOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
                 <label className="block">
                   <FieldLabel>강조하고 싶은 포인트</FieldLabel>
                   <input
                     value={form.emphasisPoints}
                     onChange={(event) => updateForm("emphasisPoints", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                    placeholder="예: 사용감, 보습력, 휴대성, 구성, 가격대"
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                    placeholder="예: 메뉴, 분위기, 사용감, 주차, 추천 대상"
                   />
                 </label>
 
@@ -646,18 +694,92 @@ export default function ProductReviewMaker() {
                   <input
                     value={form.avoidWords}
                     onChange={(event) => updateForm("avoidWords", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
                     placeholder="예: 무조건, 보장, 완벽, 즉시효과"
                   />
                 </label>
               </div>
-            </div>
+
+                <div className="rounded-md border border-line bg-white p-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-ink/70">이미지에서 읽은 내용 · 이미지별 메모</p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
+                        사진 속 글자, 파일명, 이미지별 메모가 글 생성에 함께 반영됩니다.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={extractInfoFromImages}
+                      disabled={isReading}
+                      className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
+                    >
+                      {isReading ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <FileText size={15} aria-hidden="true" />}
+                      사진 속 글자 읽기
+                    </button>
+                  </div>
+
+                  <ImageGrid
+                    images={images}
+                    onRemove={removeImage}
+                    onMove={moveImage}
+                    onNoteChange={updateImageNote}
+                    showDetails
+                  />
+
+                  <details
+                    open={productInfoOpen}
+                    onToggle={(event) => setProductInfoOpen(event.currentTarget.open)}
+                    className="mt-3 rounded-md border border-line bg-paper p-3"
+                  >
+                    <summary className="cursor-pointer text-sm font-bold text-moss">
+                      상품/장소 정보 보정
+                    </summary>
+
+                    <div className="mt-3 grid gap-3">
+                      {fieldLabels.map(([field, label]) => (
+                        <label key={field} className="block">
+                          <span className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-bold text-ink/55">{label}</span>
+                            <FieldStatusBadge meta={fieldMeta[field]} />
+                          </span>
+                          <textarea
+                            value={form[field]}
+                            onChange={(event) => updateForm(field, event.target.value)}
+                            rows={field === "productName" || field === "brandName" ? 1 : 2}
+                            className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-2 text-sm leading-6"
+                            placeholder={form[field] ? `${label}을 직접 수정할 수 있습니다.` : "직접 입력해도 됩니다."}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </details>
+
+                  <details
+                    open={rawTextOpen}
+                    onToggle={(event) => setRawTextOpen(event.currentTarget.open)}
+                    className="mt-3 rounded-md border border-line bg-paper p-3"
+                  >
+                    <summary className="cursor-pointer text-sm font-bold text-moss">
+                      OCR 원문 보기
+                    </summary>
+                    <textarea
+                      value={form.productInfoText}
+                      onChange={(event) => updateForm("productInfoText", event.target.value)}
+                      rows={6}
+                      className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
+                      placeholder="사진에서 읽은 원문이나 추가 정보를 직접 적을 수 있습니다."
+                    />
+                  </details>
+                </div>
+              </div>
+            </details>
 
             <div className="rounded-md border border-moss/20 bg-moss/10 p-3">
               <p className="text-xs font-semibold leading-5 text-ink/60">
                 {isReady
-                  ? "입력한 상품 정보와 경험 메모를 바탕으로 후기글을 생성합니다."
-                  : "상품명, 키워드, 이미지 정보, 경험 메모 중 하나 이상을 입력해주세요."}
+                  ? "사진과 메모를 바탕으로 바로 복사 가능한 블로그 후기 초안을 만듭니다."
+                  : "글 주제를 적고, 사진 또는 기억나는 내용 중 하나 이상을 넣어주세요."}
               </p>
               <button
                 type="button"
@@ -666,7 +788,7 @@ export default function ProductReviewMaker() {
                 className="focus-ring mt-2 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
               >
                 <WandSparkles size={18} aria-hidden="true" />
-                후기글 생성
+                블로그 글 생성
               </button>
             </div>
           </div>
@@ -675,24 +797,35 @@ export default function ProductReviewMaker() {
         <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-bold text-moss">결과</p>
-              <h3 className="mt-1 text-lg font-bold">후기형 포스팅 초안</h3>
+              <p className="text-xs font-bold text-moss">생성 결과</p>
+              <h3 className="mt-1 text-lg font-bold">블로그 후기 초안</h3>
             </div>
             <PackageSearch size={22} className="text-moss" aria-hidden="true" />
           </div>
 
           {!hasResult && (
             <div className="mt-5 grid min-h-[420px] place-items-center rounded-lg border border-dashed border-line bg-paper p-6 text-center text-sm font-semibold leading-6 text-ink/55">
-              상품명, 키워드, 이미지 정보, 경험 메모 중 하나 이상을 입력한 뒤 후기글 생성을 누르세요.
+              글 주제를 적고 사진 또는 기억나는 내용 중 하나 이상을 넣은 뒤 블로그 글 생성을 누르세요.
             </div>
           )}
 
           {hasResult && (
             <div className="mt-5 space-y-5">
-              <TitleCandidates result={result} onSelect={selectTitle} onRegenerate={() => generateReview()} />
+              <div>
+                <h4 className="text-sm font-bold text-ink/70">1. 제목</h4>
+                <input
+                  value={result.selectedTitle}
+                  onChange={(event) => {
+                    const title = event.target.value;
+                    setResult((current) => ({ ...current, selectedTitle: title }));
+                    setForm((current) => ({ ...current, selectedTitle: title }));
+                  }}
+                  className="focus-ring mt-2 min-h-12 w-full rounded-md border border-line bg-paper px-3 text-base font-bold text-ink"
+                />
+              </div>
 
               <div>
-                <h4 className="text-sm font-bold text-ink/70">2. 게시용 본문</h4>
+                <h4 className="text-sm font-bold text-ink/70">2. 블로그 본문</h4>
                 <textarea
                   value={result.body}
                   onChange={(event) => setResult((current) => ({ ...current, body: event.target.value }))}
@@ -701,8 +834,10 @@ export default function ProductReviewMaker() {
                 />
               </div>
 
+              <PhotoPlacementList items={result.imageSuggestions} />
+
               <div>
-                <h4 className="text-sm font-bold text-ink/70">3. 해시태그</h4>
+                <h4 className="text-sm font-bold text-ink/70">4. 해시태그</h4>
                 <div className="mt-2 flex flex-wrap gap-2 rounded-md border border-line bg-paper p-3">
                   {result.hashtags.map((tag) => (
                     <span key={tag} className="rounded-md bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
@@ -713,24 +848,55 @@ export default function ProductReviewMaker() {
               </div>
 
               <div>
-                <h4 className="text-sm font-bold text-ink/70">4. 복사</h4>
-                <div className="mt-2 grid gap-2 lg:grid-cols-4">
-                  <CopyButton active={copied === "full"} onClick={() => copyText("full")}>
-                    이미지 표시 포함
-                  </CopyButton>
+                <h4 className="text-sm font-bold text-ink/70">5. 복사와 저장</h4>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                   <CopyButton active={copied === "body"} onClick={() => copyText("body")}>
                     본문 복사
                   </CopyButton>
                   <CopyButton active={copied === "hashtags"} onClick={() => copyText("hashtags")}>
                     해시태그 복사
                   </CopyButton>
-                  <CopyButton active={copied === "images"} onClick={() => copyText("images")}>
-                    이미지 검색어
+                  <CopyButton active={copied === "full"} onClick={() => copyText("full")}>
+                    전체 복사
                   </CopyButton>
+                  <button
+                    type="button"
+                    onClick={() => generateReview(result.selectedTitle)}
+                    className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-moss hover:text-moss"
+                  >
+                    <RefreshCw size={17} aria-hidden="true" />
+                    다시 생성
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveCurrentDraft}
+                    className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-moss hover:text-moss"
+                  >
+                    <Save size={17} aria-hidden="true" />
+                    보관함 저장
+                  </button>
                 </div>
+                {draftMessage && (
+                  <p className="mt-2 text-xs font-bold text-moss">{draftMessage}</p>
+                )}
               </div>
 
-              <ImageSuggestionCards items={result.imageSuggestions} />
+              <details className="rounded-md border border-line bg-paper p-3">
+                <summary className="cursor-pointer text-sm font-bold text-moss">
+                  글 작성 참고 정보 보기
+                </summary>
+                <div className="mt-4 space-y-5">
+                  <TitleCandidates result={result} onSelect={selectTitle} onRegenerate={() => generateReview()} />
+                  <ImageSuggestionCards items={result.imageSuggestions} />
+                  <div className="rounded-md border border-line bg-white p-3 text-sm leading-6 text-ink/65">
+                    <p className="font-bold text-ink/70">입력 반영 정보</p>
+                    <p className="mt-2">글 주제: {reviewTopic || "미입력"}</p>
+                    <p>카테고리: {reviewCategoryOptions.find((option) => option.value === form.category)?.label || "자동 추정"}</p>
+                    <p>사진 수: {images.length}장</p>
+                    <p>메모: {form.experienceMemo.trim() ? "반영됨" : "미입력"}</p>
+                  </div>
+                </div>
+              </details>
             </div>
           )}
         </section>
@@ -771,11 +937,11 @@ function FieldStatusBadge({ meta }) {
   );
 }
 
-function ImageGrid({ images = [], onRemove, onMove, onNoteChange }) {
+function ImageGrid({ images = [], onRemove, onMove, onNoteChange, showDetails = true }) {
   if (images.length === 0) {
     return (
       <div className="mt-3 rounded-md border border-dashed border-line bg-white p-4 text-center text-sm font-semibold text-ink/50">
-        아직 추가된 이미지가 없습니다.
+        아직 추가된 사진이 없습니다.
       </div>
     );
   }
@@ -803,26 +969,28 @@ function ImageGrid({ images = [], onRemove, onMove, onNoteChange }) {
           <div className="mt-2 overflow-hidden rounded-md border border-line bg-paper">
             <img src={item.url} alt={item.name} className="h-36 w-full object-contain" />
           </div>
-          <details className="mt-2 rounded-md border border-line bg-paper p-2 text-xs">
-            <summary className="cursor-pointer font-bold text-ink/60">이미지별 메모</summary>
-            <textarea
-              value={item.note}
-              onChange={(event) => onNoteChange(item.id, event.target.value)}
-              rows={2}
-              className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-2 leading-5"
-              placeholder="예: 성분표, 사용법, 가격 정보"
-            />
-          </details>
-          {item.message && (
+          {showDetails && (
+            <details className="mt-2 rounded-md border border-line bg-paper p-2 text-xs">
+              <summary className="cursor-pointer font-bold text-ink/60">이미지별 메모</summary>
+              <textarea
+                value={item.note}
+                onChange={(event) => onNoteChange(item.id, event.target.value)}
+                rows={2}
+                className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-2 leading-5"
+                placeholder="예: 탕수육 클로즈업, 메뉴판, 성분표, 아이가 좋아한 공간"
+              />
+            </details>
+          )}
+          {showDetails && item.message && (
             <p className="mt-2 text-xs font-semibold leading-5 text-ink/55">{item.message}</p>
           )}
-          {item.ocrText && (
+          {showDetails && item.ocrText && (
             <details className="mt-2 text-xs">
               <summary className="cursor-pointer font-bold text-moss">추출 원문 보기</summary>
               <p className="mt-1 whitespace-pre-wrap rounded-md bg-paper p-2 leading-5 text-ink/60">{item.ocrText}</p>
             </details>
           )}
-          {item.warnings.length > 0 && (
+          {showDetails && item.warnings.length > 0 && (
             <ul className="mt-2 grid gap-1 text-xs font-semibold leading-5 text-coral">
               {item.warnings.map((warning) => (
                 <li key={warning}>{warning}</li>
@@ -831,6 +999,31 @@ function ImageGrid({ images = [], onRemove, onMove, onNoteChange }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+function PhotoPlacementList({ items = [] }) {
+  if (items.length === 0) return null;
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <Image size={17} className="text-moss" aria-hidden="true" />
+        <h4 className="text-sm font-bold text-ink/70">3. 사진 넣을 위치</h4>
+      </div>
+      <div className="mt-2 grid gap-2">
+        {items.map((item) => (
+          <div key={item.id} className="rounded-md border border-line bg-paper p-3 text-sm leading-6">
+            <p className="text-xs font-bold text-moss">{item.label}</p>
+            <p className="mt-1 font-bold text-ink/75">{item.title}</p>
+            <p className="mt-1 text-ink/55">{item.description}</p>
+            <p className="mt-2 rounded-md bg-white px-3 py-2 text-xs font-semibold text-ink/55">
+              {item.marker}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -854,7 +1047,7 @@ function TitleCandidates({ result, onSelect, onRegenerate }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-3">
-        <h4 className="text-sm font-bold text-ink/70">1. 후기형 제목 후보</h4>
+        <h4 className="text-sm font-bold text-ink/70">다른 제목 후보</h4>
         <button
           type="button"
           onClick={onRegenerate}
@@ -909,7 +1102,7 @@ function ImageSuggestionCards({ items = [] }) {
     <div>
       <div className="flex items-center gap-2">
         <Image size={17} className="text-moss" aria-hidden="true" />
-        <h4 className="text-sm font-bold text-ink/70">5. 이미지 추천 카드</h4>
+        <h4 className="text-sm font-bold text-ink/70">사진 작성 참고 정보</h4>
       </div>
       <div className="mt-3 grid gap-3">
         {items.map((item) => (

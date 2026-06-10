@@ -1046,8 +1046,12 @@ export default function ContentMaker() {
     <div className="min-w-0 space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <p className="text-sm font-semibold text-coral">선택형 MVP 작업 화면</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">콘텐츠 메이커</h2>
+          <p className="text-sm font-semibold text-coral">정보글 · 가이드글 · 비교글</p>
+          <h2 className="mt-1 text-3xl font-bold tracking-normal">키워드로 정보글 만들기</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/60">
+            사진 없이 키워드만으로 정보성 글을 만들 때 사용하세요. 사진이 있는 후기글은
+            ‘사진으로 리뷰글 만들기’를 사용하면 더 자연스럽습니다.
+          </p>
         </div>
         <StatusBadge status={status} />
       </header>
@@ -2322,7 +2326,7 @@ function BlogStructureCheckPanel({ seoCheck }) {
     <section className="rounded-md border border-moss/25 bg-moss/10 p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-bold text-moss">블로그 글 구조 점검</p>
+          <p className="text-xs font-bold text-moss">글 발행 전 확인사항</p>
           <h5 className="mt-1 text-base font-bold text-ink">7. 글 발행 전 확인사항</h5>
           <p className="mt-1 text-sm leading-6 text-ink/65">
             제목, 첫 문단, 글 구성, 키워드, 마무리 문장이 사람들이 궁금해할 내용에 맞게 구성됐는지 확인합니다.
@@ -2382,7 +2386,7 @@ function StrategyMemo({ result, range }) {
   return (
     <details className="rounded-md border border-line bg-white p-4 text-sm">
       <summary className="cursor-pointer font-bold text-ink/65">
-        운영 메모 / 내부 전략 데이터
+        글 작성 참고 정보 보기
       </summary>
       <div className="mt-4 space-y-4 leading-6 text-ink/70">
         <section>
@@ -2400,7 +2404,7 @@ function StrategyMemo({ result, range }) {
         {seoCheck && (
           <section className="border-t border-line pt-4">
             <div className="flex items-center justify-between gap-2">
-              <h6 className="text-xs font-bold text-ink/50">본문 흐름 점검</h6>
+              <h6 className="text-xs font-bold text-ink/50">글 발행 전 확인사항</h6>
               <span className="text-xs font-bold text-moss">
                 {checklist.filter((item) => item.passed).length}/{checklist.length} 통과
               </span>
@@ -2424,7 +2428,7 @@ function StrategyMemo({ result, range }) {
 
         {imageItems.length > 0 && (
           <section className="border-t border-line pt-4">
-            <h6 className="text-xs font-bold text-ink/50">이미지 추천 데이터</h6>
+            <h6 className="text-xs font-bold text-ink/50">사진 참고 정보</h6>
             <ul className="mt-2 space-y-2">
               {imageItems.map((item) => (
                 <li key={item.id} className="text-sm">

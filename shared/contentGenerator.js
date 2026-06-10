@@ -2669,7 +2669,7 @@ const createSeoCheck = (
     passedCount: items.filter((item) => item.passed).length,
     totalCount: items.length,
     summary: {
-      title: "블로그 글 구조 점검",
+      title: "글 발행 전 확인사항",
       description:
         "제목, 첫 문단, 소제목, 키워드, 마무리 문장, 이미지 삽입 위치가 검색자가 궁금해할 내용에 맞게 구성됐는지 확인합니다."
     },

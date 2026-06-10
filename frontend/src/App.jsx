@@ -32,8 +32,9 @@ export default function App() {
   return (
     <AppLayout accessSession={accessSession} accessMessage={accessMessage} onLogout={handleLogout}>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/app" element={<ContentMaker />} />
+        <Route path="/" element={<ProductReviewMaker />} />
+        <Route path="/app" element={<ProductReviewMaker />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/maker" element={<ContentMaker />} />
         <Route path="/product-review-maker" element={<ProductReviewMaker />} />
         <Route path="/comment-replies" element={<CommentReplyManager />} />
