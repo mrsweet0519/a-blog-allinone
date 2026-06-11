@@ -1047,10 +1047,10 @@ export default function ContentMaker() {
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-sm font-semibold text-coral">정보글 · 가이드글 · 비교글</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">키워드로 정보글 만들기</h2>
+          <h2 className="mt-1 text-3xl font-bold tracking-normal">정보글 만들기</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/60">
             사진 없이 키워드만으로 정보성 글을 만들 때 사용하세요. 사진이 있는 후기글은
-            ‘사진으로 리뷰글 만들기’를 사용하면 더 자연스럽습니다.
+            ‘후기글 만들기’를 사용하면 더 자연스럽습니다.
           </p>
         </div>
         <StatusBadge status={status} />

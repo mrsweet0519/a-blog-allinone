@@ -481,6 +481,66 @@ assert.ok(kidsPlacePhotoReview.body.includes("주차와 다시 갈 기준"));
 assert.ok(kidsPlacePhotoReview.body.includes("주차는 확인이 필요"));
 assert.ok(kidsPlacePhotoReview.body.includes("[여기에 이미지 3을 넣어주세요"));
 
+const forbiddenReviewGuidePattern =
+  /정리해보려고|기준으로 풀어두면|중심으로 정리했|이런 흐름으로 작성|글에 담아보겠습니다|아래 내용은|과하게 단정하기보다|기준으로 볼 것 같아요/u;
+
+const requestedRestaurantReview = createProductReviewDraft({
+  mainKeyword: "역삼역 중식당 회식 후기",
+  category: "restaurant",
+  experienceMemo:
+    "탕수육이 바삭했고 어향가지가 맛있었어요. 4명이 먹기 좋았고 직장인 회식 장소로 괜찮아 보였어요. 가격과 주차는 확인이 필요해요.",
+  tone: "친근한",
+  targetLength: "1500"
+});
+const requestedRestaurantFirstSentence = requestedRestaurantReview.body.split(/(?<=[.!?])\s+/u)[0];
+assert.ok(requestedRestaurantFirstSentence.includes("역삼역 중식당 회식 후기"));
+assert.ok(!forbiddenReviewGuidePattern.test(requestedRestaurantReview.body));
+assert.ok(requestedRestaurantReview.body.includes("메뉴와 맛"));
+assert.ok(requestedRestaurantReview.body.includes("분위기와 동행"));
+assert.ok(requestedRestaurantReview.body.includes("탕수육"));
+assert.ok(requestedRestaurantReview.body.includes("어향가지"));
+assert.ok(requestedRestaurantReview.body.includes("4명"));
+assert.ok(requestedRestaurantReview.body.includes("직장인 회식"));
+assert.ok(requestedRestaurantReview.body.includes("가격: [확인 필요]"));
+assert.ok(requestedRestaurantReview.body.includes("주차: [확인 필요]"));
+assert.ok(!/후기\s+후기/u.test(requestedRestaurantReview.selectedTitle));
+assert.ok(!requestedRestaurantReview.hashtags.some((tag) => /후기후기/u.test(tag)));
+
+const requestedCreamReview = createProductReviewDraft({
+  mainKeyword: "수분크림 직접 써본 후기",
+  category: "product",
+  experienceMemo:
+    "발림감은 가볍고 향은 은은했어요. 아침저녁으로 쓰기 좋았고 끈적임은 적은 편이었어요.",
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.ok(!forbiddenReviewGuidePattern.test(requestedCreamReview.body));
+assert.ok(requestedCreamReview.body.includes("사용감과 향"));
+assert.ok(requestedCreamReview.body.includes("좋았던 점"));
+assert.ok(requestedCreamReview.body.includes("아쉬운 점"));
+assert.ok(requestedCreamReview.body.includes("발림감"));
+assert.ok(requestedCreamReview.body.includes("향"));
+assert.ok(requestedCreamReview.body.includes("아침저녁"));
+assert.ok(requestedCreamReview.body.includes("끈적임"));
+assert.ok(!/히알루론산|세라마이드|미백|주름|보습 효과|개선/u.test(requestedCreamReview.body));
+assert.ok(!/후기\s+후기/u.test(requestedCreamReview.selectedTitle));
+assert.ok(!requestedCreamReview.hashtags.some((tag) => /후기후기/u.test(tag)));
+
+const requestedKidsPlaceReview = createProductReviewDraft({
+  mainKeyword: "아이랑 다녀온 실내 체험공간 후기",
+  category: "kids-place",
+  experienceMemo:
+    "아이가 체험을 좋아했고 부모 대기 공간도 편했어요. 주차는 확인이 필요해요.",
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.ok(!forbiddenReviewGuidePattern.test(requestedKidsPlaceReview.body));
+assert.ok(requestedKidsPlaceReview.body.includes("아이 반응"));
+assert.ok(requestedKidsPlaceReview.body.includes("부모 대기와 피로도"));
+assert.ok(requestedKidsPlaceReview.body.includes("아이가 체험을 좋아"));
+assert.ok(requestedKidsPlaceReview.body.includes("부모 입장에서 편했던 점"));
+assert.ok(requestedKidsPlaceReview.body.includes("주차는 확인이 필요"));
+
 const lowConfidenceCapture = assessCapturedCommentExtraction("AE Sosa Do", {
   confidence: 0.39,
   source: "ocr"

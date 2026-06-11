@@ -40,7 +40,7 @@ export default function Dashboard() {
           className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-semibold text-white shadow-soft transition hover:bg-[#456b61]"
         >
           <FilePlus2 size={18} aria-hidden="true" />
-          사진으로 리뷰글 만들기
+          후기글 만들기
         </button>
       </header>
 

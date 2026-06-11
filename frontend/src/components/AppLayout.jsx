@@ -13,8 +13,8 @@ import EnvironmentBanner from "./EnvironmentBanner.jsx";
 import { getAccessDaysRemaining } from "../lib/accessControl.js";
 
 const navItems = [
-  { to: "/product-review-maker", label: "사진으로 리뷰글 만들기", icon: PackageSearch },
-  { to: "/maker", label: "키워드로 정보글 만들기", icon: WandSparkles },
+  { to: "/product-review-maker", label: "후기글 만들기", icon: PackageSearch },
+  { to: "/maker", label: "정보글 만들기", icon: WandSparkles },
   { to: "/comment-replies", label: "댓글 답변 만들기", icon: MessageSquare },
   { to: "/storage", label: "보관함", icon: Archive },
   { to: "/settings", label: "설정", icon: Settings2 }

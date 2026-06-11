@@ -455,8 +455,8 @@ export default function ProductReviewMaker() {
       },
       {
         ...result,
-        selectedTopic: "사진 기반 리뷰글",
-        selectedTitleType: "사진 리뷰"
+        selectedTopic: "사진+메모 후기글",
+        selectedTitleType: "후기글"
       },
       draftId
     );
@@ -491,10 +491,9 @@ export default function ProductReviewMaker() {
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-sm font-semibold text-coral">사진과 메모 기반 블로그 초안</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">사진으로 리뷰글 만들기</h2>
+          <h2 className="mt-1 text-3xl font-bold tracking-normal">후기글 만들기</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/60">
-            사진과 메모만 넣으면 블로그 후기 초안을 만들어드립니다. 맛집, 상품, 아이와 간 장소,
-            체험단 글을 복사하기 좋은 형태로 빠르게 정리해요.
+            사진과 기억나는 내용만 넣으면 블로그 후기 초안을 만들어드려요.
           </p>
         </div>
         <StatusBadge status={status} />
@@ -503,7 +502,7 @@ export default function ProductReviewMaker() {
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(360px,0.4fr)_minmax(0,0.6fr)]">
         <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold">리뷰글 만들기</h3>
+            <h3 className="text-lg font-bold">후기글 만들기</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
               {isReady ? "입력 완료" : "입력 전"}
             </span>
@@ -521,12 +520,12 @@ export default function ProductReviewMaker() {
 
           <div className="mt-5 space-y-5">
             <label className="block">
-              <FieldLabel required>어떤 글을 쓸까요?</FieldLabel>
+              <FieldLabel required>어떤 후기를 쓸까요?</FieldLabel>
               <input
                 value={form.mainKeyword}
                 onChange={(event) => updateForm("mainKeyword", event.target.value)}
                 className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 역삼역 중식당 회식 후기 / 수분크림 직접 써본 후기 / 아이랑 다녀온 부천 키즈카페 후기"
+                placeholder="예: 역삼역 중식당 회식 후기 / 수분크림 직접 써본 후기 / 아이랑 다녀온 실내 체험공간 후기"
               />
             </label>
 
@@ -594,13 +593,13 @@ export default function ProductReviewMaker() {
             </section>
 
             <label className="block">
-              <FieldLabel>기억나는 내용</FieldLabel>
+              <FieldLabel>기억나는 내용을 적어주세요</FieldLabel>
               <textarea
                 value={form.experienceMemo}
                 onChange={(event) => updateForm("experienceMemo", event.target.value)}
                 rows={6}
                 className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-                placeholder={`예: 탕수육이 바삭했고, 4명이 먹기 좋았어요. 주차는 확인 필요해요.\n예: 발림감은 가볍고 향은 은은했어요. 아침저녁으로 쓰기 좋았어요.\n예: 아이가 체험을 좋아했고, 부모 대기 공간도 편했어요.`}
+                placeholder="예: 탕수육이 바삭했고 어향가지가 맛있었어요. 4명이 먹기 좋았고 가격과 주차는 확인이 필요해요."
               />
             </label>
 
@@ -779,7 +778,7 @@ export default function ProductReviewMaker() {
               <p className="text-xs font-semibold leading-5 text-ink/60">
                 {isReady
                   ? "사진과 메모를 바탕으로 바로 복사 가능한 블로그 후기 초안을 만듭니다."
-                  : "글 주제를 적고, 사진 또는 기억나는 내용 중 하나 이상을 넣어주세요."}
+                  : "후기 주제를 적고, 사진 또는 기억나는 내용 중 하나 이상을 넣어주세요."}
               </p>
               <button
                 type="button"
@@ -788,7 +787,7 @@ export default function ProductReviewMaker() {
                 className="focus-ring mt-2 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
               >
                 <WandSparkles size={18} aria-hidden="true" />
-                블로그 글 생성
+                후기글 생성
               </button>
             </div>
           </div>
@@ -805,7 +804,7 @@ export default function ProductReviewMaker() {
 
           {!hasResult && (
             <div className="mt-5 grid min-h-[420px] place-items-center rounded-lg border border-dashed border-line bg-paper p-6 text-center text-sm font-semibold leading-6 text-ink/55">
-              글 주제를 적고 사진 또는 기억나는 내용 중 하나 이상을 넣은 뒤 블로그 글 생성을 누르세요.
+              후기 주제를 적고 사진 또는 기억나는 내용 중 하나 이상을 넣은 뒤 후기글 생성을 누르세요.
             </div>
           )}
 
