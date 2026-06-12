@@ -140,7 +140,7 @@ const imageKeywordsToClipboard = (items = []) =>
   items
     .map((item, index) =>
       [
-        `사진 ${index + 1}. ${item.title}`,
+        `${item.label || `추천 위치 ${index + 1}`}. ${item.title}`,
         item.description,
         item.marker
       ].filter(Boolean).join("\n")
@@ -369,7 +369,6 @@ export default function ProductReviewMaker() {
     const imageText = mergeTextBlocks(
       ...imageContext.map((item) =>
         [
-          `사진 ${item.index}: ${item.name}`,
           item.note ? `사진 메모: ${item.note}` : "",
           item.ocrText ? `사진에서 읽은 내용: ${item.ocrText}` : ""
         ].filter(Boolean).join("\n")
@@ -525,14 +524,14 @@ export default function ProductReviewMaker() {
   };
 
   return (
-    <div className="min-w-0 space-y-6">
+    <div className="min-w-0 space-y-7">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-sm font-semibold text-coral">원클릭 네이버 블로그 글쓰기</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">
+          <h2 className="mt-1 max-w-3xl text-3xl font-bold leading-tight tracking-normal sm:text-4xl">
             사진과 메모만 넣으면 블로그 글 초안이 자동으로 완성됩니다
           </h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/60">
+          <p className="mt-3 max-w-2xl text-base font-semibold leading-7 text-ink/60">
             네이버 블로그, 티스토리, 댓글 응답까지 초보자도 바로 쓸 수 있는 원클릭 글쓰기 도구
           </p>
         </div>
@@ -541,20 +540,20 @@ export default function ProductReviewMaker() {
 
       <UsageSteps />
 
-      <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(360px,0.4fr)_minmax(0,0.6fr)]">
-        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+      <div className="grid min-w-0 items-start gap-7 xl:grid-cols-[minmax(360px,0.4fr)_minmax(0,0.6fr)]">
+        <section className="min-w-0 rounded-xl border border-line/70 bg-white p-6 shadow-[0_14px_35px_rgba(31,36,40,0.06)]">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">원클릭 네이버 블로그 글쓰기</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
               {isReady ? "입력 완료" : "입력 전"}
             </span>
           </div>
-          <div className="mt-4 rounded-md border border-moss/20 bg-moss/10 p-3 text-sm leading-6 text-ink/70">
+          <div className="mt-4 rounded-lg border border-moss/15 bg-[#f3f7f3] p-4 text-sm leading-6 text-ink/70">
             <p className="text-xs font-bold text-moss">네이버 후기글은 이렇게 만들어요</p>
             <p className="mt-1 font-semibold">
               사진 설명과 짧은 메모만 입력해도 블로그 후기글 초안이 생성됩니다.
             </p>
-            <ul className="mt-2 grid gap-1 text-xs font-semibold text-ink/55">
+            <ul className="mt-3 grid gap-1.5 text-xs font-semibold text-ink/55">
               <li>맛집 후기: 메뉴, 분위기, 동행, 재방문 기준</li>
               <li>상품 후기: 사용감, 장점, 아쉬운 점, 추천 대상</li>
               <li>장소 후기: 동선, 주차, 아이 반응, 부모 피로도</li>
@@ -567,7 +566,7 @@ export default function ProductReviewMaker() {
               <input
                 value={form.mainKeyword}
                 onChange={(event) => updateForm("mainKeyword", event.target.value)}
-                className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
+                className="focus-ring mt-2 min-h-12 w-full rounded-md border border-line/80 bg-[#fbfaf6] px-3 text-base"
                 placeholder="예: 역삼역 중식당 회식 후기 / 수분크림 직접 써본 후기 / 아이랑 다녀온 실내 체험공간 후기"
               />
             </label>
@@ -583,7 +582,7 @@ export default function ProductReviewMaker() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") pasteAreaRef.current?.focus();
                 }}
-                className="focus-ring mt-2 rounded-md border border-dashed border-line bg-paper p-4 transition hover:border-moss hover:bg-white"
+                className="focus-ring mt-2 rounded-lg border border-dashed border-line/80 bg-[#fbfaf6] p-5 transition hover:border-moss hover:bg-white"
               >
                 <div className="flex flex-col items-center justify-center text-center">
                   <Upload size={24} className="text-moss" aria-hidden="true" />
@@ -593,7 +592,7 @@ export default function ProductReviewMaker() {
                   <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
                     Ctrl+V로 붙여넣어도 됩니다. 사진이 없으면 기억나는 내용만 적어도 괜찮아요.
                   </p>
-                  <label className="focus-ring mt-3 inline-flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-bold transition hover:border-moss hover:text-moss">
+                  <label className="focus-ring mt-3 inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-moss hover:text-moss">
                     사진 선택
                     <input
                       type="file"
@@ -641,18 +640,18 @@ export default function ProductReviewMaker() {
                 value={form.experienceMemo}
                 onChange={(event) => updateForm("experienceMemo", event.target.value)}
                 rows={6}
-                className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
+                className="focus-ring mt-2 w-full rounded-md border border-line/80 bg-[#fbfaf6] p-3 text-base leading-7"
                 placeholder="예: 탕수육이 바삭했고 어향가지가 맛있었어요. 4명이 먹기 좋았고 직장인 회식 장소로 괜찮아 보였어요. 가격과 주차는 확인이 필요해요."
               />
             </label>
 
-            <details className="rounded-md border border-line bg-paper p-3">
+            <details className="rounded-lg border border-line/80 bg-[#fbfaf6] p-4">
               <summary className="cursor-pointer list-none">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <span className="text-sm font-bold text-ink/70">자세한 설정</span>
                     <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                      글 톤, 협찬 표시, 사진 속 글자 읽기, 이미지별 메모는 필요할 때만 열어보세요.
+                      글 톤, 협찬 표시, 사진 속 글자 읽기, 사진별 메모는 필요할 때만 열어보세요.
                     </p>
                   </div>
                   <span className="inline-flex min-h-8 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-bold text-moss">
@@ -747,7 +746,7 @@ export default function ProductReviewMaker() {
                     <div>
                       <p className="text-sm font-bold text-ink/70">이미지에서 읽은 내용 · 이미지별 메모</p>
                       <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                        사진 속 글자, 파일명, 이미지별 메모가 글 생성에 함께 반영됩니다.
+                        사진 속 글자와 사진별 메모가 글 생성에 함께 반영됩니다. 업로드 파일명은 본문에 넣지 않습니다.
                       </p>
                     </div>
                     <button
@@ -817,8 +816,8 @@ export default function ProductReviewMaker() {
               </div>
             </details>
 
-            <div className="rounded-md border border-moss/20 bg-moss/10 p-3">
-              <p className="text-xs font-semibold leading-5 text-ink/60">
+            <div className="rounded-lg border border-moss/20 bg-[#f3f7f3] p-4">
+              <p className="text-sm font-semibold leading-6 text-ink/60">
                 {isReady
                   ? "사진과 메모를 바탕으로 바로 복사 가능한 네이버 블로그 초안을 만듭니다."
                   : "어떤 글을 쓸지 적고, 사진 또는 기억나는 내용 중 하나 이상을 넣어주세요."}
@@ -827,7 +826,7 @@ export default function ProductReviewMaker() {
                 type="button"
                 onClick={() => generateReview()}
                 disabled={!isReady || status === "generating" || isReading}
-                className="focus-ring mt-2 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
+                className="focus-ring mt-3 inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-md bg-moss px-4 py-3 text-base font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
               >
                 <WandSparkles size={18} aria-hidden="true" />
                 블로그 글 초안 만들기
@@ -836,7 +835,7 @@ export default function ProductReviewMaker() {
           </div>
         </section>
 
-        <section className="min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
+        <section className="min-w-0 rounded-xl border border-line/70 bg-white p-6 shadow-[0_14px_35px_rgba(31,36,40,0.06)]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-bold text-moss">생성 결과</p>
@@ -846,7 +845,7 @@ export default function ProductReviewMaker() {
           </div>
 
           {hasResult && (
-            <div className="mt-5 rounded-lg border border-moss/25 bg-moss/10 p-4">
+            <div className="mt-5 rounded-xl border border-moss/20 bg-[#f3f7f3] p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-base font-bold text-moss">복사해서 바로 블로그에 붙여넣기 가능</p>
@@ -868,7 +867,7 @@ export default function ProductReviewMaker() {
           )}
 
           {!hasResult && (
-            <div className="mt-5 grid min-h-[420px] place-items-center rounded-lg border border-dashed border-line bg-paper p-6 text-center text-sm font-semibold leading-6 text-ink/55">
+            <div className="mt-5 grid min-h-[420px] place-items-center rounded-xl border border-dashed border-line/80 bg-[#fbfaf6] p-6 text-center text-sm font-semibold leading-6 text-ink/55">
               어떤 글을 쓸지 적고 사진 또는 기억나는 내용 중 하나 이상을 넣은 뒤 블로그 글 초안 만들기를 누르세요.
             </div>
           )}
@@ -911,7 +910,7 @@ export default function ProductReviewMaker() {
                     setResult((current) => ({ ...current, selectedTitle: title }));
                     setForm((current) => ({ ...current, selectedTitle: title }));
                   }}
-                  className="focus-ring mt-3 min-h-12 w-full rounded-md border border-line bg-white px-3 text-base font-bold text-ink"
+                  className="focus-ring mt-3 min-h-12 w-full rounded-md border border-line/80 bg-white px-3 text-base font-bold text-ink"
                   aria-label="선택 제목 직접 수정"
                 />
               </div>
@@ -926,7 +925,7 @@ export default function ProductReviewMaker() {
                   value={result.body}
                   onChange={(event) => setResult((current) => ({ ...current, body: event.target.value }))}
                   rows={18}
-                  className="focus-ring mt-2 w-full rounded-md border border-line bg-paper p-3 text-sm leading-7 whitespace-pre-wrap"
+                  className="focus-ring mt-2 w-full rounded-md border border-line/80 bg-[#fbfaf6] p-4 text-base leading-8 whitespace-pre-wrap"
                 />
               </div>
 
@@ -1055,7 +1054,7 @@ function UsageSteps() {
   ];
 
   return (
-    <section className="rounded-lg border border-line bg-white p-5 shadow-soft">
+    <section className="rounded-xl border border-line/70 bg-white/85 p-5 shadow-[0_12px_28px_rgba(31,36,40,0.05)]">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-coral">처음 쓰는 분도 3단계면 충분해요</p>
@@ -1067,7 +1066,7 @@ function UsageSteps() {
       </div>
       <ol className="mt-4 grid gap-3 md:grid-cols-3">
         {steps.map(([step, title, description]) => (
-          <li key={step} className="rounded-md border border-line bg-paper p-4">
+          <li key={step} className="rounded-lg border border-line/70 bg-[#fbfaf6] p-4">
             <span className="inline-flex min-h-7 items-center rounded-md bg-moss/10 px-2.5 text-xs font-bold text-moss">
               {step}
             </span>

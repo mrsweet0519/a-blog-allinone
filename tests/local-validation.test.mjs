@@ -402,7 +402,7 @@ assert.ok((productFirstParagraph.match(/찾아보다/gu) || []).length <= 1);
 assert.ok((productFirstParagraph.match(/궁금/gu) || []).length <= 1);
 assert.ok(!/경험 메모|OCR 원문|추출 데이터/u.test(productReview.body));
 assert.ok(!/무조건|보장|완벽|즉시효과/u.test(productReview.body));
-assert.ok(productReview.body.includes("[여기에 이미지 1을 넣어주세요:"));
+assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(productReview.body));
 assert.ok(productReview.hashtags.includes("#수분크림후기"));
 assert.equal(productReview.titles.slice(0, 3).length, 3);
 assert.ok(productReview.outline.includes("사용감과 향"));
@@ -442,8 +442,9 @@ assert.ok(restaurantPhotoReview.body.includes("분위기와 동행"));
 assert.ok(restaurantPhotoReview.body.includes("가격과 주문 전 확인할 점"));
 assert.ok(restaurantPhotoReview.body.includes("재방문 기준"));
 assert.ok(restaurantPhotoReview.body.includes("직장인 회식"));
-assert.ok(restaurantPhotoReview.body.includes("[여기에 이미지 1을 넣어주세요"));
-assert.ok(restaurantPhotoReview.body.includes("[여기에 이미지 3을 넣어주세요"));
+assert.ok(restaurantPhotoReview.body.includes("사진으로 입구와 외관"));
+assert.ok(restaurantPhotoReview.body.includes("대표 메뉴 사진"));
+assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(restaurantPhotoReview.body));
 assert.ok(!/(^|\n)\s*\*\s+|(^|\n)\s*\*\*.+\*\*/u.test(restaurantPhotoReview.body));
 
 const creamPhotoReview = createProductReviewDraft({
@@ -465,7 +466,8 @@ assert.ok(creamPhotoReview.body.includes("좋았던 점"));
 assert.ok(creamPhotoReview.body.includes("아쉬운 점"));
 assert.ok(creamPhotoReview.body.includes("이런 분께 추천해요"));
 assert.ok(creamPhotoReview.body.includes("발림감"));
-assert.ok(creamPhotoReview.body.includes("[여기에 이미지 2을 넣어주세요"));
+assert.ok(creamPhotoReview.body.includes("사용 장면 사진"));
+assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(creamPhotoReview.body));
 
 const kidsPlacePhotoReview = createProductReviewDraft({
   mainKeyword: "아이랑 다녀온 실내 체험공간 후기",
@@ -486,7 +488,8 @@ assert.ok(kidsPlacePhotoReview.body.includes("동선과 체험 흐름"));
 assert.ok(kidsPlacePhotoReview.body.includes("부모 대기와 피로도"));
 assert.ok(kidsPlacePhotoReview.body.includes("주차와 다시 갈 기준"));
 assert.ok(kidsPlacePhotoReview.body.includes("주차는 확인이 필요"));
-assert.ok(kidsPlacePhotoReview.body.includes("[여기에 이미지 3을 넣어주세요"));
+assert.ok(kidsPlacePhotoReview.body.includes("체험 공간을 보여주는 사진"));
+assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(kidsPlacePhotoReview.body));
 
 const forbiddenReviewGuidePattern =
   /정리해보려고|기준으로 풀어두면|중심으로 정리했|이런 흐름으로 작성|글에 담아보겠습니다|아래 내용은|과하게 단정하기보다|기준으로 볼 것 같아요/u;
@@ -556,6 +559,34 @@ assert.ok(requestedKidsPlaceReview.body.includes("부모 대기와 피로도"));
 assert.ok(requestedKidsPlaceReview.body.includes("아이가 체험을 좋아"));
 assert.ok(requestedKidsPlaceReview.body.includes("부모 입장에서 편했던 점"));
 assert.ok(requestedKidsPlaceReview.body.includes("주차는 확인이 필요"));
+
+const customsLectureReview = createProductReviewDraft({
+  mainKeyword: "세관공매 무료공개강의",
+  category: "education",
+  experienceMemo:
+    "처음에는 세관공매라는 단어 자체가 어렵게 느껴졌어요. 입찰, 공고, 낙찰, 반출, 판로 흐름을 미리 확인할 수 있어서 좋았어요.",
+  imageContext: [
+    {
+      index: 1,
+      name: "ChatGPT Image 2026-06-12 carousel page 1.png",
+      note: "강의 안내 이미지에서 커리큘럼과 진행 흐름",
+      ocrText: "세관공매 입찰 공고 낙찰 반출 판로\n생성 시간: 2026-06-12 image page carousel"
+    }
+  ],
+  imageCount: 1,
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.ok(customsLectureReview.body.includes("세관공매 무료공개강의"));
+assert.ok(customsLectureReview.body.includes("세관공매라는 단어 자체가 어렵게 느껴"));
+assert.ok(customsLectureReview.body.includes("강의 안내 이미지에서 커리큘럼과 진행 흐름"));
+assert.ok(customsLectureReview.body.includes("입찰"));
+assert.ok(customsLectureReview.body.includes("공고"));
+assert.ok(customsLectureReview.body.includes("낙찰"));
+assert.ok(customsLectureReview.body.includes("반출"));
+assert.ok(customsLectureReview.body.includes("판로"));
+assert.ok(!/carousel|ChatGPT Image|image page|업로드 파일명|생성 시간|내부 이미지 식별자|\.png|이미지\s*\d|사진\s*\d/iu.test(customsLectureReview.body));
+assert.ok(!forbiddenReviewGuidePattern.test(customsLectureReview.body));
 
 const tistoryDraft = createTistoryDraft({
   keyword: "초등 독서노트 쓰는 법",

@@ -13,4 +13,6 @@ Thumbs.db
 test-results/
 layout-*.png
 .codex-*.log
+.codex-*.out
+.codex-*.err
 .codex-*-smoke.png

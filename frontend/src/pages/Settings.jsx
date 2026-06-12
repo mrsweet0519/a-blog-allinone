@@ -11,7 +11,7 @@ const defaultSettings = {
   defaultTone: makerOptions.tones[0]
 };
 
-export default function Settings() {
+export default function Settings({ accessSession, licenseView = false }) {
   const [settings, setSettings] = useState(() => ({ ...defaultSettings, ...loadSettings() }));
   const [saved, setSaved] = useState(false);
   const [backendStatus, setBackendStatus] = useState(
@@ -49,8 +49,10 @@ export default function Settings() {
     <div className="space-y-6">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-semibold text-coral">확장 슬롯</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">고급 설정</h2>
+          <p className="text-sm font-semibold text-coral">{licenseView ? "사용권" : "확장 슬롯"}</p>
+          <h2 className="mt-1 text-3xl font-bold tracking-normal">
+            {licenseView ? "사용권 확인" : "고급 설정"}
+          </h2>
         </div>
         <button
           type="button"
@@ -63,6 +65,17 @@ export default function Settings() {
       </header>
 
       <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+        {licenseView && accessSession && (
+          <div className="rounded-lg border border-moss/20 bg-white p-5 shadow-soft xl:col-span-2">
+            <h3 className="text-lg font-bold">현재 사용권</h3>
+            <div className="mt-4 grid gap-3 text-sm font-semibold leading-6 text-ink/65 sm:grid-cols-3">
+              <p className="rounded-md bg-paper px-3 py-2">사용권: {accessSession.label}</p>
+              <p className="rounded-md bg-paper px-3 py-2">접속코드: 인증 완료</p>
+              <p className="rounded-md bg-paper px-3 py-2">만료일: {accessSession.expiresAt}</p>
+            </div>
+          </div>
+        )}
+
         <div className="rounded-lg border border-line bg-white p-5 shadow-soft">
           <h3 className="text-lg font-bold">기본 정보</h3>
           <div className="mt-5 space-y-4">

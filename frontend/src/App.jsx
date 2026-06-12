@@ -45,7 +45,8 @@ export default function App() {
         <Route path="/product-review-maker" element={<Navigate to="/one-click/naver" replace />} />
         <Route path="/comment-replies" element={<Navigate to="/optimized/comments" replace />} />
         <Route path="/storage" element={<Storage />} />
-        <Route path="/settings" element={<Settings />} />
+        <Route path="/settings" element={<Settings accessSession={accessSession} />} />
+        <Route path="/license" element={<Settings accessSession={accessSession} licenseView />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppLayout>
