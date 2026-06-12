@@ -6,7 +6,7 @@ import {
   softenForTone
 } from "./toneEngine.js";
 
-const DEFAULT_TARGET_LENGTH = 1500;
+const DEFAULT_TARGET_LENGTH = 3000;
 
 const text = (value) => String(value ?? "").trim();
 
@@ -711,10 +711,10 @@ const inferReviewCategory = (form = {}) => {
 
   const signalText = getReviewSignalText(form);
 
-  if (/아이|키즈|부모|체험공간|실내|놀이|육아|동반/u.test(signalText)) return "kids-place";
   if (/맛집|식당|중식|한식|양식|일식|카페|회식|메뉴|탕수육|어향가지|파스타|피자|스테이크|고기|디저트|커피|직원\s*친절|재방문/u.test(signalText)) {
     return "restaurant";
   }
+  if (/아이|키즈|부모|체험공간|실내|놀이|육아|동반/u.test(signalText)) return "kids-place";
   if (/학원|강의|수업|교육|클래스|강사|커리큘럼/u.test(signalText)) return "education";
   if (/병원|의원|치과|한의원|피부과|정형외과|내과|검진|진료|접수|의사|간호|처방|상담실/u.test(signalText)) {
     return "hospital";
@@ -944,17 +944,23 @@ const createExperienceHashtags = (form = {}, category = inferReviewCategory(form
   const mainKeyword = getMainKeyword(form);
   const related = getRelatedKeywords(form);
   const profile = getReviewProfile(category);
+  const genericSeeds =
+    category === "product"
+      ? ["생활후기", "후기정리", "구매전확인", "사용전확인"]
+      : ["생활후기", "후기정리", "방문전확인", "정보정리"];
 
   return uniqueText([
     mainKeyword,
     withReviewHashSuffix(mainKeyword),
     ...related,
     ...related.map((item) => `${item}후기`),
-    ...profile.hashtagSeeds
+    ...createSecondaryKeywords(form, category),
+    ...profile.hashtagSeeds,
+    ...genericSeeds
   ])
     .map(toHashTag)
     .filter(Boolean)
-    .slice(0, 14);
+    .slice(0, 15);
 };
 
 const createExperienceImageSuggestions = (form = {}, category = inferReviewCategory(form)) => {
@@ -1606,6 +1612,664 @@ const createSearchKeywordSummary = (form = {}, category = inferReviewCategory(fo
   ]).slice(0, 9);
 };
 
+const REVIEW_CATEGORY_LABELS = {
+  restaurant: "맛집/카페 후기",
+  product: "상품 후기",
+  store: "매장 후기",
+  education: "교육 후기",
+  hospital: "병원 후기",
+  service: "서비스 후기",
+  travel: "여행 후기",
+  experience: "체험 후기",
+  "kids-place": "아이 동반 장소 후기",
+  place: "장소 후기"
+};
+
+const getFormMemoText = (form = {}) =>
+  getMemoText(splitMemoLines(form.experienceMemo).map(softenSensitiveExpression));
+
+const hasProvidedParking = (memoText = "") => /주차\s*(편|가능|있|넓|좋)|주차가\s*편/u.test(memoText);
+const hasParkingNeedsCheck = (memoText = "") => /주차.*확인|주차는\s*확인/u.test(memoText);
+
+const createSecondaryKeywords = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const baseKeyword = getReviewTitleBase(mainKeyword);
+  const specialKeywords = [];
+
+  if (category === "store" && /금거래소|금값|금\s*시세|금시세|매입/u.test(`${mainKeyword} ${memoText}`)) {
+    specialKeywords.push("금거래소", "금매입", "금시세", "상담 분위기", "매장 후기");
+  }
+
+  if (category === "restaurant" && /카페/u.test(`${mainKeyword} ${memoText}`)) {
+    specialKeywords.push("아이랑 카페", "가족 카페", "아이 음료", "좌석 넓은 카페", "주차 확인");
+  }
+
+  if (category === "product" && /드라이샴푸|운동|떡진|보송|휴대/u.test(`${mainKeyword} ${memoText}`)) {
+    specialKeywords.push("드라이샴푸 후기", "운동 후 드라이샴푸", "떡진 머리", "보송함", "휴대용 드라이샴푸");
+  }
+
+  const summaryKeywords = createSearchKeywordSummary(form, category);
+
+  return uniqueText([
+    ...getRelatedKeywords(form),
+    ...specialKeywords,
+    ...summaryKeywords,
+    baseKeyword
+  ])
+    .filter((keyword) => compact(keyword) !== compact(mainKeyword))
+    .slice(0, 5);
+};
+
+const createSearchIntentAnalysis = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const secondaryKeywords = createSecondaryKeywords(form, category);
+  const categoryLabel = REVIEW_CATEGORY_LABELS[category] || "후기형 글";
+
+  return {
+    contentType: categoryLabel,
+    summary: `${mainKeyword}를 검색한 사람이 ${secondaryKeywords[0] || "실제 후기"}와 확인이 필요한 정보를 빠르게 판단하려는 의도입니다.`,
+    readerQuestion: `${mainKeyword}를 보기 전에 무엇을 확인하면 좋을까요?`,
+    answer: createSearchAnswerSentence(form, category, getFormMemoText(form))
+  };
+};
+
+const createHomeFeedClickPoint = (form = {}, selectedTitle = "", imageSuggestions = [], category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const firstImage = imageSuggestions[0];
+  const thumbnailCopyMap = {
+    restaurant: /카페/u.test(mainKeyword) ? "아이랑 가기 전 체크" : "메뉴와 분위기 체크",
+    product: "사용감과 아쉬운 점",
+    store: "상담 분위기 먼저 보기",
+    education: "수업 흐름 미리 보기",
+    hospital: "접수 흐름 확인",
+    service: "상담 과정 체크",
+    travel: "동선과 분위기 보기",
+    experience: "체험 흐름 미리 보기",
+    "kids-place": "아이 반응 먼저 보기",
+    place: "동선과 분위기 보기"
+  };
+
+  return {
+    situationTitle: selectedTitle || `${mainKeyword} 후기`,
+    thumbnailCopy: thumbnailCopyMap[category] || "확인 포인트 정리",
+    firstImageCandidate: firstImage?.title || "대표 사진",
+    clickReason: "광고 문구보다 실제로 확인할 기준이 먼저 보여 저장하거나 클릭하기 좋습니다."
+  };
+};
+
+const createOpeningSentenceCandidates = (form = {}, category = inferReviewCategory(form), body = "") => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const firstSentence = text(body).split(/(?<=[.!?。])\s+/u)[0];
+
+  return uniqueText([
+    firstSentence,
+    `${mainKeyword}를 알아볼 때는 실제로 확인한 내용과 [확인 필요] 정보를 나눠 보는 게 좋더라고요.`,
+    createSearchAnswerSentence(form, category, memoText)
+  ]).slice(0, 3);
+};
+
+const createPhotoGuideItems = (imageSuggestions = []) =>
+  imageSuggestions.slice(0, 5).map((item) => ({
+    title: item.title,
+    insertAfter: item.label,
+    guide: item.directShotGuide || item.description,
+    marker: `[사진 가이드: ${item.title}]`,
+    description: item.description
+  }));
+
+const getInfoValue = (value = "") => text(value) || "[확인 필요]";
+
+const createRestaurantInfoSummary = (form = {}) => {
+  const memoText = getFormMemoText(form);
+  const menus = getRestaurantMenus(memoText);
+  const hasChildDrink = /아이\s*음료|어린이\s*음료/u.test(memoText);
+  const hasWideSeat = /좌석\s*넓|자리\s*넓|좌석.*넉넉/u.test(memoText);
+  const menuInfo = uniqueText([
+    ...menus,
+    hasChildDrink ? "아이 음료 있음" : "",
+    text(form.price) || text(form.priceInfo) || "가격 [확인 필요]"
+  ]).join(" / ");
+
+  return [
+    ["장소/업체명", getMainKeyword(form)],
+    ["주소", getInfoValue(form.address || form.region)],
+    ["영업시간", "[확인 필요]"],
+    ["주차", hasProvidedParking(memoText) && !hasParkingNeedsCheck(memoText) ? "주차 편함(사용자 메모)" : "[확인 필요]"],
+    ["대표 메뉴/가격", menuInfo || "[확인 필요]"],
+    ["아이 동반 정보", hasChildDrink ? "아이 음료 있음(사용자 메모)" : "[확인 필요]"],
+    ["좌석", hasWideSeat ? "좌석 넓음(사용자 메모)" : "[확인 필요]"]
+  ];
+};
+
+const createProductInfoSummaryForReview = (form = {}) => {
+  const productInfoItems = Object.fromEntries(
+    summarizeProductInfo(form).map((item) => [item.field, item.value])
+  );
+
+  return [
+    ["상품명/브랜드명", getInfoValue(text(form.productName) || text(form.brandName) || getMainKeyword(form))],
+    ["가격", getInfoValue(text(form.price) || productInfoItems.price)],
+    ["용량/구성", getInfoValue(text(form.capacity) || text(form.composition) || productInfoItems.capacity || productInfoItems.composition)],
+    ["구매처", getInfoValue(form.purchaseUrl || form.purchaseNotes || productInfoItems.purchaseNotes)],
+    ["사용 기간", "[확인 필요]"],
+    ["주의사항", getInfoValue(text(form.cautions) || productInfoItems.cautions)]
+  ];
+};
+
+const createStoreInfoSummary = (form = {}) => {
+  const memoText = getFormMemoText(form);
+
+  return [
+    ["업체/매장명", getMainKeyword(form)],
+    ["주소", getInfoValue(form.address || form.region)],
+    ["영업시간", "[확인 필요]"],
+    ["주차", hasProvidedParking(memoText) && !hasParkingNeedsCheck(memoText) ? "주차 가능/편함(사용자 메모)" : "[확인 필요]"],
+    ["상담/매입 기준", /매입/u.test(memoText) ? "매입 상담 메모 있음, 실제 기준은 [확인 필요]" : "[확인 필요]"],
+    ["가격/시세", /금값|금\s*시세|금시세|시세/u.test(memoText) ? "시세 변동 가능, 방문 시 [확인 필요]" : "[확인 필요]"]
+  ];
+};
+
+const createEducationInfoSummary = (form = {}) => [
+  ["강의/수업명", getMainKeyword(form)],
+  ["강의 시간", "[확인 필요]"],
+  ["수강료", "[확인 필요]"],
+  ["준비물", "[확인 필요]"],
+  ["강사/기관", getLecturerName(getFormMemoText(form)) || "[확인 필요]"]
+];
+
+const createGenericInfoSummary = (form = {}, category = inferReviewCategory(form)) => {
+  if (category === "restaurant") return createRestaurantInfoSummary(form);
+  if (category === "product") return createProductInfoSummaryForReview(form);
+  if (category === "store") return createStoreInfoSummary(form);
+  if (category === "education") return createEducationInfoSummary(form);
+
+  return [
+    ["이름", getMainKeyword(form)],
+    ["위치/주소", getInfoValue(form.address || form.region)],
+    ["운영시간", "[확인 필요]"],
+    ["비용/가격", "[확인 필요]"],
+    ["예약/문의", getInfoValue(form.contactMethod)]
+  ];
+};
+
+const createRecommendedForItems = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+
+  const items = {
+    restaurant: [
+      /카페/u.test(mainKeyword) ? "아이와 함께 갈 카페를 찾는 가족" : "메뉴와 분위기를 함께 보고 식사 장소를 고르는 분",
+      /좌석\s*넓/u.test(memoText) ? "좌석 여유를 중요하게 보는 분" : "가격과 주차처럼 바뀔 수 있는 정보를 발행 전 확인할 분",
+      "광고보다 실제 메모 기반 후기를 먼저 보고 싶은 분"
+    ],
+    product: [
+      `${getReviewTitleBase(mainKeyword)}의 실제 사용 상황이 궁금한 분`,
+      "장점과 아쉬운 점을 같이 보고 구매를 판단하고 싶은 분",
+      "효과 단정보다 사용감과 휴대성 같은 현실 기준이 필요한 분"
+    ],
+    store: [
+      "처음 방문 전 상담 분위기가 궁금한 분",
+      "시세나 비용처럼 바뀌는 정보를 구분해서 보고 싶은 분",
+      "친절한 응대와 설명 흐름을 중요하게 보는 분"
+    ],
+    education: [
+      "처음 배우는 내용의 난이도가 궁금한 분",
+      "커리큘럼과 진행 순서를 먼저 확인하고 싶은 분",
+      "수강 전 준비물과 비용을 따로 체크할 분"
+    ]
+  };
+
+  return items[category] || [
+    `${mainKeyword}를 처음 알아보는 분`,
+    "사진과 메모 기반의 현실적인 후기가 필요한 분",
+    "확인되지 않은 정보를 구분해서 보고 싶은 분"
+  ];
+};
+
+const createFaqItems = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+
+  if (category === "restaurant") {
+    return [
+      {
+        question: `${mainKeyword}는 아이와 함께 가기 괜찮나요?`,
+        answer: /아이\s*음료/u.test(memoText)
+          ? "사용자 메모 기준으로 아이 음료가 있고 좌석도 넓게 느껴졌다고 정리할 수 있습니다."
+          : "아이 동반 가능 여부와 유아 의자, 소음 정도는 [확인 필요]로 남기는 편이 좋습니다."
+      },
+      {
+        question: "메뉴 가격은 확인됐나요?",
+        answer: text(form.price) || text(form.priceInfo) ? `제공된 가격 정보는 ${text(form.price) || text(form.priceInfo)}입니다.` : "메뉴 가격은 제공되지 않아 [확인 필요]로 표시하는 것이 안전합니다."
+      },
+      {
+        question: "주차 정보는 있나요?",
+        answer: hasProvidedParking(memoText) && !hasParkingNeedsCheck(memoText)
+          ? "사용자 메모에는 주차가 편하다고 되어 있지만, 발행 전 실제 주차 가능 여부를 다시 확인하면 좋습니다."
+          : "주차 정보는 제공되지 않아 [확인 필요]로 남겨두는 것이 좋습니다."
+      }
+    ];
+  }
+
+  if (category === "product") {
+    return [
+      {
+        question: `${mainKeyword}는 언제 쓰기 좋나요?`,
+        answer: /운동|떡진|보송/u.test(memoText)
+          ? "사용자 메모 기준으로 운동 후 머리가 신경 쓰일 때, 빠르게 보송하게 정리하고 싶을 때 참고하기 좋습니다."
+          : "사용 상황은 사용자 메모에 있는 범위 안에서만 정리하고, 효과는 단정하지 않는 편이 좋습니다."
+      },
+      {
+        question: "향이나 사용감은 어떤가요?",
+        answer: /향/u.test(memoText)
+          ? "메모에는 향이 괜찮다고 되어 있어 부담이 크지 않은 쪽으로 정리할 수 있습니다."
+          : "향과 사용감은 개인차가 있어 실제 사용 메모가 없으면 [확인 필요]로 두는 편이 안전합니다."
+      },
+      {
+        question: "가격이나 구매처 정보가 있나요?",
+        answer: text(form.price) || text(form.purchaseNotes)
+          ? `제공된 정보는 ${[form.price, form.purchaseNotes].map(text).filter(Boolean).join(", ")}입니다.`
+          : "가격과 구매처는 제공되지 않아 [확인 필요]로 표시합니다."
+      }
+    ];
+  }
+
+  if (category === "store") {
+    return [
+      {
+        question: `${mainKeyword} 방문 전에 무엇을 확인하면 좋나요?`,
+        answer: "금 시세, 매입 기준, 운영시간, 주차 여부처럼 변동될 수 있는 정보는 방문 전에 다시 확인하는 편이 좋습니다."
+      },
+      {
+        question: "상담 분위기는 어떤가요?",
+        answer: /친절|사장님/u.test(memoText)
+          ? "사용자 메모에는 사장님이 친절했다는 경험이 있어 상담 분위기 중심으로 정리할 수 있습니다."
+          : "상담 분위기는 제공된 경험이 부족하면 [확인 필요]로 남기는 편이 좋습니다."
+      },
+      {
+        question: "가격이나 시세를 글에 써도 되나요?",
+        answer: "구체적인 금액은 제공되지 않았으므로 임의로 쓰지 않고 [확인 필요] 또는 변동 가능 정보로 표시합니다."
+      }
+    ];
+  }
+
+  return [
+    {
+      question: `${mainKeyword}를 보기 전에 무엇을 확인하면 좋나요?`,
+      answer: "가격, 운영시간, 예약, 주차처럼 바뀔 수 있는 정보는 [확인 필요]로 남기고 발행 전에 다시 확인하면 좋습니다."
+    },
+    {
+      question: "실제 경험처럼 써도 되나요?",
+      answer: "사용자가 제공한 메모와 사진에서 확인되는 내용만 1인칭 흐름으로 쓰고, 없는 경험은 만들지 않는 편이 안전합니다."
+    },
+    {
+      question: "사진은 어디에 넣으면 좋나요?",
+      answer: "도입부에는 대표 사진, 본문 중간에는 상세 사진, 마무리 전에는 확인 포인트 사진을 넣으면 흐름이 자연스럽습니다."
+    }
+  ];
+};
+
+const createInfoSummaryBodySection = (infoSummary = []) =>
+  createSectionBlock("업체 정보 또는 상품 정보 정리", [
+    [
+      "제공된 정보만 따로 모아두면 발행 전에 확인해야 할 부분이 훨씬 잘 보입니다.",
+      ...infoSummary.map(([label, value]) => `${label}: ${value}`)
+    ]
+  ]);
+
+const createRecommendedBodySection = (recommendedFor = []) =>
+  createSectionBlock("이런 분께 추천해요", [recommendedFor]);
+
+const createFaqBodySection = (faqItems = []) =>
+  ["FAQ", ...faqItems.flatMap((item) => [`Q. ${item.question}`, `A. ${item.answer}`])].join("\n\n");
+
+const createPhotoGuideBodySection = (photoGuide = []) => {
+  if (photoGuide.length === 0) return "";
+
+  return [
+    "사진 배치 가이드",
+    ...photoGuide.slice(0, 4).flatMap((item) => [
+      item.marker,
+      `${item.guide} ${item.description ? item.description : ""}`.replace(/\s+/g, " ").trim()
+    ])
+  ].join("\n\n");
+};
+
+const createLongFormSupportSection = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+
+  if (category === "product") {
+    return createSectionBlock("워킹맘 4인 가족 기준으로 본 사용 상황", [
+      [
+        `${mainKeyword}는 혼자만 쓰는 제품이라도 결국 생활 루틴 안에서 얼마나 부담 없이 꺼내 쓰는지가 중요하더라고요.`,
+        /운동|떡진|보송/u.test(memoText)
+          ? "운동 후 바로 머리를 감기 어려운 날, 아이 픽업이나 외출 일정이 이어지는 날처럼 시간이 부족한 상황에서 기준이 더 분명해졌어요."
+          : "아침 준비나 외출 전처럼 시간이 촉박할 때도 손이 갈 수 있는지, 보관과 휴대가 불편하지 않은지도 함께 보게 됩니다.",
+        "다만 사용감은 개인차가 있어서 좋았던 점과 아쉬운 점을 같이 적어두는 편이 실제 후기처럼 읽힙니다."
+      ]
+    ]);
+  }
+
+  if (category === "restaurant") {
+    return createSectionBlock("4인 가족 기준으로 보면 좋았던 부분", [
+      [
+        /아이\s*음료/u.test(memoText)
+          ? "아이 음료가 있다는 점은 가족이 함께 움직일 때 작은 것 같아도 꽤 중요한 기준이 됩니다."
+          : "아이와 함께 간다면 아이 메뉴, 유아 의자, 좌석 간격은 발행 전에 한 번 더 확인하면 좋습니다.",
+        /좌석\s*넓/u.test(memoText)
+          ? "좌석이 넓게 느껴졌다는 메모는 가족 단위 방문에서 편하게 머물 수 있는지 판단하는 데 도움이 됐어요."
+          : "좌석이 넓은지, 소음이 크지 않은지, 대기 시간이 있는지는 가족 외식 만족도에 영향을 줍니다.",
+        "가격과 주차는 제공된 정보가 없으면 [확인 필요]로 남겨두는 편이 과장 없이 안전합니다."
+      ]
+    ]);
+  }
+
+  if (category === "store") {
+    return createSectionBlock("가족 기준으로 확인하면 좋은 부분", [
+      [
+        "금거래소처럼 금액이 오가는 매장은 혼자 판단하기보다 가족과 함께 시세, 매입 기준, 상담 내용을 차분히 비교하게 됩니다.",
+        /친절|사장님/u.test(memoText)
+          ? "응대가 친절했다는 메모는 처음 방문하는 사람에게 부담을 줄여주는 중요한 포인트로 볼 수 있어요."
+          : "응대 분위기는 실제 방문 전 알기 어려우니 제공된 경험이 부족하면 [확인 필요]로 남겨두는 편이 좋습니다.",
+        "구체적인 가격, 영업시간, 주차 정보는 임의로 쓰지 않고 확인 항목으로 분리했습니다."
+      ]
+    ]);
+  }
+
+  return createSectionBlock("발행 전에 한 번 더 확인하면 좋은 부분", [
+    [
+      `${mainKeyword} 글은 경험 메모와 확인 필요 정보를 나눠두면 독자가 스스로 판단하기 훨씬 편합니다.`,
+      "가격, 운영시간, 예약, 주차처럼 바뀔 수 있는 정보는 발행 전에 다시 확인하고, 확인되지 않은 내용은 그대로 [확인 필요]로 남기는 편이 좋습니다."
+    ]
+  ]);
+};
+
+const createDepthSupportSections = ({
+  form = {},
+  category = inferReviewCategory(form),
+  infoSummary = [],
+  recommendedFor = []
+} = {}) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const memoSnippets = getMemoEvidenceSnippets(memoText, 5);
+  const infoLines = infoSummary.map(([label, value]) => `${label}: ${value}`);
+  const firstRecommendation = recommendedFor[0] || `${mainKeyword}를 처음 알아보는 분`;
+  const uncertainInfoSentence =
+    category === "product"
+      ? "과장 표현이나 확인되지 않은 가격, 구매처, 효과, 재구매 의향은 넣지 않는 편이 좋습니다."
+      : category === "store"
+        ? "과장 표현이나 확인되지 않은 가격, 영업시간, 주차, 재방문 의사는 넣지 않는 편이 좋습니다."
+        : "과장 표현이나 확인되지 않은 가격, 영업시간, 주차, 재방문 의사는 넣지 않는 편이 좋습니다.";
+
+  const categoryContext = {
+    restaurant: /카페/u.test(mainKeyword)
+      ? "카페 글은 분위기만 쓰기보다 아이 음료, 좌석, 가격, 주차처럼 가족이 실제로 확인할 정보를 나눠두면 검색자가 판단하기 쉬워요."
+      : "맛집 글은 메뉴 맛만 길게 쓰기보다 인원수, 분위기, 가격, 주차처럼 실제 방문에 영향을 주는 기준을 함께 정리하면 좋아요.",
+    product: "상품 글은 장점만 강조하기보다 언제 쓰면 편한지, 어떤 점은 개인차가 있는지, 가격과 구매처는 확인됐는지를 나눠 적어야 더 신뢰감 있게 읽혀요.",
+    store: "매장 글은 친절했다는 감상만으로 끝내기보다 상담 흐름, 확인이 필요한 비용, 운영시간, 주차처럼 실제 방문 전에 볼 정보를 구분하는 게 중요해요.",
+    education: "교육 글은 수업이 좋아 보인다는 말보다 초보자가 따라갈 수 있는지, 커리큘럼과 준비물이 무엇인지, 비용은 확인됐는지를 나눠 정리하면 좋아요."
+  };
+
+  const memoSection = createSectionBlock("제공된 메모에서 살릴 수 있는 내용", [
+    memoSnippets.length > 0
+      ? [
+          "이번 초안에서는 사용자가 남긴 메모를 실제 경험 근거로만 사용했습니다.",
+          ...memoSnippets.map((snippet) => `${snippet} 내용은 본문에서 자연스럽게 살릴 수 있는 실제 메모입니다.`)
+        ]
+      : [
+          "제공된 경험 메모가 적은 경우에는 실제로 다녀오거나 사용한 것처럼 단정하지 않고 정보 정리형 문장으로 쓰는 편이 안전합니다.",
+          "사진이나 추가 메모가 생기면 그때 1인칭 경험 표현을 더 늘리면 됩니다."
+        ]
+  ]);
+
+  const infoSection = createSectionBlock("확인 필요 정보는 따로 분리했어요", [
+    [
+      "검색자는 후기의 감상보다 실제로 움직이기 전에 필요한 정보를 빠르게 찾는 경우가 많습니다.",
+      ...infoLines,
+      "[확인 필요]로 남긴 부분은 발행 전에 직접 확인하거나, 확인 전이라면 그대로 표시하는 편이 좋습니다."
+    ]
+  ]);
+
+  const searchSection = createSectionBlock("검색자가 궁금해할 포인트", [
+    [
+      categoryContext[category] || "후기 글은 좋았던 점과 아쉬운 점, 확인이 필요한 정보를 나눠두면 검색자가 스스로 판단하기 좋습니다.",
+      `${firstRecommendation}라면 ${mainKeyword} 글에서 가장 먼저 확인할 부분을 초반에 배치하는 편이 좋습니다.`,
+      "초반에는 핵심 정보, 중간에는 실제 메모 기반 경험, 후반에는 추천 대상과 확인 포인트를 두면 네이버 블로그에서도 읽는 흐름이 자연스럽습니다."
+    ]
+  ]);
+
+  const publishSection = createSectionBlock("발행 전 마지막으로 다듬을 부분", [
+    [
+      `제목과 첫 문장에는 ${mainKeyword}를 자연스럽게 넣고, 본문에서는 같은 표현이 과하게 반복되지 않도록 문장을 나눠주세요.`,
+      "사진은 대표 장면, 상세 장면, 확인 정보 순서로 넣으면 글을 읽는 사람이 흐름을 따라가기 쉽습니다.",
+      uncertainInfoSentence
+    ]
+  ]);
+
+  const flowSection = createSectionBlock("본문 흐름을 이렇게 잡으면 좋아요", [
+    [
+      "도입부에서는 왜 이 주제를 보게 됐는지 짧게 열고, 바로 필요한 판단 기준을 알려주는 편이 읽기 좋습니다.",
+      "중간에서는 제공된 메모를 중심으로 실제로 좋았던 점과 조심해서 봐야 할 점을 나눠 적습니다.",
+      "후반에서는 누구에게 맞는지, 어떤 정보는 더 확인해야 하는지 정리하면 저장해두고 다시 보는 글이 되기 쉽습니다."
+    ]
+  ]);
+
+  const decisionSection = createSectionBlock("독자가 스스로 판단하기 쉬운 기준", [
+    category === "product"
+      ? [
+          "제품 글에서는 좋다는 감상보다 사용 상황, 휴대성, 향, 마무리감처럼 직접 비교할 수 있는 기준이 먼저 보이면 좋습니다.",
+          "개인차가 큰 부분은 단정하지 않고, 내가 느낀 범위와 확인이 필요한 정보를 분리하면 광고처럼 보이는 느낌이 줄어듭니다.",
+          "구매 전에는 가격, 용량, 구매처, 주의사항을 따로 확인하도록 안내하면 글의 신뢰도가 더 올라갑니다."
+        ]
+      : category === "restaurant"
+        ? [
+            "카페나 맛집 글에서는 맛과 분위기만큼 좌석, 동선, 아이 동반 가능 여부, 주차처럼 실제 움직임에 영향을 주는 기준이 중요합니다.",
+            "가족 단위로 움직이는 독자는 메뉴 가격과 좌석 여유를 먼저 확인하는 경우가 많아 [확인 필요] 표시가 오히려 도움이 됩니다.",
+            "좋았던 점을 쓰더라도 시간대에 따라 달라질 수 있는 부분은 한 번 더 확인하라고 남기면 글이 더 현실적으로 읽힙니다."
+          ]
+        : [
+            "매장이나 서비스 글에서는 친절했다는 감상과 함께 어떤 설명을 들었는지, 어떤 정보는 다시 확인해야 하는지 나눠두면 좋습니다.",
+            "가격이나 운영 정보처럼 바뀔 수 있는 부분은 단정하지 않고 확인 항목으로 빼두면 독자가 불필요하게 오해하지 않습니다.",
+            "처음 알아보는 사람에게는 분위기, 절차, 준비할 것, 확인할 것을 순서대로 보여주는 글이 가장 도움이 됩니다."
+          ]
+  ]);
+
+  const lineBreakSection = createSectionBlock("읽기 편하게 나눌 문단 포인트", [
+    [
+      "문단은 너무 길게 붙이지 않고 두세 문장 단위로 끊어두면 모바일에서 읽기가 편합니다.",
+      "중요한 확인 정보는 문장 안에 묻어두기보다 별도 줄로 빼면 네이버 블로그에서 훨씬 잘 보입니다.",
+      "마지막에는 좋은 점만 반복하지 말고, 확인할 점과 추천 대상을 함께 남겨야 실제 후기처럼 균형이 맞습니다."
+    ]
+  ]);
+
+  const naverPlacementSection = createSectionBlock("네이버 검색에 맞춘 정보 배치", [
+    category === "product"
+      ? [
+          "상품 후기에서는 첫 화면에 어떤 상황에서 쓰는 제품인지가 바로 보여야 검색자가 계속 읽게 됩니다.",
+          "중간에는 직접 느낀 사용 상황과 확인이 필요한 상품 정보를 나눠두고, 후반에는 어떤 사람에게 맞는지 정리하는 흐름이 안정적입니다.",
+          "해시태그는 메인 키워드와 보조 키워드를 섞되, 너무 넓은 단어보다 실제 검색할 만한 표현을 우선으로 두는 편이 좋습니다."
+        ]
+      : [
+          "네이버 후기 글은 첫 화면에서 장소나 매장의 성격, 핵심 분위기, 확인할 정보가 빠르게 보여야 이탈이 줄어듭니다.",
+          "중간에는 실제 메모 기반 경험을 넣고, 후반에는 가격, 운영 정보, 주차처럼 확인할 항목을 따로 정리하면 검색자에게 더 친절합니다.",
+          "해시태그는 지역, 업종, 상황형 키워드를 섞어두면 홈피드와 검색 양쪽에서 글의 맥락이 더 분명해집니다."
+        ]
+  ]);
+
+  const closingToneSection = createSectionBlock("마무리 문장 정리", [
+    category === "product"
+      ? [
+          "마무리에서는 무조건 사야 한다는 식의 표현보다 어떤 상황에서 참고하기 좋은지 정도로 부드럽게 정리하는 편이 좋습니다.",
+          "재구매 의향은 사용자가 직접 적은 경우에만 쓰고, 정보가 없으면 구매 전에 비교해볼 기준으로 마무리하면 자연스럽습니다.",
+          "좋았던 점이 있더라도 개인차가 있는 부분은 함께 적어두면 실제 사용 후기처럼 신뢰가 생깁니다."
+        ]
+      : [
+          "마무리에서는 무조건 가보라는 표현보다 어떤 상황의 사람에게 맞을지 알려주는 문장이 더 자연스럽습니다.",
+          "재방문 의사는 사용자가 직접 남긴 경우에만 쓰고, 정보가 없으면 비교해볼 기준과 확인할 점으로 끝내는 편이 좋습니다.",
+          "좋았던 점과 확인할 점을 같이 남기면 광고성 글보다 실제 기록에 가까운 느낌이 납니다."
+        ]
+  ]);
+
+  const finalReviewSection = createSectionBlock("최종 발행 전에 확인할 것", [
+    [
+      "초안을 그대로 붙여넣기 전에 사진 순서와 문단 순서를 한 번 맞춰보면 글 흐름이 더 매끄러워집니다.",
+      "확인되지 않은 정보는 억지로 채우지 말고, 필요하면 발행 직전에 직접 확인한 뒤 수정하는 편이 안전합니다.",
+      "모바일 화면에서 읽었을 때 중요한 정보가 초반과 중반에 잘 보이는지도 마지막으로 확인하면 좋습니다."
+    ]
+  ]);
+
+  return [
+    searchSection,
+    memoSection,
+    infoSection,
+    flowSection,
+    decisionSection,
+    lineBreakSection,
+    naverPlacementSection,
+    closingToneSection,
+    finalReviewSection,
+    publishSection
+  ];
+};
+
+const createChecklistItems = ({ form = {}, category = inferReviewCategory(form), selectedTitle = "", body = "", hashtags = [], photoGuide = [], infoSummary = [] } = {}) => {
+  const mainKeyword = getMainKeyword(form);
+  const firstParagraph = normalizeBody(body).split(/\n{2,}/u)[0] || "";
+  const firstSentence = firstParagraph.split(/(?<=[.!?。])\s+/u)[0] || firstParagraph;
+  const bodyKeywordCount = countOccurrences(body, mainKeyword);
+  const hasMemo = splitMemoLines(form.experienceMemo).length > 0;
+  const hasUncheckedInfo = body.includes("[확인 필요]") || infoSummary.some(([, value]) => String(value).includes("[확인 필요]"));
+  const sponsorship = text(form.sponsorshipType);
+
+  return [
+    {
+      label: "메인 키워드 제목 포함 여부",
+      passed: selectedTitle.includes(mainKeyword),
+      detail: selectedTitle.includes(mainKeyword) ? "포함" : "확인 필요"
+    },
+    {
+      label: "첫 문장 메인 키워드 포함 여부",
+      passed: firstSentence.includes(mainKeyword),
+      detail: firstSentence.includes(mainKeyword) ? "포함" : "확인 필요"
+    },
+    {
+      label: "첫 문단 광고 느낌 여부",
+      passed: !/무조건|역대급|대박|보장/u.test(firstParagraph),
+      detail: !/무조건|역대급|대박|보장/u.test(firstParagraph) ? "과장 표현 없음" : "표현 점검 필요"
+    },
+    {
+      label: "메인 키워드 반복 과다 여부",
+      passed: bodyKeywordCount <= 8,
+      detail: `${bodyKeywordCount}회 사용`
+    },
+    {
+      label: "실제 경험 기반 여부",
+      passed: hasMemo,
+      detail: hasMemo ? "사용자 메모 기반" : "정보 정리형 초안"
+    },
+    {
+      label: "확인되지 않은 정보 표시 여부",
+      passed: hasUncheckedInfo,
+      detail: hasUncheckedInfo ? "[확인 필요] 표시" : "추가 확인 권장"
+    },
+    {
+      label: "협찬/체험단 표시 여부",
+      passed: Boolean(sponsorship),
+      detail: sponsorship || "[협찬 여부 확인 필요]"
+    },
+    {
+      label: "사진 가이드 포함 여부",
+      passed: photoGuide.length > 0,
+      detail: photoGuide.length > 0 ? `${photoGuide.length}개 포함` : "사진 가이드 없음"
+    },
+    {
+      label: "업체/상품 정보 정리 여부",
+      passed: infoSummary.length > 0,
+      detail: infoSummary.length > 0 ? "정리됨" : "확인 필요"
+    },
+    {
+      label: "해시태그 10~15개 포함 여부",
+      passed: hashtags.length >= 10 && hashtags.length <= 15,
+      detail: `${hashtags.length}개`
+    },
+    {
+      label: "카테고리 금지 표현 점검",
+      passed: !getCategoryForbiddenExpressions(category, detectProductSubtype(form, getFormMemoText(form))).some((pattern) => pattern.test(body)),
+      detail: "점검 완료"
+    }
+  ];
+};
+
+const createChecklistBodySection = (items = []) =>
+  [
+    "최종 검수표",
+    ...items.map((item) => `- ${item.label}: ${item.detail}`)
+  ].join("\n");
+
+const createPublishableReviewBody = ({
+  baseBody = "",
+  form = {},
+  category = inferReviewCategory(form),
+  photoGuide = [],
+  infoSummary = [],
+  recommendedFor = [],
+  faqItems = []
+} = {}) => {
+  const targetLength = normalizeTargetLength(form.targetLength);
+  const sections = [
+    baseBody,
+    targetLength >= 2600 ? createLongFormSupportSection(form, category) : "",
+    ...(targetLength >= 2600 ? createDepthSupportSections({ form, category, infoSummary, recommendedFor }) : []),
+    createPhotoGuideBodySection(photoGuide),
+    createInfoSummaryBodySection(infoSummary),
+    createRecommendedBodySection(recommendedFor),
+    createFaqBodySection(faqItems)
+  ].filter(Boolean);
+
+  return normalizeBody(sections.join("\n\n"));
+};
+
+const createProductReviewContentPackage = ({
+  form = {},
+  category = inferReviewCategory(form),
+  titles = [],
+  selectedTitle = "",
+  body = "",
+  imageSuggestions = [],
+  hashtags = [],
+  searchKeywords = [],
+  photoGuide = [],
+  infoSummary = [],
+  recommendedFor = [],
+  faqItems = [],
+  finalChecklist = []
+} = {}) => {
+  const mainKeyword = getMainKeyword(form);
+
+  return {
+    mainKeyword,
+    secondaryKeywords: createSecondaryKeywords(form, category),
+    searchIntentAnalysis: createSearchIntentAnalysis(form, category),
+    homeFeedClickPoint: createHomeFeedClickPoint(form, selectedTitle, imageSuggestions, category),
+    titleCandidates: titles.slice(0, 5),
+    finalRecommendedTitle: selectedTitle,
+    openingSentenceCandidates: createOpeningSentenceCandidates(form, category, body),
+    blogBody: body,
+    photoGuide,
+    infoSummary,
+    recommendedFor,
+    faqItems,
+    hashtags,
+    finalChecklist,
+    searchKeywords,
+    sponsorshipCheck: text(form.sponsorshipType) || "[협찬 여부 확인 필요]"
+  };
+};
+
 const extractClosingParagraph = (body = "") =>
   normalizeBody(body)
     .split(/\n{2,}/u)
@@ -2228,7 +2892,7 @@ const createHumanIntroParagraph = (analysis) => {
   }
 
   if (category === "product") {
-    const productText = analysis.baseKeyword || topic;
+    const productText = topic || analysis.baseKeyword;
 
     return createHumanParagraph([
       /운동|떡진|보송/u.test(memoText)
@@ -2497,7 +3161,7 @@ const createHumanReviewSections = (analysis) => {
       createSectionBlock(outline[4], [
         [
           `${withConditionalParticle(recommendedReader)} 참고하기 좋아요`,
-          "다시 쓸지 묻는다면, 외출 전이나 운동 후처럼 빠르게 정돈이 필요한 날에는 꽤 손이 갈 것 같아요"
+          "재구매 의향은 사용자가 직접 남긴 경우에만 단정하고, 정보가 부족하면 구매 전에 비교해볼 기준으로 정리하는 편이 좋습니다"
         ]
       ], tone)
     ];
@@ -3020,13 +3684,51 @@ export function createProductReviewDraft(form = {}) {
   const category = inferReviewCategory(form);
   const titles = createTitleCandidates(form);
   const selectedTitle = text(form.selectedTitle) || titles[0] || "";
-  const body = createBody(form, selectedTitle);
   const hashtags = createHashtags(form);
   const imageSuggestions = createImageSuggestions(form);
   const outline = createReviewOutline(form, category);
   const thumbnailTexts = createThumbnailTexts(form, category);
   const searchKeywords = createSearchKeywordSummary(form, category);
-  const closingParagraph = extractClosingParagraph(body);
+  const photoGuide = createPhotoGuideItems(imageSuggestions);
+  const infoSummary = createGenericInfoSummary(form, category);
+  const recommendedFor = createRecommendedForItems(form, category);
+  const faqItems = createFaqItems(form, category);
+  const baseBody = createBody(form, selectedTitle);
+  const bodyWithoutChecklist = createPublishableReviewBody({
+    baseBody,
+    form,
+    category,
+    photoGuide,
+    infoSummary,
+    recommendedFor,
+    faqItems
+  });
+  const finalChecklist = createChecklistItems({
+    form,
+    category,
+    selectedTitle,
+    body: bodyWithoutChecklist,
+    hashtags,
+    photoGuide,
+    infoSummary
+  });
+  const body = normalizeBody([bodyWithoutChecklist, createChecklistBodySection(finalChecklist)].join("\n\n"));
+  const closingParagraph = extractClosingParagraph(baseBody);
+  const contentPackage = createProductReviewContentPackage({
+    form,
+    category,
+    titles,
+    selectedTitle,
+    body,
+    imageSuggestions,
+    hashtags,
+    searchKeywords,
+    photoGuide,
+    infoSummary,
+    recommendedFor,
+    faqItems,
+    finalChecklist
+  });
 
   return {
     category,
@@ -3038,6 +3740,8 @@ export function createProductReviewDraft(form = {}) {
     outline,
     thumbnailTexts,
     searchKeywords,
-    closingParagraph
+    closingParagraph,
+    contentPackage,
+    bodyLength: body.replace(/\s+/g, "").length
   };
 }

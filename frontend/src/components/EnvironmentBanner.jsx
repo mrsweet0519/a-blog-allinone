@@ -10,25 +10,26 @@ const iconByMode = {
 export default function EnvironmentBanner() {
   const runtime = getRuntimeInfo();
   const Icon = iconByMode[runtime.mode] || Cloud;
+  const notice = isStaticBetaMode() ? STATIC_BETA_NOTICE : runtime.description;
 
   return (
-    <div className="mb-5 rounded-lg border border-line bg-white px-4 py-3 shadow-soft">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-paper text-moss">
-            <Icon size={18} aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-ink">{runtime.label}</p>
-            <p className="mt-1 text-sm font-semibold leading-6 text-ink/60">
-              {isStaticBetaMode() ? STATIC_BETA_NOTICE : runtime.description}
-            </p>
-          </div>
-        </div>
-        <span className="inline-flex w-fit rounded-md bg-paper px-2.5 py-1 text-xs font-bold text-ink/55">
+    <details className="mb-4 rounded-md border border-line bg-white/85 px-3 py-2 text-sm shadow-[0_8px_22px_rgba(31,36,40,0.04)]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-paper text-moss">
+            <Icon size={15} aria-hidden="true" />
+          </span>
+          <span className="min-w-0 truncate font-bold text-ink">{runtime.label}</span>
+        </span>
+        <span className="inline-flex shrink-0 rounded-md bg-paper px-2 py-0.5 text-[11px] font-bold text-ink/55">
           {runtime.target}
         </span>
+      </summary>
+      <div className="mt-2 pl-9">
+        <p className="text-xs font-semibold leading-5 text-ink/58">
+          {notice}
+        </p>
       </div>
-    </div>
+    </details>
   );
 }

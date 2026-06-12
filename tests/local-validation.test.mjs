@@ -682,6 +682,61 @@ assert.ok(qualityDryShampooReview.body.includes("휴대"));
 assert.ok(qualityDryShampooReview.body.includes("향"));
 assert.ok(!/매장|방문 전|상담 분위기/u.test(qualityDryShampooReview.body));
 
+const requestedGoldStorePackageReview = createProductReviewDraft({
+  mainKeyword: "부천금거래소 후기",
+  experienceMemo:
+    "사장님 친절하심\n아드님이 2대째 운영중"
+});
+assert.equal(requestedGoldStorePackageReview.category, "store");
+assert.ok(requestedGoldStorePackageReview.bodyLength >= 2800 && requestedGoldStorePackageReview.bodyLength <= 3600);
+assert.equal(requestedGoldStorePackageReview.contentPackage.titleCandidates.length, 5);
+assert.equal(requestedGoldStorePackageReview.contentPackage.faqItems.length, 3);
+assert.ok(requestedGoldStorePackageReview.contentPackage.secondaryKeywords.includes("금매입"));
+assert.ok(requestedGoldStorePackageReview.contentPackage.secondaryKeywords.includes("금시세"));
+assert.ok(requestedGoldStorePackageReview.contentPackage.secondaryKeywords.includes("상담 분위기"));
+assert.ok(requestedGoldStorePackageReview.body.includes("사장님"));
+assert.ok(requestedGoldStorePackageReview.body.includes("친절"));
+assert.ok(requestedGoldStorePackageReview.body.includes("아드님"));
+assert.ok(requestedGoldStorePackageReview.body.includes("2대째"));
+assert.ok(requestedGoldStorePackageReview.body.includes("[확인 필요]"));
+assert.ok(!/발림감|사용감|향|아침저녁|텍스처|제품 전체|사용 장면/u.test(requestedGoldStorePackageReview.body));
+assert.ok(!/가격\s*[0-9]|영업시간\s*[0-9]|주차\s*가능/u.test(requestedGoldStorePackageReview.body));
+
+const requestedFamilyCafePackageReview = createProductReviewDraft({
+  mainKeyword: "부천 아이랑 갈만한 카페",
+  experienceMemo:
+    "주말에 가족이랑 방문\n아이 음료 있음\n좌석 넓음"
+});
+assert.equal(requestedFamilyCafePackageReview.category, "restaurant");
+assert.ok(requestedFamilyCafePackageReview.bodyLength >= 2800 && requestedFamilyCafePackageReview.bodyLength <= 3600);
+assert.ok(requestedFamilyCafePackageReview.contentPackage.secondaryKeywords.includes("아이랑 카페"));
+assert.ok(requestedFamilyCafePackageReview.contentPackage.secondaryKeywords.includes("아이 음료"));
+assert.ok(requestedFamilyCafePackageReview.body.includes("가족"));
+assert.ok(requestedFamilyCafePackageReview.body.includes("아이 음료"));
+assert.ok(requestedFamilyCafePackageReview.body.includes("좌석"));
+assert.ok(requestedFamilyCafePackageReview.contentPackage.infoSummary.some(([label, value]) => label === "주차" && value === "[확인 필요]"));
+assert.ok(requestedFamilyCafePackageReview.contentPackage.infoSummary.some(([label, value]) => label === "대표 메뉴/가격" && value.includes("가격 [확인 필요]")));
+assert.ok(requestedFamilyCafePackageReview.contentPackage.finalChecklist.some((item) => item.label === "해시태그 10~15개 포함 여부" && item.passed));
+
+const requestedDryShampooPackageReview = createProductReviewDraft({
+  mainKeyword: "에어젤 드라이샴푸 후기",
+  experienceMemo:
+    "운동 후 사용\n떡진 머리 보송\n휴대 편함\n향 괜찮음"
+});
+const requestedDryShampooFirstSentence = requestedDryShampooPackageReview.body.split(/(?<=[.!?])\s+/u)[0];
+assert.equal(requestedDryShampooPackageReview.category, "product");
+assert.ok(requestedDryShampooPackageReview.bodyLength >= 2800 && requestedDryShampooPackageReview.bodyLength <= 3600);
+assert.ok(requestedDryShampooFirstSentence.includes("에어젤 드라이샴푸 후기"));
+assert.ok(requestedDryShampooPackageReview.contentPackage.secondaryKeywords.includes("운동 후 드라이샴푸"));
+assert.ok(requestedDryShampooPackageReview.body.includes("운동"));
+assert.ok(requestedDryShampooPackageReview.body.includes("보송"));
+assert.ok(requestedDryShampooPackageReview.body.includes("휴대"));
+assert.ok(requestedDryShampooPackageReview.body.includes("향"));
+assert.ok(requestedDryShampooPackageReview.body.includes("최종 검수표"));
+assert.ok(requestedDryShampooPackageReview.contentPackage.finalChecklist.find((item) => item.label === "첫 문장 메인 키워드 포함 여부").passed);
+assert.ok(!/효과 보장|무조건 추천|역대급|완전 대박/u.test(requestedDryShampooPackageReview.body));
+assert.ok(!/매장|상담 분위기/u.test(requestedDryShampooPackageReview.body));
+
 const qualityPastaReview = createProductReviewDraft({
   mainKeyword: "부천 파스타 맛집 후기",
   experienceMemo:

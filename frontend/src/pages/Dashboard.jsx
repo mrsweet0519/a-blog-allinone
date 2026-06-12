@@ -101,20 +101,20 @@ export default function Dashboard() {
         </button>
       </header>
 
-      <main className="mx-auto max-w-7xl px-2 pb-12 pt-8 sm:px-4 lg:pb-16 lg:pt-14">
-        <section className="relative mx-auto max-w-4xl text-center">
-          <div className="pointer-events-none absolute left-1/2 top-0 z-0 h-56 w-56 -translate-x-1/2 rounded-full bg-[#f6c84c]/20 blur-3xl" />
+      <main className="mx-auto max-w-7xl px-2 pb-10 pt-4 sm:px-4 lg:pb-12 lg:pt-7">
+        <section className="relative mx-auto max-w-3xl text-center">
+          <div className="pointer-events-none absolute left-1/2 top-0 z-0 h-40 w-40 -translate-x-1/2 rounded-full bg-[#f6c84c]/16 blur-3xl" />
           <p className="relative text-sm font-bold text-[#9a6a00]">원클릭 블로그 글쓰기 도구</p>
-          <h2 className="relative mx-auto mt-5 max-w-4xl text-4xl font-bold leading-[1.12] tracking-normal text-ink sm:text-6xl">
+          <h2 className="relative mx-auto mt-3 max-w-3xl text-3xl font-bold leading-[1.16] tracking-normal text-ink sm:text-4xl lg:text-5xl">
             <span className="block">사진과 메모만 넣으면</span>
             <span className="block">블로그 글 초안이 완성됩니다</span>
           </h2>
-          <p className="relative mx-auto mt-6 max-w-2xl text-base font-semibold leading-8 text-ink/58 sm:text-lg">
+          <p className="relative mx-auto mt-4 max-w-2xl text-sm font-semibold leading-7 text-ink/58 sm:text-base">
             네이버 블로그, 티스토리, 대댓글까지 한 번에 만드는 원클릭 글쓰기 도구
           </p>
         </section>
 
-        <section className="mt-14">
+        <section className="mt-8">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-sm font-bold text-[#9a6a00]">어떤 작업을 시작할까요?</p>
@@ -125,7 +125,7 @@ export default function Dashboard() {
             </p>
           </div>
 
-          <div className="mt-6 grid gap-5 lg:grid-cols-3">
+          <div className="mt-5 grid gap-4 lg:grid-cols-3">
             {mainCards.map((card) => {
               const Icon = card.icon;
 
@@ -134,18 +134,18 @@ export default function Dashboard() {
                   type="button"
                   key={card.title}
                   onClick={() => navigate(card.to)}
-                  className={`focus-ring group flex min-h-[290px] flex-col rounded-[1.75rem] border border-[#eadfc8] ${card.surface} p-7 text-left shadow-[0_18px_48px_rgba(68,52,22,0.07)] transition duration-300 hover:-translate-y-1.5 hover:border-[#d7ad32] hover:shadow-[0_28px_70px_rgba(68,52,22,0.12)]`}
+                  className={`focus-ring group flex min-h-[215px] flex-col rounded-2xl border border-[#eadfc8] ${card.surface} p-5 text-left shadow-[0_14px_34px_rgba(68,52,22,0.06)] transition duration-300 hover:-translate-y-1 hover:border-[#d7ad32] hover:shadow-[0_22px_56px_rgba(68,52,22,0.1)]`}
                 >
-                  <span className={`grid h-14 w-14 place-items-center rounded-2xl ${card.iconSurface} text-ink shadow-[0_10px_25px_rgba(68,52,22,0.12)]`}>
-                    <Icon size={25} aria-hidden="true" />
+                  <span className={`grid h-12 w-12 place-items-center rounded-xl ${card.iconSurface} text-ink shadow-[0_8px_20px_rgba(68,52,22,0.1)]`}>
+                    <Icon size={22} aria-hidden="true" />
                   </span>
-                  <span className="mt-8">
-                    <span className="block text-2xl font-bold text-ink">{card.title}</span>
-                    <span className="mt-4 block text-base font-semibold leading-7 text-ink/58">
+                  <span className="mt-5">
+                    <span className="block text-xl font-bold text-ink">{card.title}</span>
+                    <span className="mt-2 block text-sm font-semibold leading-6 text-ink/58">
                       {card.description}
                     </span>
                   </span>
-                  <span className="mt-auto inline-flex min-h-11 w-fit items-center justify-center gap-2 rounded-full bg-[#f6c84c] px-4 text-sm font-bold text-ink transition group-hover:bg-[#e8b72f]">
+                  <span className="mt-auto inline-flex min-h-10 w-fit items-center justify-center gap-2 rounded-full bg-[#f6c84c] px-4 text-sm font-bold text-ink transition group-hover:bg-[#e8b72f]">
                     바로 시작하기
                     <ArrowRight size={16} className="transition group-hover:translate-x-1" aria-hidden="true" />
                   </span>
