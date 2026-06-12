@@ -376,8 +376,9 @@ const toReplySetText = (comments) =>
     )
     .join("\n\n");
 
-export default function CommentReplyManager() {
-  const storedWork = useMemo(loadStoredWork, []);
+export default function CommentReplyManager({ modeVariant = "optimized" }) {
+  const isQuickReply = modeVariant === "quick";
+  const storedWork = useMemo(() => (isQuickReply ? null : loadStoredWork()), [isQuickReply]);
   const staticBeta = isStaticBetaMode();
   const automationAbortRef = useRef(null);
   const captureFileInputRef = useRef(null);
@@ -390,7 +391,7 @@ export default function CommentReplyManager() {
   }));
   const [comments, setComments] = useState(() => normalizeStoredComments(storedWork?.comments || []));
   const [manualInput, setManualInput] = useState("");
-  const [mode, setMode] = useState(() => normalizeInitialMode(storedWork?.mode));
+  const [mode, setMode] = useState(() => (isQuickReply ? "capture" : normalizeInitialMode(storedWork?.mode)));
   const [captureImage, setCaptureImage] = useState(null);
   const [captureOcrText, setCaptureOcrText] = useState(storedWork?.capture?.ocrText || "");
   const [captureOcrMeta, setCaptureOcrMeta] = useState(
@@ -454,6 +455,7 @@ export default function CommentReplyManager() {
             : "포스팅 제목이나 메인 키워드를 넣으면 더 자연스럽지만, 지금도 생성할 수 있습니다.";
   const selectedComments = comments.filter((comment) => comment.selected && comment.reply);
   const generatedCount = comments.filter((comment) => comment.reply || comment.status === "스킵 권장").length;
+  const generateAllLabel = "대댓글 초안 만들기";
   const liveReport = useMemo(
     () => buildReportFromComments(comments, automationReport),
     [comments, automationReport]
@@ -687,7 +689,7 @@ export default function CommentReplyManager() {
     }
 
     if (confirmRegenerate && targetComments.some((comment) => comment.reply)) {
-      const ok = window.confirm("이미 생성된 대댓글이 있습니다. 전체 상호대댓글을 다시 생성할까요?");
+      const ok = window.confirm("이미 만들어진 대댓글이 있습니다. 전체 대댓글을 다시 만들까요?");
       if (!ok) return;
     }
 
@@ -1026,7 +1028,7 @@ export default function CommentReplyManager() {
     }
     if (urlMode && !ready) return;
     if (confirmRegenerate && validComments.some((comment) => comment.reply)) {
-      const ok = window.confirm("이미 생성된 대댓글이 있습니다. 전체 대댓글을 다시 생성할까요?");
+      const ok = window.confirm("이미 만들어진 대댓글이 있습니다. 전체 대댓글을 다시 만들까요?");
       if (!ok) return;
     }
 
@@ -1099,7 +1101,7 @@ export default function CommentReplyManager() {
         )
       );
       setStatus("generated");
-      setMessage(regenerate ? "상호대댓글을 다시 생성했습니다." : "상호대댓글 초안을 생성했습니다.");
+      setMessage(regenerate ? "대댓글 초안을 다시 만들었습니다." : "대댓글 초안을 만들었습니다.");
       return;
     }
 
@@ -1127,7 +1129,7 @@ export default function CommentReplyManager() {
       )
     );
     setStatus("generated");
-    setMessage(regenerate ? "대댓글을 다시 생성했습니다." : "대댓글 초안을 생성했습니다.");
+    setMessage(regenerate ? "대댓글 초안을 다시 만들었습니다." : "대댓글 초안을 만들었습니다.");
   };
 
   const registerSelectedReplies = async () => {
@@ -1403,20 +1405,37 @@ export default function CommentReplyManager() {
     <div className="min-w-0 space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <p className="text-sm font-semibold text-coral">빠른 대댓글 생성</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">댓글 응답 관리</h2>
+          <p className="text-sm font-semibold text-coral">
+            {isQuickReply ? "댓글 캡처 원클릭 초안" : "키워드와 말투까지 조정하는 대댓글"}
+          </p>
+          <h2 className="mt-1 text-3xl font-bold tracking-normal">
+            {isQuickReply ? "원클릭 대댓글 작성" : "SEO 최적화 대댓글 작성"}
+          </h2>
           <p className="mt-2 text-sm font-semibold leading-6 text-ink/55">
-            댓글을 넣으면 원댓글 흐름에 맞는 상호대댓글 초안을 바로 만들 수 있습니다.
+            {isQuickReply
+              ? "댓글 캡처 이미지를 넣으면 댓글별 상호 대댓글 초안을 만들어드립니다."
+              : "포스팅 URL 또는 제목, 키워드, 브랜드명, 말투, CTA, 금지어를 조정해 댓글별 대댓글 초안을 만듭니다."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge label={modeLabels[mode] || "수동 댓글 입력"} status="ready" />
+          <StatusBadge label={isQuickReply ? "캡처 중심" : modeLabels[mode] || "수동 댓글 입력"} status="ready" />
           <StatusBadge label={statusLabel[status] || statusLabel.idle} status={status} />
           <span className="inline-flex min-h-8 items-center rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink/65">
             {generatedCount}/{comments.length} 처리
           </span>
         </div>
       </header>
+
+      <div className="rounded-lg border border-moss/20 bg-moss/10 p-4 text-sm font-semibold leading-6 text-ink/70">
+        <p className="font-bold text-moss">
+          {isQuickReply ? "대댓글은 이렇게 만들어요" : "최적화 대댓글은 이렇게 만들어요"}
+        </p>
+        <p className="mt-1">
+          {isQuickReply
+            ? "댓글 캡처 이미지나 댓글 내용을 입력하면 댓글별 대댓글 초안이 생성됩니다."
+            : "포스팅 제목, 키워드, 댓글 내용을 입력하면 말투와 CTA를 반영한 대댓글 초안이 생성됩니다."}
+        </p>
+      </div>
 
       {message && (
         <p className="rounded-md border border-line bg-white px-4 py-3 text-sm font-semibold text-moss shadow-soft">
@@ -1427,9 +1446,9 @@ export default function CommentReplyManager() {
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(300px,340px)_minmax(0,1fr)]">
         <section className="order-2 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft xl:order-1">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold">기본 입력</h3>
+            <h3 className="text-lg font-bold">{isQuickReply ? "포스팅 주제" : "최적화 입력"}</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
-              {urlMode ? (ready ? "자동화 준비" : "URL 입력 필요") : "빠른 생성"}
+              {isQuickReply ? "원클릭" : urlMode ? (ready ? "자동화 준비" : "URL 입력 필요") : "세부 조정"}
             </span>
           </div>
 
@@ -1453,18 +1472,21 @@ export default function CommentReplyManager() {
             )}
 
             <label className="block">
-              <FieldLabel>포스팅 제목</FieldLabel>
+              <FieldLabel>{isQuickReply ? "포스팅 주제" : "포스팅 제목"}</FieldLabel>
               <input
                 value={form.postTitle}
                 onChange={(event) => updateForm("postTitle", event.target.value)}
                 className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-paper px-3 text-sm"
-                placeholder="예: 강남 피부관리샵 리프팅 처음 방문 전 확인할 기준"
+                placeholder={isQuickReply ? "예: 역삼역 중식당 회식 후기 / 신논현 피부관리 방문 후기" : "예: 강남 피부관리샵 리프팅 처음 방문 전 확인할 기준"}
               />
               <p className="mt-1 text-xs font-semibold text-ink/45">
-                선택 입력입니다. 비워도 생성할 수 있고, 입력하면 댓글 맥락이 더 자연스러워집니다.
+                {isQuickReply
+                  ? "선택 입력입니다. 입력하면 댓글 분위기에 맞는 대댓글을 더 자연스럽게 만들 수 있습니다."
+                  : "포스팅 URL 대신 제목만 입력해도 최적화 대댓글을 만들 수 있습니다."}
               </p>
             </label>
 
+            {!isQuickReply && (
             <label className="block">
               <FieldLabel>메인 키워드</FieldLabel>
               <input
@@ -1488,7 +1510,9 @@ export default function CommentReplyManager() {
                 </div>
               )}
             </label>
+            )}
 
+            {!isQuickReply && (
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block">
                 <FieldLabel>말투</FieldLabel>
@@ -1515,6 +1539,7 @@ export default function CommentReplyManager() {
                 />
               </label>
             </div>
+            )}
 
             <details
               key={`advanced-${mode}`}
@@ -1522,11 +1547,52 @@ export default function CommentReplyManager() {
               className="rounded-md border border-line bg-paper p-3"
             >
               <summary className="cursor-pointer text-sm font-bold text-ink/70">
-                고급 설정 열기
+                {isQuickReply ? "자세한 설정 열기" : "고급 설정 열기"}
               </summary>
 
               <div className="mt-4 space-y-4">
-                {!urlMode && (
+                {isQuickReply && (
+                  <>
+                    <label className="block">
+                      <FieldLabel>메인 키워드</FieldLabel>
+                      <input
+                        value={form.mainKeyword}
+                        onChange={(event) => updateForm("mainKeyword", event.target.value)}
+                        className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                        placeholder={resolvedMainKeyword ? `자동 사용: ${resolvedMainKeyword}` : "예: 회식 장소, 메뉴 추천, 주차 확인"}
+                      />
+                    </label>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="block">
+                        <FieldLabel>말투</FieldLabel>
+                        <select
+                          value={form.tone}
+                          onChange={(event) => updateForm("tone", event.target.value)}
+                          className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                        >
+                          {makerOptions.tones.map((tone) => (
+                            <option key={`quick-${tone}`} value={tone}>
+                              {tone}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="block">
+                        <FieldLabel>금지어</FieldLabel>
+                        <input
+                          value={form.forbiddenWords}
+                          onChange={(event) => updateForm("forbiddenWords", event.target.value)}
+                          className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                          placeholder="예: 광고 티, 무조건, 최고, 보장"
+                        />
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                {!urlMode && !isQuickReply && (
                   <label className="block">
                     <FieldLabel>블로그 포스팅 URL</FieldLabel>
                     <div className="mt-2 flex min-h-11 items-center gap-2 rounded-md border border-line bg-white px-3">
@@ -1656,6 +1722,7 @@ export default function CommentReplyManager() {
             </details>
           </div>
 
+          {!isQuickReply && (
           <div className="mt-5 grid grid-cols-3 gap-2">
             <button
               type="button"
@@ -1682,6 +1749,7 @@ export default function CommentReplyManager() {
               초기화
             </button>
           </div>
+          )}
         </section>
 
         <section className="order-1 flex min-w-0 flex-col gap-5 xl:order-2">
@@ -1691,10 +1759,12 @@ export default function CommentReplyManager() {
               <div>
                 <div className="flex items-center gap-2">
                   <ImageIcon size={19} className="text-moss" aria-hidden="true" />
-                  <h3 className="text-lg font-bold">캡처 붙여넣기</h3>
+                  <h3 className="text-lg font-bold">{isQuickReply ? "댓글 캡처 이미지" : "캡처 붙여넣기"}</h3>
                 </div>
                 <p className="mt-1 text-sm font-semibold leading-6 text-ink/55">
-                  캡처에서 추출한 댓글을 확인한 뒤, 전체 상호대댓글 생성을 누르면 댓글별 맞춤 답글을 만들 수 있습니다.
+                  {isQuickReply
+                    ? "댓글 캡처 이미지를 넣으면 댓글별 상호 대댓글 초안을 만들어드립니다."
+                    : "캡처에서 추출한 댓글을 확인한 뒤, 전체 상호대댓글 생성을 누르면 댓글별 맞춤 답글을 만들 수 있습니다."}
                 </p>
                 <p className="mt-2 text-xs font-semibold leading-5 text-ink/50">
                   댓글 글자가 크게 보이도록 댓글 영역만 캡처해주세요. 전체 화면보다 댓글 부분만 확대해서 캡처하면 더 정확하게 읽을 수 있습니다.
@@ -1778,7 +1848,7 @@ export default function CommentReplyManager() {
                         <li>2. 이 박스를 클릭합니다.</li>
                         <li>3. Ctrl+V로 붙여넣습니다.</li>
                         <li>4. 추출된 댓글을 확인하고 필요하면 수정합니다.</li>
-                        <li>5. 전체 상호대댓글 생성을 누릅니다.</li>
+                        <li>5. {generateAllLabel}을 누릅니다.</li>
                       </ol>
                       <div className="flex flex-wrap gap-2">
                         <button
@@ -1871,7 +1941,7 @@ export default function CommentReplyManager() {
                     ) : (
                       <Sparkles size={16} aria-hidden="true" />
                     )}
-                    {status === "generating" ? "생성 중..." : `전체 상호대댓글 생성 (${captureReviewValidCount}개)`}
+                    {status === "generating" ? "생성 중..." : `${generateAllLabel} (${captureReviewValidCount}개)`}
                   </button>
                 </div>
                 <p
@@ -2004,7 +2074,7 @@ export default function CommentReplyManager() {
                     }}
                     rows={8}
                     className="focus-ring mt-3 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
-                    placeholder={"이미지에서 댓글을 자동으로 읽지 못했다면 여기에 OCR 원문이나 댓글 텍스트를 붙여넣어 주세요.\n예: 작성자: 댓글작성자\n댓글: 여기 관리 꼼꼼해 보여요"}
+                    placeholder={"이미지에서 댓글을 자동으로 읽지 못했다면 여기에 OCR 원문이나 댓글 텍스트를 붙여넣어 주세요.\n예: 작성자: 민지님\n댓글: 탕수육 바삭해 보여요. 주차도 가능한가요?\n\n작성자: 이웃님\n댓글: 회식 장소로 괜찮아 보여서 저장했어요."}
                   />
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -2049,7 +2119,7 @@ export default function CommentReplyManager() {
                 ) : (
                   <Sparkles size={16} aria-hidden="true" />
                 )}
-                {status === "generating" ? "생성 중..." : `전체 상호대댓글 생성 (${captureReplyTargetCount}개)`}
+                {status === "generating" ? "생성 중..." : `${generateAllLabel} (${captureReplyTargetCount}개)`}
               </button>
               <button
                 type="button"
@@ -2058,7 +2128,7 @@ export default function CommentReplyManager() {
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
               >
                 <Clipboard size={16} aria-hidden="true" />
-                전체 복사
+                전체 대댓글 복사하기
               </button>
             </div>
             <p
@@ -2071,6 +2141,7 @@ export default function CommentReplyManager() {
           </div>
           )}
 
+          {!isQuickReply && (
           <div className="order-1 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div>
@@ -2167,7 +2238,7 @@ export default function CommentReplyManager() {
                 className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-coral px-3 text-sm font-semibold text-white transition hover:bg-[#bf5d4d] disabled:cursor-not-allowed disabled:bg-ink/25"
               >
                 <Sparkles size={16} aria-hidden="true" />
-                전체 대댓글 생성
+                대댓글 초안 만들기
               </button>
               <button
                 type="button"
@@ -2234,6 +2305,7 @@ export default function CommentReplyManager() {
               </div>
             )}
           </div>
+          )}
 
           {mode === "manual" && (
           <div className="order-2 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft">
@@ -2250,7 +2322,11 @@ export default function CommentReplyManager() {
               onChange={(event) => setManualInput(event.target.value)}
               rows={6}
               className="focus-ring mt-4 w-full rounded-md border border-line bg-paper p-3 text-sm leading-6"
-              placeholder={"댓글만 입력해도 대댓글을 만들 수 있습니다.\n\n여기 관리 꼼꼼해 보여요\n\n예약 전에 확인할 포인트가 궁금해요\n\n직접 써본 후기라 더 믿음이 가네요\n\n작성자를 넣고 싶다면:\n작성자: 댓글작성자\n댓글: 여기 관리 꼼꼼해 보여요\n\n작성자: 이웃님\n댓글: 예약 전에 확인할 포인트가 궁금해요"}
+              placeholder={
+                isQuickReply
+                  ? "댓글만 입력해도 대댓글을 만들 수 있습니다.\n\n탕수육 진짜 바삭해 보여요\n\n회식 장소로 괜찮아 보여서 저장했어요\n\n주차 정보도 궁금해요\n\n작성자를 넣고 싶다면:\n작성자: 민지님\n댓글: 탕수육 진짜 바삭해 보여요"
+                  : "댓글만 입력해도 대댓글을 만들 수 있습니다.\n\n가격 상담은 어떻게 하나요?\n\n예약 전에 확인할 포인트가 궁금해요\n\n직접 방문한 후기라 더 믿음이 가네요\n\n작성자를 넣고 싶다면:\n작성자: 이웃님\n댓글: 예약 전에 확인할 포인트가 궁금해요"
+              }
             />
             <p className="mt-2 text-xs font-semibold leading-5 text-ink/50">
               작성자명은 선택입니다. 빈 줄 기준 또는 한 줄씩 댓글 카드로 나눌 수 있습니다.
@@ -2262,7 +2338,7 @@ export default function CommentReplyManager() {
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61]"
               >
                 <ListChecks size={16} aria-hidden="true" />
-                댓글 반영
+                댓글 목록에 넣기
               </button>
               <button
                 type="button"
@@ -2275,7 +2351,7 @@ export default function CommentReplyManager() {
                 ) : (
                   <Sparkles size={16} aria-hidden="true" />
                 )}
-                {status === "generating" ? "생성 중..." : `전체 상호대댓글 생성 (${validComments.length}개)`}
+                {status === "generating" ? "생성 중..." : `${generateAllLabel} (${validComments.length}개)`}
               </button>
               <button
                 type="button"
@@ -2284,7 +2360,7 @@ export default function CommentReplyManager() {
                 className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
               >
                 <Clipboard size={16} aria-hidden="true" />
-                전체 복사
+                전체 대댓글 복사하기
               </button>
             </div>
             {validComments.length > 0 && !replyContextReady && (
@@ -2310,7 +2386,7 @@ export default function CommentReplyManager() {
                   className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold transition hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:text-ink/30"
                 >
                   <RotateCcw size={16} aria-hidden="true" />
-                  전체 다시 생성
+                  대댓글 다시 만들기
                 </button>
               </div>
             </details>
@@ -2324,6 +2400,11 @@ export default function CommentReplyManager() {
                 <p className="mt-1 text-sm font-semibold text-ink/55">
                   메인 키워드: {form.mainKeyword.trim() || resolvedMainKeyword || "자동 추출 대기"}
                 </p>
+                {comments.some((comment) => comment.reply) && (
+                  <p className="mt-2 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-xs font-semibold leading-5 text-ink/60">
+                    초안은 복사 후 내 말투에 맞게 한 번만 다듬으면 더 자연스럽습니다.
+                  </p>
+                )}
               </div>
               {mode !== "manual" && (
               <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -2334,7 +2415,7 @@ export default function CommentReplyManager() {
                   className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
                 >
                   <Clipboard size={16} aria-hidden="true" />
-                  대댓글 복사
+                  대댓글만 복사하기
                 </button>
                 <button
                   type="button"
@@ -2343,7 +2424,7 @@ export default function CommentReplyManager() {
                   className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-amber hover:text-[#7a5a1e] disabled:cursor-not-allowed disabled:text-ink/30"
                 >
                   <Copy size={16} aria-hidden="true" />
-                  세트 복사
+                  댓글+대댓글 복사하기
                 </button>
               </div>
               )}
@@ -2423,19 +2504,19 @@ export default function CommentReplyManager() {
                       <div className="flex flex-wrap gap-2 sm:justify-end">
                         <ActionButton
                           icon={Sparkles}
-                          label="생성"
+                          label="대댓글 만들기"
                           onClick={() => generateOne(comment.id)}
                           disabled={!comment.content.trim() || status === "generating" || (urlMode && comment.source !== "capture" && !ready)}
                         />
                         <ActionButton
                           icon={RefreshCw}
-                          label="다시 생성"
+                          label="다시 만들기"
                           onClick={() => generateOne(comment.id, { regenerate: true })}
                           disabled={!comment.content.trim() || status === "generating" || (urlMode && comment.source !== "capture" && !ready)}
                         />
                         <ActionButton
                           icon={Copy}
-                          label="복사"
+                          label="이 대댓글 복사"
                           onClick={() => copyText(comment.reply, "대댓글을 복사했습니다.")}
                           disabled={!comment.reply}
                         />

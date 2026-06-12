@@ -8,6 +8,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import ProductReviewMaker from "./pages/ProductReviewMaker.jsx";
 import Settings from "./pages/Settings.jsx";
 import Storage from "./pages/Storage.jsx";
+import TistoryOneClickMaker from "./pages/TistoryOneClickMaker.jsx";
 import { clearAccessSession, loadAccessSession } from "./lib/accessControl.js";
 
 export default function App() {
@@ -34,10 +35,15 @@ export default function App() {
       <Routes>
         <Route path="/" element={<ProductReviewMaker />} />
         <Route path="/app" element={<ProductReviewMaker />} />
+        <Route path="/one-click/naver" element={<ProductReviewMaker />} />
+        <Route path="/one-click/tistory" element={<TistoryOneClickMaker />} />
+        <Route path="/one-click/comments" element={<CommentReplyManager modeVariant="quick" />} />
+        <Route path="/optimized/blog" element={<ContentMaker />} />
+        <Route path="/optimized/comments" element={<CommentReplyManager modeVariant="optimized" />} />
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/maker" element={<ContentMaker />} />
-        <Route path="/product-review-maker" element={<ProductReviewMaker />} />
-        <Route path="/comment-replies" element={<CommentReplyManager />} />
+        <Route path="/maker" element={<Navigate to="/optimized/blog" replace />} />
+        <Route path="/product-review-maker" element={<Navigate to="/one-click/naver" replace />} />
+        <Route path="/comment-replies" element={<Navigate to="/optimized/comments" replace />} />
         <Route path="/storage" element={<Storage />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />

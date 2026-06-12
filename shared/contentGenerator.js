@@ -695,6 +695,58 @@ const CONTENT_TYPE_OUTLINE_ROLES = {
   product: ["구매 이유", "사용 전 기대", "실제 사용감", "품질/구성/가격대", "추천 대상", "재구매 의향"]
 };
 
+const isCustomsAuctionTopic = (...sources) =>
+  sources.some((source) => /세관\s*공매|세관공매/u.test(text(source)));
+
+const createCustomsAuctionTopics = (keyword) => [
+  `${keyword} 공고 확인부터 입찰 준비까지 배우는 흐름`,
+  `${keyword} 낙찰 이후 반출과 비용을 확인하는 기준`,
+  `${keyword} 초보자가 판로까지 생각하며 보는 체크리스트`,
+  `${keyword} 교육 전 알아야 할 입찰, 낙찰, 반출 단계`,
+  `${keyword} 공고와 물품 상태를 읽는 기본 순서`
+];
+
+const createCustomsAuctionOutline = (keyword, count = 5) =>
+  [
+    `${keyword} 공고 확인 기준`,
+    "입찰 전 준비해야 할 정보",
+    "입찰과 낙찰 흐름 이해하기",
+    "낙찰 후 결제와 반출 체크",
+    "판로와 수익성 검토",
+    "교육 수강 전 확인사항"
+  ].slice(0, Math.max(4, Math.min(6, count)));
+
+const createCustomsAuctionParagraphs = ({ keyword, index = 0, cta = "" }) => {
+  const blocks = [
+    [
+      `${keyword}는 물품을 싸게 찾는 방법으로만 보면 위험하고, 먼저 공고에서 물품명, 수량, 보관 장소, 입찰 기간을 확인하는 과정이 필요합니다.`,
+      "공고마다 상태, 보관 조건, 세금이나 부대비용이 달라질 수 있으므로 확인되지 않은 값은 [확인 필요]로 남겨두는 편이 안전합니다."
+    ],
+    [
+      "입찰 전에는 본인 인증, 보증금, 입찰 방식, 마감 시간을 먼저 정리해야 합니다.",
+      "초보자는 낙찰가만 보지 말고 반출 가능 일정, 추가 비용, 물품 상태 확인 가능 여부까지 함께 보는 것이 좋습니다."
+    ],
+    [
+      "입찰은 공고를 보고 원하는 금액을 넣는 단계이고, 낙찰은 해당 조건에서 최종 구매 권리가 생기는 단계입니다.",
+      "낙찰 이후에는 결제 기한을 놓치면 불이익이 생길 수 있어, 입찰 전에 결제 가능 금액과 일정부터 정해두는 것이 중요합니다."
+    ],
+    [
+      "반출 단계에서는 보관 장소, 운송 방법, 반출 가능 시간, 인수 서류를 확인해야 합니다.",
+      "물품이 크거나 수량이 많다면 운송비와 보관비가 수익성에 영향을 줄 수 있으므로 비용 항목을 따로 계산해두면 좋습니다."
+    ],
+    [
+      "판로는 낙찰 후에 생각하면 늦을 수 있습니다. 입찰 전에 판매 가능 채널, 예상 판매가, 회전 속도, 하자 대응 가능성을 함께 봐야 합니다.",
+      "교육이나 강의를 들을 때도 공고 분석, 입찰 판단, 낙찰 후 반출, 판로 검토가 한 흐름으로 이어지는지 확인하면 좋습니다."
+    ],
+    [
+      "교육을 고를 때는 실제 공고를 읽는 방법과 사례 기반 설명이 있는지 확인하는 것이 좋습니다.",
+      cta || `${keyword}를 처음 배운다면 공고 확인, 입찰, 낙찰, 반출, 판로 순서로 이해해보세요.`
+    ]
+  ];
+
+  return blocks[index] || blocks.at(-1);
+};
+
 const createContentTypeHeading = ({ contentType, role, keyword, secondaryCue, region, category }) => {
   const localCue = region ? `${region} ` : "";
 
@@ -1241,6 +1293,12 @@ export function createOutlineSections(form, selectedTopic, selectedTitle) {
   const typedRoles = pickRolesByCount(CONTENT_TYPE_OUTLINE_ROLES[contentType] || [], count);
   const roles = OUTLINE_ROLES_BY_COUNT[count] ?? OUTLINE_ROLES_BY_COUNT[4];
 
+  if (isCustomsAuctionTopic(keyword, category, selectedTopic, selectedTitle)) {
+    return createCustomsAuctionOutline(keyword, count)
+      .map((section) => applyAvoidWords(section, avoidWords))
+      .slice(0, count);
+  }
+
   if (typedRoles.length > 0) {
     return typedRoles
       .map((role) =>
@@ -1445,6 +1503,17 @@ const createTypedSectionParagraphs = ({
   const noteSentence = createOutlineNoteSentence(note, tone);
   const noteBlock = noteSentence ? [noteSentence] : [];
   const safeCta = cta || createCtaSentence(form);
+
+  if (isCustomsAuctionTopic(keyword, category, selectedTopic, selectedTitle, heading)) {
+    return [
+      ...noteBlock,
+      ...createCustomsAuctionParagraphs({
+        keyword,
+        index,
+        cta: safeCta
+      })
+    ];
+  }
 
   const blocks = {
     info: [
@@ -1784,6 +1853,12 @@ export function createTopicRecommendations(form = {}) {
   const avoidWords = splitAvoidWords(form.avoid);
   const previousTopics = getPreviousTopicSet(form);
 
+  if (isCustomsAuctionTopic(keyword, category)) {
+    const customsTopics = createCustomsAuctionTopics(keyword);
+    const freshCustomsTopics = customsTopics.filter((topic) => !previousTopics.has(topic));
+    return (freshCustomsTopics.length > 0 ? freshCustomsTopics : customsTopics).slice(0, 3);
+  }
+
   const businessTopicsByGoal = {
     "정보 전달": [
       `${asObject(keyword)} 처음 찾는 고객이 먼저 확인하는 선택 기준`,
@@ -2054,6 +2129,73 @@ export function createImageSuggestions(form, selectedTopic, selectedTitle) {
   const imagePreset = getImageQueryPreset(category);
   const createPrompt = (subject, mood) =>
     `${subject}, ${keyword}, ${category}, natural light, clean lifestyle composition, realistic photo style, high detail, no text overlay, no watermark, ${mood}`;
+
+  if (isCustomsAuctionTopic(keyword, category, selectedTopic, selectedTitle)) {
+    const customsSuggestions = [
+      {
+        id: "image-slot-1",
+        label: "이미지 추천 1",
+        title: "공고 확인 자료",
+        insertAfter: "도입부 첫 문단 아래",
+        markerGuide: "세관공매 공고 확인 화면 또는 교육 자료",
+        description: "공고에서 물품명, 수량, 입찰 기간, 보관 장소를 확인하는 장면을 넣으면 글의 흐름이 분명해집니다.",
+        directShotGuide: "실제 공고 화면을 그대로 노출하기 어렵다면 항목명을 가린 체크리스트나 교육용 자료 화면을 촬영해보세요.",
+        aiPrompt: createPrompt("customs auction notice checklist on desk", "educational and clear mood"),
+        searchKeyword: "customs auction notice checklist",
+        query: "customs auction notice checklist",
+        altText: `${keyword} 공고 확인 자료`,
+        previewUrl: "",
+        bridge: {
+          type: "blog-body-image",
+          slot: "customs-notice",
+          status: "placeholder",
+          context: { mainKeyword: keyword, selectedTopic, selectedTitle }
+        }
+      },
+      {
+        id: "image-slot-2",
+        label: "이미지 추천 2",
+        title: "입찰과 낙찰 흐름",
+        insertAfter: "입찰 준비 문단 아래",
+        markerGuide: "입찰, 낙찰, 결제 흐름을 정리한 노트",
+        description: "입찰 전 준비와 낙찰 이후 결제 기한을 한눈에 볼 수 있는 노트나 표를 추천합니다.",
+        directShotGuide: "입찰 전 확인사항, 낙찰 후 결제, 반출 일정 같은 단어가 보이도록 노트나 화이트보드를 촬영해보세요.",
+        aiPrompt: createPrompt("auction bidding education notes and checklist", "organized training material"),
+        searchKeyword: "auction bidding checklist education",
+        query: "auction bidding checklist education",
+        altText: `${keyword} 입찰 낙찰 흐름`,
+        previewUrl: "",
+        bridge: {
+          type: "blog-body-image",
+          slot: "bidding-flow",
+          status: "placeholder",
+          context: { mainKeyword: keyword, selectedTopic, selectedTitle }
+        }
+      },
+      {
+        id: "image-slot-3",
+        label: "이미지 추천 3",
+        title: "반출과 판로 체크리스트",
+        insertAfter: "반출 또는 판로 문단 아래",
+        markerGuide: "반출 비용과 판로 검토 체크리스트",
+        description: "운송비, 보관비, 판매 가능 채널처럼 수익성 판단에 필요한 항목을 체크리스트로 보여주면 좋습니다.",
+        directShotGuide: "반출, 운송, 보관, 판로 항목이 보이는 체크리스트를 직접 작성해 촬영하면 교육형 글과 잘 맞습니다.",
+        aiPrompt: createPrompt("logistics and resale channel checklist for auction goods", "business education flatlay"),
+        searchKeyword: "auction logistics resale checklist",
+        query: "auction logistics resale checklist",
+        altText: `${keyword} 반출 판로 체크리스트`,
+        previewUrl: "",
+        bridge: {
+          type: "blog-body-image",
+          slot: "release-sales-channel",
+          status: "placeholder",
+          context: { mainKeyword: keyword, selectedTopic, selectedTitle }
+        }
+      }
+    ];
+
+    return customsSuggestions.slice(0, getImageSuggestionCount(form));
+  }
 
   const suggestions = [
     {

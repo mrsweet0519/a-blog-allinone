@@ -26,6 +26,7 @@ import {
   createProductReviewDraft,
   extractProductInfoFieldsWithMetaFromText
 } from "../shared/productReviewGenerator.js";
+import { createTistoryDraft } from "../shared/tistoryGenerator.js";
 
 const now = new Date(2026, 5, 1, 10, 0, 0);
 
@@ -393,8 +394,9 @@ const productReview = createProductReviewDraft({
   targetLength: "1500"
 });
 const productFirstParagraph = productReview.body.split(/\n{2,}/u)[0];
+const productFirstParagraphKeywordCount = productFirstParagraph.split("수분크림").length - 1;
 assert.ok(productFirstParagraph.startsWith("수분크림"));
-assert.equal(productFirstParagraph.split("수분크림").length - 1, 2);
+assert.ok(productFirstParagraphKeywordCount >= 2 && productFirstParagraphKeywordCount <= 3);
 assert.ok(/해요|더라고요|같아요/u.test(productFirstParagraph));
 assert.ok((productFirstParagraph.match(/찾아보다/gu) || []).length <= 1);
 assert.ok((productFirstParagraph.match(/궁금/gu) || []).length <= 1);
@@ -402,6 +404,11 @@ assert.ok(!/경험 메모|OCR 원문|추출 데이터/u.test(productReview.body)
 assert.ok(!/무조건|보장|완벽|즉시효과/u.test(productReview.body));
 assert.ok(productReview.body.includes("[여기에 이미지 1을 넣어주세요:"));
 assert.ok(productReview.hashtags.includes("#수분크림후기"));
+assert.equal(productReview.titles.slice(0, 3).length, 3);
+assert.ok(productReview.outline.includes("사용감과 향"));
+assert.equal(productReview.thumbnailTexts.length, 3);
+assert.ok(productReview.searchKeywords.includes("수분크림"));
+assert.ok(productReview.closingParagraph.length > 20);
 
 const noisyProductReview = createProductReviewDraft({
   productName: "수분크림",
@@ -493,7 +500,11 @@ const requestedRestaurantReview = createProductReviewDraft({
   targetLength: "1500"
 });
 const requestedRestaurantFirstSentence = requestedRestaurantReview.body.split(/(?<=[.!?])\s+/u)[0];
+const requestedRestaurantFirstParagraph = requestedRestaurantReview.body.split(/\n{2,}/u)[0];
+const requestedRestaurantKeywordCount =
+  requestedRestaurantFirstParagraph.split("역삼역 중식당 회식 후기").length - 1;
 assert.ok(requestedRestaurantFirstSentence.includes("역삼역 중식당 회식 후기"));
+assert.ok(requestedRestaurantKeywordCount >= 2 && requestedRestaurantKeywordCount <= 3);
 assert.ok(!forbiddenReviewGuidePattern.test(requestedRestaurantReview.body));
 assert.ok(requestedRestaurantReview.body.includes("메뉴와 맛"));
 assert.ok(requestedRestaurantReview.body.includes("분위기와 동행"));
@@ -505,6 +516,11 @@ assert.ok(requestedRestaurantReview.body.includes("가격: [확인 필요]"));
 assert.ok(requestedRestaurantReview.body.includes("주차: [확인 필요]"));
 assert.ok(!/후기\s+후기/u.test(requestedRestaurantReview.selectedTitle));
 assert.ok(!requestedRestaurantReview.hashtags.some((tag) => /후기후기/u.test(tag)));
+assert.equal(requestedRestaurantReview.titles.slice(0, 3).length, 3);
+assert.ok(requestedRestaurantReview.outline.includes("가격과 주문 전 확인할 점"));
+assert.equal(requestedRestaurantReview.thumbnailTexts.length, 3);
+assert.ok(requestedRestaurantReview.searchKeywords.includes("역삼역 중식당 회식 후기"));
+assert.ok(requestedRestaurantReview.closingParagraph.includes("가격") || requestedRestaurantReview.closingParagraph.includes("주차"));
 
 const requestedCreamReview = createProductReviewDraft({
   mainKeyword: "수분크림 직접 써본 후기",
@@ -540,6 +556,62 @@ assert.ok(requestedKidsPlaceReview.body.includes("부모 대기와 피로도"));
 assert.ok(requestedKidsPlaceReview.body.includes("아이가 체험을 좋아"));
 assert.ok(requestedKidsPlaceReview.body.includes("부모 입장에서 편했던 점"));
 assert.ok(requestedKidsPlaceReview.body.includes("주차는 확인이 필요"));
+
+const tistoryDraft = createTistoryDraft({
+  keyword: "초등 독서노트 쓰는 법",
+  memo: "초등학생이 부담 없이 독서 기록을 남길 수 있는 방법을 정리하고 싶어요."
+});
+assert.ok(tistoryDraft.title.includes("초등 독서노트 쓰는 법"));
+assert.ok(tistoryDraft.introSummary.length >= 3);
+assert.ok(tistoryDraft.toc.length >= 4 && tistoryDraft.toc.length <= 6);
+assert.ok(tistoryDraft.sections.length >= 4 && tistoryDraft.sections.length <= 6);
+assert.ok(tistoryDraft.body.includes("도입 요약"));
+assert.ok(tistoryDraft.body.includes("목차"));
+assert.ok(tistoryDraft.body.includes("핵심 정리"));
+assert.ok(tistoryDraft.body.includes("FAQ"));
+assert.ok(tistoryDraft.tags.some((tag) => tag.includes("초등독서노트")));
+
+const customsAuctionForm = {
+  keyword: "세관공매",
+  category: "교육/강의",
+  goal: "정보 전달",
+  audienceType: "사업자/매장 홍보",
+  tone: "전문적인",
+  strengths: "",
+  emphasisPoint: "",
+  ctaDirection: "",
+  useEmoji: false,
+  avoid: "상품 리뷰, 사용감, 직접 써본 후기",
+  targetLengthOption: "1500",
+  customTargetLength: "1500"
+};
+const customsAuctionTopic = createTopicRecommendations(customsAuctionForm)[0];
+const customsAuctionTitle = createTitleCandidates(customsAuctionForm, customsAuctionTopic)[0];
+const customsAuctionOutline = createOutlineSections(
+  customsAuctionForm,
+  customsAuctionTopic,
+  customsAuctionTitle
+);
+const customsAuctionContent = createFinalContent(
+  customsAuctionForm,
+  customsAuctionTopic,
+  customsAuctionTitle,
+  customsAuctionOutline
+);
+const customsAuctionCombined = [
+  customsAuctionTopic,
+  customsAuctionTitle,
+  customsAuctionOutline.join(" "),
+  customsAuctionContent.body,
+  customsAuctionContent.imageSuggestions.map((item) => `${item.title} ${item.description}`).join(" ")
+].join(" ");
+assert.ok(customsAuctionCombined.includes("세관공매"));
+assert.ok(customsAuctionCombined.includes("공고"));
+assert.ok(customsAuctionCombined.includes("입찰"));
+assert.ok(customsAuctionCombined.includes("낙찰"));
+assert.ok(customsAuctionCombined.includes("반출"));
+assert.ok(customsAuctionCombined.includes("판로"));
+assert.ok(!/상품 리뷰|사용감|직접 써본 후기/u.test(customsAuctionCombined));
 
 const lowConfidenceCapture = assessCapturedCommentExtraction("AE Sosa Do", {
   confidence: 0.39,

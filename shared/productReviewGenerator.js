@@ -948,7 +948,7 @@ const getDisclosureSentence = (form = {}) => {
 };
 
 const WRITING_GUIDE_PATTERN =
-  /정리해보려고|후기\s*흐름|기준으로\s*풀어두면|중심으로\s*정리(?:했|하)|이런\s*흐름으로\s*작성|글에\s*담아보겠습니다|아래\s*내용은|과하게\s*단정하기보다|기준으로\s*볼\s*것\s*같아요|먼저\s*보려고\s*했/u;
+  /후기\s*흐름으로\s*정리해보려고|정리해보려고|기준으로\s*풀어두면\s*자연스럽|기준으로\s*풀어두면|중심으로\s*정리(?:했|하)|아래\s*내용은\s*정리했습니다|아래\s*내용은|글에\s*담아보겠습니다|이런\s*흐름으로\s*작성|과하게\s*단정하기보다|기준으로\s*볼\s*것\s*같아요|먼저\s*보려고\s*했/u;
 
 const removeWritingGuideParagraphs = (body = "") =>
   normalizeBody(body)
@@ -1024,6 +1024,126 @@ const createSearchAnswerSentence = (form = {}, category = "place", memoText = ""
   return `${baseKeyword}를 방문하기 전에는 동선, 머무는 시간, 주차와 운영 정보를 함께 확인하면 실제로 움직일 때 훨씬 편해요`;
 };
 
+const createKeywordReinforcementSentence = (form = {}, category = "place") => {
+  const mainKeyword = getMainKeyword(form);
+
+  if (category === "restaurant") {
+    return `${mainKeyword}에서는 메뉴 구성과 동행 인원, 방문 전 확인할 정보를 함께 보면 실제로 가기 전에 도움이 돼요`;
+  }
+
+  if (category === "product") {
+    return `${mainKeyword}는 장점뿐 아니라 아쉬운 점과 추천 대상까지 같이 보면 선택할 때 더 현실적으로 판단할 수 있어요`;
+  }
+
+  if (category === "kids-place") {
+    return `${mainKeyword}는 아이 반응과 보호자 편의성을 같이 봐야 다녀오기 전 그림이 잡혀요`;
+  }
+
+  if (category === "education") {
+    return `${mainKeyword}는 수업 흐름과 준비물, 수강 전 확인할 점을 함께 봐야 내 상황에 맞는지 판단하기 좋아요`;
+  }
+
+  return `${mainKeyword}는 실제 동선과 좋았던 점, 아쉬운 점을 같이 봐야 방문 전 분위기를 더 쉽게 떠올릴 수 있어요`;
+};
+
+const createReviewOutline = (form = {}, category = inferReviewCategory(form)) => {
+  const targetLength = normalizeTargetLength(form.targetLength);
+  const outlineMap = {
+    restaurant: [
+      "방문하게 된 이유",
+      "메뉴와 맛",
+      "분위기와 동행",
+      "좋았던 점",
+      "가격과 주문 전 확인할 점",
+      "재방문 기준",
+      "이런 분께 추천해요"
+    ],
+    product: [
+      "처음 써보게 된 이유",
+      "사용감과 향",
+      "좋았던 점",
+      "아쉬운 점과 확인할 부분",
+      "이런 분께 추천해요"
+    ],
+    "kids-place": [
+      "방문하게 된 이유",
+      "아이 반응",
+      "동선과 체험 흐름",
+      "부모 대기와 피로도",
+      "주차와 다시 갈 기준",
+      "이런 가족에게 추천해요"
+    ],
+    place: [
+      "방문 전 기대한 점",
+      "공간과 동선",
+      "기억에 남은 체험",
+      "주차와 편의성",
+      "다시 방문할 기준"
+    ],
+    education: [
+      "수강 전 궁금했던 점",
+      "수업 흐름과 분위기",
+      "실습과 결과물",
+      "수강 전 확인할 점",
+      "이런 분께 맞을 것 같아요"
+    ]
+  };
+  const outline = [...(outlineMap[category] || outlineMap.place)];
+
+  if (targetLength >= 1800) {
+    outline.splice(Math.max(1, outline.length - 1), 0, "방문 전 한 번 더 보면 좋은 점");
+  }
+
+  return outline;
+};
+
+const createThumbnailTexts = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const baseKeyword = getReviewTitleBase(mainKeyword);
+  const memoText = text(form.experienceMemo);
+  const confirmText = /가격|주차|운영시간|예약|비용|환불/u.test(memoText)
+    ? "확인할 점까지 정리"
+    : "좋았던 점과 아쉬운 점";
+  const thumbnailMap = {
+    restaurant: [`${baseKeyword}`, "회식 전 메뉴 체크", confirmText],
+    product: [`${baseKeyword}`, "직접 써본 사용감", "장점·아쉬운 점 정리"],
+    "kids-place": [`${baseKeyword}`, "아이 반응 먼저 보기", "주차·대기공간 체크"],
+    place: [`${baseKeyword}`, "방문 전 분위기 확인", "동선·편의성 체크"],
+    education: [`${baseKeyword}`, "수업 흐름 미리 보기", "준비물·난이도 체크"]
+  };
+
+  return uniqueText(thumbnailMap[category] || thumbnailMap.place).slice(0, 3);
+};
+
+const createSearchKeywordSummary = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const baseKeyword = getReviewTitleBase(mainKeyword);
+  const related = getRelatedKeywords(form);
+  const categoryKeywords = {
+    restaurant: ["회식 장소", "메뉴 추천", "가격 확인", "주차 확인"],
+    product: ["사용감", "장점", "아쉬운 점", "추천 대상"],
+    "kids-place": ["아이랑 갈만한 곳", "실내 체험", "부모 대기 공간", "주차 확인"],
+    place: ["방문 후기", "동선", "편의시설", "주차 확인"],
+    education: ["수강 후기", "수업 흐름", "준비물", "수강 전 확인"]
+  };
+
+  return uniqueText([
+    mainKeyword,
+    baseKeyword,
+    withReviewHashSuffix(mainKeyword),
+    ...related,
+    ...(categoryKeywords[category] || categoryKeywords.place)
+  ]).slice(0, 9);
+};
+
+const extractClosingParagraph = (body = "") =>
+  normalizeBody(body)
+    .split(/\n{2,}/u)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .filter((paragraph) => !/^\[여기에 이미지 \d+을 넣어주세요/u.test(paragraph))
+    .at(-1) || "";
+
 const createRestaurantMenuSentences = (memoText = "") => {
   const sentences = [];
   const menus = getRestaurantMenus(memoText);
@@ -1033,7 +1153,7 @@ const createRestaurantMenuSentences = (memoText = "") => {
   }
 
   if (hasMemoCue(memoText, /어향가지/u)) {
-    sentences.push("어향가지는 탕수육과는 다른 맛으로 곁들이기 좋아서, 메뉴 구성이 단조롭지 않게 느껴졌어요");
+    sentences.push("어향가지는 소스가 진한 편으로 느껴져서 탕수육 같은 메뉴와 곁들였을 때 구성이 더 풍성해졌어요");
   }
 
   if (sentences.length === 0 && menus.length > 0) {
@@ -1145,6 +1265,7 @@ const createExperienceReviewBody = (form = {}, selectedTitle = "", category = in
   const partyText = partySize || "여럿";
   const introParagraph = [
     createExperienceIntroSentence(form, category, memoText),
+    createKeywordReinforcementSentence(form, category),
     createSearchAnswerSentence(form, category, memoText),
     disclosure,
     imageSummary
@@ -1321,17 +1442,26 @@ const createBody = (form = {}, selectedTitle = "") => {
 };
 
 export function createProductReviewDraft(form = {}) {
+  const category = inferReviewCategory(form);
   const titles = createTitleCandidates(form);
   const selectedTitle = text(form.selectedTitle) || titles[0] || "";
   const body = createBody(form, selectedTitle);
   const hashtags = createHashtags(form);
   const imageSuggestions = createImageSuggestions(form);
+  const outline = createReviewOutline(form, category);
+  const thumbnailTexts = createThumbnailTexts(form, category);
+  const searchKeywords = createSearchKeywordSummary(form, category);
+  const closingParagraph = extractClosingParagraph(body);
 
   return {
     titles,
     selectedTitle,
     body,
     hashtags,
-    imageSuggestions
+    imageSuggestions,
+    outline,
+    thumbnailTexts,
+    searchKeywords,
+    closingParagraph
   };
 }

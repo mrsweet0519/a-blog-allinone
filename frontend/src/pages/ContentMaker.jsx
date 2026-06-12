@@ -153,7 +153,7 @@ const FIELD_TOOLTIPS = {
     example: "1200자, 1500자, 직접입력"
   },
   tone: {
-    title: "말투",
+    title: "글 톤",
     description: "전체 글의 분위기를 선택하세요.",
     example: "친근한, 전문적인, 차분한"
   },
@@ -1046,11 +1046,10 @@ export default function ContentMaker() {
     <div className="min-w-0 space-y-6">
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <p className="text-sm font-semibold text-coral">정보글 · 가이드글 · 비교글</p>
-          <h2 className="mt-1 text-3xl font-bold tracking-normal">정보글 만들기</h2>
+          <p className="text-sm font-semibold text-coral">검색에 맞는 글 구조 만들기</p>
+          <h2 className="mt-1 text-3xl font-bold tracking-normal">SEO 최적화 블로그 글쓰기</h2>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/60">
-            사진 없이 키워드만으로 정보성 글을 만들 때 사용하세요. 사진이 있는 후기글은
-            ‘후기글 만들기’를 사용하면 더 자연스럽습니다.
+            키워드, 글 목적, 글 순서를 직접 조정해서 정보글·가이드글·비교글 초안을 세밀하게 만듭니다.
           </p>
         </div>
         <StatusBadge status={status} />
@@ -1059,7 +1058,7 @@ export default function ContentMaker() {
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(320px,0.38fr)_minmax(0,0.62fr)]">
         <section className="order-2 min-w-0 rounded-lg border border-line bg-white p-5 shadow-soft xl:order-1">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold">입력값</h3>
+            <h3 className="text-lg font-bold">최적화 입력</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
               {isFormReady ? "입력 완료" : "입력 전"}
             </span>
@@ -1075,7 +1074,7 @@ export default function ContentMaker() {
               </div>
             </div>
             <p className="mt-2 text-xs font-semibold leading-5 text-ink/55">
-              자주 쓰는 업종, 말투, 금지어, 글 목적, 키워드 스타일을 저장해두는 기능입니다.
+              자주 쓰는 업종, 글 톤, 금지어, 글 목적, 키워드 스타일을 저장해두는 기능입니다.
             </p>
             <div className="mt-3 grid gap-2">
               <label className="block">
@@ -1283,7 +1282,7 @@ export default function ContentMaker() {
                     </fieldset>
 
                     <label className="block">
-                      <FieldLabel required tooltip={FIELD_TOOLTIPS.tone}>말투</FieldLabel>
+                      <FieldLabel required tooltip={FIELD_TOOLTIPS.tone}>글 톤</FieldLabel>
                       <select
                         value={form.tone}
                         onChange={(event) => updateForm("tone", event.target.value)}
@@ -1396,7 +1395,7 @@ export default function ContentMaker() {
               </fieldset>
 
               <label className="hidden xl:block">
-                <FieldLabel required tooltip={FIELD_TOOLTIPS.tone}>말투</FieldLabel>
+                <FieldLabel required tooltip={FIELD_TOOLTIPS.tone}>글 톤</FieldLabel>
                 <select
                   value={form.tone}
                   onChange={(event) => updateForm("tone", event.target.value)}
@@ -1418,7 +1417,7 @@ export default function ContentMaker() {
                 aria-expanded={advancedOpen}
                 className="focus-ring flex min-h-10 w-full items-center justify-between gap-3 rounded-md border border-line bg-white px-3 text-sm font-bold transition hover:border-moss hover:text-moss"
               >
-                <span>고급 입력 {advancedOpen ? "닫기" : "열기"}</span>
+                <span>글 작성 참고 정보 {advancedOpen ? "닫기" : "열기"}</span>
                 <ChevronDown
                   size={17}
                   className={`transition ${advancedOpen ? "rotate-180" : ""}`}
@@ -1674,7 +1673,7 @@ export default function ContentMaker() {
             </div>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h3 className="text-lg font-bold">선택 및 결과</h3>
+            <h3 className="text-lg font-bold">글 방향 수정과 결과</h3>
             <div className="grid grid-cols-2 gap-2 sm:flex">
               <button
                 type="button"
@@ -1726,7 +1725,7 @@ export default function ContentMaker() {
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">2. 선택한 글 방향 기준 제목 고르기</h4>
+                  <h4 className="text-sm font-bold text-ink/70">2. 제목 후보 고르기</h4>
                 <button
                   type="button"
                   onClick={generateTitles}
@@ -1747,7 +1746,7 @@ export default function ContentMaker() {
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h4 className="text-sm font-bold text-ink/70">3. 본문 구성 수정</h4>
+                  <h4 className="text-sm font-bold text-ink/70">3. 글 순서 정하기</h4>
                   <p className="mt-1 text-xs leading-5 text-ink/55">
                     글에 들어갈 순서를 직접 바꿀 수 있어요. 필요 없는 항목은 삭제하고,
                     추가하고 싶은 내용은 메모에 적어주세요.
@@ -1759,13 +1758,13 @@ export default function ContentMaker() {
                   disabled={!hasSelectedTitle || status === "generating"}
                   className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-line px-3 text-sm font-semibold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
                 >
-                  글 구성 만들기
+                  글 순서 만들기
                 </button>
               </div>
               <OutlineEditor
                 items={result.outlineSections}
                 selectedCount={selectedOutlineHeadings.length}
-                emptyText="제목을 하나 선택한 뒤 글 구성 만들기를 누르세요."
+                emptyText="제목을 하나 선택한 뒤 글 순서 만들기를 누르세요."
                 onChange={updateOutlineSection}
                 onAdd={addOutlineSection}
                 onDelete={deleteOutlineSection}
@@ -1780,14 +1779,14 @@ export default function ContentMaker() {
                   title="첫 문장 후보"
                   items={result.openingSentenceCandidates}
                   selected={result.selectedOpeningSentence}
-                  emptyText="글 구성을 만들면 첫 문장 후보가 표시됩니다."
+                  emptyText="글 순서를 만들면 첫 문장 후보가 표시됩니다."
                   onSelect={(value) => selectWritingChoice("selectedOpeningSentence", value)}
                 />
                 <WritingChoiceGroup
                   title="CTA 후보"
                   items={result.ctaCandidates}
                   selected={result.selectedCtaSentence}
-                  emptyText="글 구성을 만들면 CTA 후보가 표시됩니다."
+                  emptyText="글 순서를 만들면 CTA 후보가 표시됩니다."
                   onSelect={(value) => selectWritingChoice("selectedCtaSentence", value)}
                 />
               </div>
@@ -1795,20 +1794,20 @@ export default function ContentMaker() {
 
             <div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h4 className="text-sm font-bold text-ink/70">5. 게시용 최종본 + 보조 메모</h4>
+                  <h4 className="text-sm font-bold text-ink/70">5. 본문 생성</h4>
                 <button
                   type="button"
                   onClick={generateFinal}
                   disabled={!hasOutline || !hasWritingChoices || status === "generating"}
                   className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-moss px-3 text-sm font-semibold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
                 >
-                  이 구성으로 본문 만들기
+                  이 순서로 본문 생성
                 </button>
               </div>
 
               {!hasFinal && (
                 <div className="mt-2 grid min-h-[220px] place-items-center rounded-lg border border-dashed border-line bg-paper p-6 text-center text-sm text-ink/60">
-                  글 구성과 첫 문장, CTA를 선택하면 네이버에 옮겨 쓸 게시용 본문을 생성할 수 있습니다.
+                  글 순서와 첫 문장, CTA를 선택하면 네이버에 옮겨 쓸 게시용 본문을 생성할 수 있습니다.
                 </div>
               )}
 
@@ -2329,7 +2328,7 @@ function BlogStructureCheckPanel({ seoCheck }) {
           <p className="text-xs font-bold text-moss">글 발행 전 확인사항</p>
           <h5 className="mt-1 text-base font-bold text-ink">7. 글 발행 전 확인사항</h5>
           <p className="mt-1 text-sm leading-6 text-ink/65">
-            제목, 첫 문단, 글 구성, 키워드, 마무리 문장이 사람들이 궁금해할 내용에 맞게 구성됐는지 확인합니다.
+            제목, 첫 문단, 글 순서, 키워드, 마무리 문장이 사람들이 궁금해할 내용에 맞게 구성됐는지 확인합니다.
           </p>
         </div>
         <span className="inline-flex min-h-8 items-center justify-center rounded-md bg-white px-3 text-xs font-bold text-moss">
