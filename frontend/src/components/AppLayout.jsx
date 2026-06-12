@@ -63,11 +63,12 @@ export default function AppLayout({ children, accessSession, accessMessage = "",
   const daysRemaining = accessSession?.expiresAt
     ? getAccessDaysRemaining(accessSession.expiresAt)
     : 0;
-  const hideEnvironmentBanner = ["/", "/app", "/dashboard"].includes(location.pathname);
+  const isLandingRoute = ["/", "/app", "/dashboard"].includes(location.pathname);
 
   return (
     <div className="min-h-screen bg-[#fbfaf6] text-ink">
-      <div className="flex min-h-screen w-full flex-col lg:flex-row">
+      <div className={isLandingRoute ? "min-h-screen w-full" : "flex min-h-screen w-full flex-col lg:flex-row"}>
+        {!isLandingRoute && (
         <aside className="border-b border-line bg-white/90 px-4 py-4 text-ink lg:min-h-screen lg:w-64 lg:shrink-0 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
             <div className="grid h-9 w-9 place-items-center rounded-lg bg-moss text-white">
@@ -137,11 +138,18 @@ export default function AppLayout({ children, accessSession, accessMessage = "",
             </div>
           )}
         </aside>
+        )}
 
-        <main className="min-w-0 flex-1 px-4 py-6 sm:px-7 lg:px-10 lg:py-9">
-          <div className="mx-auto w-full max-w-[1360px]">
-            {!hideEnvironmentBanner && <EnvironmentBanner />}
-            {accessMessage && (
+        <main
+          className={
+            isLandingRoute
+              ? "min-h-screen min-w-0 px-4 py-4 sm:px-6 lg:px-8"
+              : "min-w-0 flex-1 px-4 py-6 sm:px-7 lg:px-10 lg:py-9"
+          }
+        >
+          <div className={isLandingRoute ? "mx-auto w-full max-w-7xl" : "mx-auto w-full max-w-[1360px]"}>
+            {!isLandingRoute && <EnvironmentBanner />}
+            {!isLandingRoute && accessMessage && (
               <p className="mb-4 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
                 {accessMessage}
               </p>
