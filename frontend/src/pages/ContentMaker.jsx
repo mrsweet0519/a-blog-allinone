@@ -1060,7 +1060,7 @@ export default function ContentMaker() {
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">최적화 입력</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
-              {isFormReady ? "입력 완료" : "입력 전"}
+              {isFormReady ? "초안 준비 완료" : "정보 입력"}
             </span>
           </div>
 
@@ -1617,7 +1617,7 @@ export default function ContentMaker() {
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-bold">빠른 시작</h3>
               <span className="rounded-md bg-white px-2.5 py-1 text-xs font-semibold text-ink/60">
-                {isFormReady ? "입력 완료" : "입력 전"}
+                {isFormReady ? "초안 준비 완료" : "정보 입력"}
               </span>
             </div>
             <div className="mt-3">

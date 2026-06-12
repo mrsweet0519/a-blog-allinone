@@ -39,7 +39,7 @@ export const makerOptions = {
 };
 
 export const makerStatuses = {
-  idle: "입력 전",
+  idle: "준비 전",
   ready: "입력 완료",
   generating: "생성 중",
   generated: "생성 완료",

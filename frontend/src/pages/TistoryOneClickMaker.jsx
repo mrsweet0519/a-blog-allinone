@@ -178,7 +178,7 @@ export default function TistoryOneClickMaker() {
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">티스토리 원클릭 입력</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
-              {isReady ? "입력 완료" : "입력 전"}
+              {isReady ? "초안 준비 완료" : "키워드 입력"}
             </span>
           </div>
 

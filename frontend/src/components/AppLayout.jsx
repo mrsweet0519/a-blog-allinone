@@ -8,7 +8,7 @@ import {
   Sparkles,
   WandSparkles
 } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import EnvironmentBanner from "./EnvironmentBanner.jsx";
 import { getAccessDaysRemaining } from "../lib/accessControl.js";
 
@@ -59,9 +59,11 @@ const navGroups = [
 ];
 
 export default function AppLayout({ children, accessSession, accessMessage = "", onLogout }) {
+  const location = useLocation();
   const daysRemaining = accessSession?.expiresAt
     ? getAccessDaysRemaining(accessSession.expiresAt)
     : 0;
+  const hideEnvironmentBanner = ["/", "/app", "/dashboard"].includes(location.pathname);
 
   return (
     <div className="min-h-screen bg-[#fbfaf6] text-ink">
@@ -138,7 +140,7 @@ export default function AppLayout({ children, accessSession, accessMessage = "",
 
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-7 lg:px-10 lg:py-9">
           <div className="mx-auto w-full max-w-[1360px]">
-            <EnvironmentBanner />
+            {!hideEnvironmentBanner && <EnvironmentBanner />}
             {accessMessage && (
               <p className="mb-4 rounded-md border border-moss/20 bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
                 {accessMessage}

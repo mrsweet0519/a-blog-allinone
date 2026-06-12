@@ -33,8 +33,8 @@ export default function App() {
   return (
     <AppLayout accessSession={accessSession} accessMessage={accessMessage} onLogout={handleLogout}>
       <Routes>
-        <Route path="/" element={<ProductReviewMaker />} />
-        <Route path="/app" element={<ProductReviewMaker />} />
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/app" element={<Dashboard />} />
         <Route path="/one-click/naver" element={<ProductReviewMaker />} />
         <Route path="/one-click/tistory" element={<TistoryOneClickMaker />} />
         <Route path="/one-click/comments" element={<CommentReplyManager modeVariant="quick" />} />

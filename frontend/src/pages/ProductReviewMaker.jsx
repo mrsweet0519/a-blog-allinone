@@ -545,7 +545,7 @@ export default function ProductReviewMaker() {
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">원클릭 네이버 블로그 글쓰기</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
-              {isReady ? "입력 완료" : "입력 전"}
+              {isReady ? "초안 준비 완료" : "사진/메모 입력"}
             </span>
           </div>
           <div className="mt-4 rounded-lg border border-moss/15 bg-[#f3f7f3] p-4 text-sm leading-6 text-ink/70">
