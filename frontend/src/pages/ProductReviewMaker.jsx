@@ -46,6 +46,7 @@ const initialForm = {
 };
 
 const emptyResult = {
+  category: "",
   titles: [],
   selectedTitle: "",
   body: "",
@@ -60,11 +61,16 @@ const emptyResult = {
 const toneOptions = ["친근한", "차분한", "전문적인", "활기찬"];
 const reviewCategoryOptions = [
   { value: "", label: "자동 추정" },
-  { value: "restaurant", label: "맛집/카페 후기" },
   { value: "product", label: "상품 후기" },
+  { value: "restaurant", label: "맛집 후기" },
+  { value: "store", label: "매장 후기" },
+  { value: "education", label: "교육 후기" },
+  { value: "hospital", label: "병원 후기" },
+  { value: "service", label: "서비스 후기" },
+  { value: "travel", label: "여행 후기" },
+  { value: "experience", label: "체험 후기" },
   { value: "kids-place", label: "아이 동반 장소 후기" },
-  { value: "place", label: "장소/체험 후기" },
-  { value: "education", label: "교육/강의 후기" }
+  { value: "place", label: "장소 후기" }
 ];
 const sponsorshipOptions = ["직접 구매", "제품 제공", "식사권 제공", "협찬/체험단"];
 const MAX_REVIEW_IMAGES = 10;
@@ -111,9 +117,6 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) =>
     "",
     `선택 제목: ${result.selectedTitle}`,
     "",
-    "소제목 구조",
-    ...(result.outline || []).map((heading, index) => `${index + 1}. ${heading}`),
-    "",
     "본문",
     includeImageMarkers ? result.body : stripImageMarkers(result.body),
     "",
@@ -127,10 +130,7 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) =>
     result.hashtags.join(" "),
     "",
     "SEO 키워드 정리",
-    (result.searchKeywords || []).join(", "),
-    "",
-    "자연스러운 마무리 문단",
-    result.closingParagraph
+    (result.searchKeywords || []).join(", ")
   ]
     .filter((line) => line !== undefined && line !== null)
     .join("\n")

@@ -405,7 +405,8 @@ assert.ok(!/무조건|보장|완벽|즉시효과/u.test(productReview.body));
 assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(productReview.body));
 assert.ok(productReview.hashtags.includes("#수분크림후기"));
 assert.equal(productReview.titles.slice(0, 3).length, 3);
-assert.ok(productReview.outline.includes("사용감과 향"));
+assert.ok(productReview.outline.includes("쓰기 전 기대와 걱정이 있었던 부분"));
+assert.ok(productReview.outline.includes("직접 써보며 느낀 점"));
 assert.equal(productReview.thumbnailTexts.length, 3);
 assert.ok(productReview.searchKeywords.includes("수분크림"));
 assert.ok(productReview.closingParagraph.length > 20);
@@ -437,13 +438,14 @@ const restaurantPhotoReview = createProductReviewDraft({
   tone: "친근한",
   targetLength: "1500"
 });
-assert.ok(restaurantPhotoReview.body.includes("메뉴와 맛"));
-assert.ok(restaurantPhotoReview.body.includes("분위기와 동행"));
-assert.ok(restaurantPhotoReview.body.includes("가격과 주문 전 확인할 점"));
-assert.ok(restaurantPhotoReview.body.includes("재방문 기준"));
+assert.equal(restaurantPhotoReview.category, "restaurant");
+assert.ok(restaurantPhotoReview.outline.some((heading) => heading.includes("분위기")));
+assert.ok(restaurantPhotoReview.outline.some((heading) => heading.includes("추천")));
 assert.ok(restaurantPhotoReview.body.includes("직장인 회식"));
-assert.ok(restaurantPhotoReview.body.includes("사진으로 입구와 외관"));
-assert.ok(restaurantPhotoReview.body.includes("대표 메뉴 사진"));
+assert.ok(restaurantPhotoReview.body.includes("탕수육"));
+assert.ok(restaurantPhotoReview.body.includes("어향가지"));
+assert.ok(restaurantPhotoReview.body.includes("4명"));
+assert.ok(restaurantPhotoReview.body.includes("입구와 외관"));
 assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(restaurantPhotoReview.body));
 assert.ok(!/(^|\n)\s*\*\s+|(^|\n)\s*\*\*.+\*\*/u.test(restaurantPhotoReview.body));
 
@@ -461,12 +463,15 @@ const creamPhotoReview = createProductReviewDraft({
   tone: "친근한",
   targetLength: "1500"
 });
-assert.ok(creamPhotoReview.body.includes("사용감과 향"));
-assert.ok(creamPhotoReview.body.includes("좋았던 점"));
+assert.equal(creamPhotoReview.category, "product");
+assert.ok(creamPhotoReview.outline.includes("쓰기 전 기대와 걱정이 있었던 부분"));
+assert.ok(creamPhotoReview.body.includes("좋았던 점") || creamPhotoReview.body.includes("좋았어요"));
 assert.ok(creamPhotoReview.body.includes("아쉬운 점"));
-assert.ok(creamPhotoReview.body.includes("이런 분께 추천해요"));
 assert.ok(creamPhotoReview.body.includes("발림감"));
-assert.ok(creamPhotoReview.body.includes("사용 장면 사진"));
+assert.ok(creamPhotoReview.body.includes("향"));
+assert.ok(creamPhotoReview.body.includes("아침저녁"));
+assert.ok(creamPhotoReview.body.includes("끈적임"));
+assert.ok(creamPhotoReview.body.includes("50ml"));
 assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(creamPhotoReview.body));
 
 const kidsPlacePhotoReview = createProductReviewDraft({
@@ -484,11 +489,11 @@ const kidsPlacePhotoReview = createProductReviewDraft({
   targetLength: "1500"
 });
 assert.ok(kidsPlacePhotoReview.body.includes("아이 반응"));
-assert.ok(kidsPlacePhotoReview.body.includes("동선과 체험 흐름"));
-assert.ok(kidsPlacePhotoReview.body.includes("부모 대기와 피로도"));
-assert.ok(kidsPlacePhotoReview.body.includes("주차와 다시 갈 기준"));
+assert.ok(kidsPlacePhotoReview.body.includes("체험 흐름"));
+assert.ok(kidsPlacePhotoReview.body.includes("부모 대기"));
+assert.ok(kidsPlacePhotoReview.body.includes("주차"));
 assert.ok(kidsPlacePhotoReview.body.includes("주차는 확인이 필요"));
-assert.ok(kidsPlacePhotoReview.body.includes("체험 공간을 보여주는 사진"));
+assert.ok(kidsPlacePhotoReview.outline.some((heading) => heading.includes("아이")));
 assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(kidsPlacePhotoReview.body));
 
 const forbiddenReviewGuidePattern =
@@ -509,8 +514,8 @@ const requestedRestaurantKeywordCount =
 assert.ok(requestedRestaurantFirstSentence.includes("역삼역 중식당 회식 후기"));
 assert.ok(requestedRestaurantKeywordCount >= 2 && requestedRestaurantKeywordCount <= 3);
 assert.ok(!forbiddenReviewGuidePattern.test(requestedRestaurantReview.body));
-assert.ok(requestedRestaurantReview.body.includes("메뉴와 맛"));
-assert.ok(requestedRestaurantReview.body.includes("분위기와 동행"));
+assert.ok(requestedRestaurantReview.outline.some((heading) => heading.includes("분위기")));
+assert.ok(requestedRestaurantReview.outline.some((heading) => heading.includes("주차")));
 assert.ok(requestedRestaurantReview.body.includes("탕수육"));
 assert.ok(requestedRestaurantReview.body.includes("어향가지"));
 assert.ok(requestedRestaurantReview.body.includes("4명"));
@@ -520,7 +525,7 @@ assert.ok(requestedRestaurantReview.body.includes("주차: [확인 필요]"));
 assert.ok(!/후기\s+후기/u.test(requestedRestaurantReview.selectedTitle));
 assert.ok(!requestedRestaurantReview.hashtags.some((tag) => /후기후기/u.test(tag)));
 assert.equal(requestedRestaurantReview.titles.slice(0, 3).length, 3);
-assert.ok(requestedRestaurantReview.outline.includes("가격과 주문 전 확인할 점"));
+assert.ok(requestedRestaurantReview.outline.some((heading) => heading.includes("주차")));
 assert.equal(requestedRestaurantReview.thumbnailTexts.length, 3);
 assert.ok(requestedRestaurantReview.searchKeywords.includes("역삼역 중식당 회식 후기"));
 assert.ok(requestedRestaurantReview.closingParagraph.includes("가격") || requestedRestaurantReview.closingParagraph.includes("주차"));
@@ -534,8 +539,8 @@ const requestedCreamReview = createProductReviewDraft({
   targetLength: "1500"
 });
 assert.ok(!forbiddenReviewGuidePattern.test(requestedCreamReview.body));
-assert.ok(requestedCreamReview.body.includes("사용감과 향"));
-assert.ok(requestedCreamReview.body.includes("좋았던 점"));
+assert.ok(requestedCreamReview.outline.includes("쓰기 전 기대와 걱정이 있었던 부분"));
+assert.ok(requestedCreamReview.body.includes("좋았"));
 assert.ok(requestedCreamReview.body.includes("아쉬운 점"));
 assert.ok(requestedCreamReview.body.includes("발림감"));
 assert.ok(requestedCreamReview.body.includes("향"));
@@ -544,6 +549,35 @@ assert.ok(requestedCreamReview.body.includes("끈적임"));
 assert.ok(!/히알루론산|세라마이드|미백|주름|보습 효과|개선/u.test(requestedCreamReview.body));
 assert.ok(!/후기\s+후기/u.test(requestedCreamReview.selectedTitle));
 assert.ok(!requestedCreamReview.hashtags.some((tag) => /후기후기/u.test(tag)));
+
+const goldExchangeReview = createProductReviewDraft({
+  mainKeyword: "금거래소 후기",
+  experienceMemo:
+    "사장님이 너무 친절했고 아드님이 같이 하는데 2대째 운영한다고 들었어요. 금 시세 확인부터 매입 과정까지 차분하게 설명해줘서 처음 가도 부담이 적었어요.",
+  imageContext: [
+    { index: 1, name: "gold-store.jpg", note: "매장 입구와 상담 공간" },
+    { index: 2, name: "gold-price-board.jpg", note: "금 시세 안내문" }
+  ],
+  imageCount: 2,
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.equal(goldExchangeReview.category, "store");
+assert.ok(goldExchangeReview.outline.includes("처음 방문해도 부담이 덜했던 상담 분위기"));
+assert.ok(goldExchangeReview.outline.includes("매입 상담 전에 확인하면 좋은 부분"));
+assert.ok(goldExchangeReview.body.includes("금거래소 후기"));
+assert.ok(goldExchangeReview.body.includes("사장님"));
+assert.ok(goldExchangeReview.body.includes("친절"));
+assert.ok(goldExchangeReview.body.includes("아드님"));
+assert.ok(goldExchangeReview.body.includes("2대째"));
+assert.ok(goldExchangeReview.body.includes("금 시세"));
+assert.ok(goldExchangeReview.body.includes("매입 과정"));
+assert.ok(goldExchangeReview.body.includes("상담"));
+assert.ok(goldExchangeReview.body.includes("확인"));
+assert.ok(goldExchangeReview.searchKeywords.includes("매장 후기"));
+assert.ok(!/발림감|사용감|향|아침저녁 사용|사용 장면|텍스처|제품 전체|패키지/u.test(goldExchangeReview.body));
+assert.ok(!/여기에 이미지|이미지\s*\d|사진\s*\d/u.test(goldExchangeReview.body));
+assert.ok(!forbiddenReviewGuidePattern.test(goldExchangeReview.body));
 
 const requestedKidsPlaceReview = createProductReviewDraft({
   mainKeyword: "아이랑 다녀온 실내 체험공간 후기",
@@ -555,9 +589,8 @@ const requestedKidsPlaceReview = createProductReviewDraft({
 });
 assert.ok(!forbiddenReviewGuidePattern.test(requestedKidsPlaceReview.body));
 assert.ok(requestedKidsPlaceReview.body.includes("아이 반응"));
-assert.ok(requestedKidsPlaceReview.body.includes("부모 대기와 피로도"));
+assert.ok(requestedKidsPlaceReview.body.includes("부모 대기"));
 assert.ok(requestedKidsPlaceReview.body.includes("아이가 체험을 좋아"));
-assert.ok(requestedKidsPlaceReview.body.includes("부모 입장에서 편했던 점"));
 assert.ok(requestedKidsPlaceReview.body.includes("주차는 확인이 필요"));
 
 const customsLectureReview = createProductReviewDraft({
@@ -578,8 +611,8 @@ const customsLectureReview = createProductReviewDraft({
   targetLength: "1500"
 });
 assert.ok(customsLectureReview.body.includes("세관공매 무료공개강의"));
-assert.ok(customsLectureReview.body.includes("세관공매라는 단어 자체가 어렵게 느껴"));
-assert.ok(customsLectureReview.body.includes("강의 안내 이미지에서 커리큘럼과 진행 흐름"));
+assert.ok(customsLectureReview.body.includes("세관공매라는 말부터 조금 어렵게 느껴"));
+assert.ok(customsLectureReview.body.includes("강의 안내 이미지를 보니"));
 assert.ok(customsLectureReview.body.includes("입찰"));
 assert.ok(customsLectureReview.body.includes("공고"));
 assert.ok(customsLectureReview.body.includes("낙찰"));
@@ -587,6 +620,83 @@ assert.ok(customsLectureReview.body.includes("반출"));
 assert.ok(customsLectureReview.body.includes("판로"));
 assert.ok(!/carousel|ChatGPT Image|image page|업로드 파일명|생성 시간|내부 이미지 식별자|\.png|이미지\s*\d|사진\s*\d/iu.test(customsLectureReview.body));
 assert.ok(!forbiddenReviewGuidePattern.test(customsLectureReview.body));
+
+const qualityGoldStoreReview = createProductReviewDraft({
+  mainKeyword: "부천금거래소 후기",
+  experienceMemo:
+    "사장님이 너무 친절\n아드님이랑 같이 하는데 2대째 운영중\n금값 올라서 방문\n매입 상담",
+  imageContext: [
+    { index: 1, note: "매장 외관과 입구" },
+    { index: 2, note: "상담 공간과 진열된 제품" }
+  ],
+  imageCount: 2,
+  tone: "친근한",
+  targetLength: "1500"
+});
+const qualityGoldFirstParagraph = qualityGoldStoreReview.body.split(/\n{2,}/u)[0];
+assert.equal(qualityGoldStoreReview.category, "store");
+assert.ok(qualityGoldStoreReview.outline.includes("금값이 오르다 보니 자연스럽게 알아보게 된 곳"));
+assert.ok(/금값|금값이 오르/u.test(qualityGoldFirstParagraph));
+assert.ok(!qualityGoldFirstParagraph.includes("찾는 분이라면"));
+assert.ok(qualityGoldStoreReview.body.includes("사장님"));
+assert.ok(qualityGoldStoreReview.body.includes("친절"));
+assert.ok(qualityGoldStoreReview.body.includes("아드님"));
+assert.ok(qualityGoldStoreReview.body.includes("2대째"));
+assert.ok(qualityGoldStoreReview.body.includes("금값"));
+assert.ok(qualityGoldStoreReview.body.includes("매입 상담"));
+assert.ok(qualityGoldStoreReview.body.includes("외관 사진"));
+assert.ok(!/발림감|사용감|향|아침저녁|텍스처|제품 전체|사용 장면/u.test(qualityGoldStoreReview.body));
+
+const qualityCustomsEducationReview = createProductReviewDraft({
+  mainKeyword: "세관공매 무료공개강의 후기",
+  experienceMemo:
+    "초보자도 이해 쉬움\n커리큘럼 확인\n입찰 흐름 궁금\n김바울 교수 강의",
+  imageContext: [
+    { index: 1, note: "강의 안내 이미지 커리큘럼과 입찰 흐름" }
+  ],
+  imageCount: 1,
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.equal(qualityCustomsEducationReview.category, "education");
+assert.ok(qualityCustomsEducationReview.outline.includes("초보자도 흐름을 잡기 쉬웠던 구성"));
+assert.ok(qualityCustomsEducationReview.body.includes("초보자"));
+assert.ok(qualityCustomsEducationReview.body.includes("커리큘럼"));
+assert.ok(qualityCustomsEducationReview.body.includes("입찰 흐름"));
+assert.ok(qualityCustomsEducationReview.body.includes("김바울 교수"));
+assert.ok(qualityCustomsEducationReview.body.includes("강의 안내 이미지를 보니"));
+assert.ok(!/발림감|사용감|배송|패키지|제품 전체|사용 장면/u.test(qualityCustomsEducationReview.body));
+
+const qualityDryShampooReview = createProductReviewDraft({
+  mainKeyword: "에어젤 드라이샴푸 후기",
+  experienceMemo:
+    "운동 후 사용\n떡진 머리 보송\n휴대 편함\n향 괜찮음",
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.equal(qualityDryShampooReview.category, "product");
+assert.ok(qualityDryShampooReview.outline.includes("운동 후 머리가 신경 쓰일 때 꺼내본 이유"));
+assert.ok(qualityDryShampooReview.body.includes("운동"));
+assert.ok(qualityDryShampooReview.body.includes("보송"));
+assert.ok(qualityDryShampooReview.body.includes("휴대"));
+assert.ok(qualityDryShampooReview.body.includes("향"));
+assert.ok(!/매장|방문 전|상담 분위기/u.test(qualityDryShampooReview.body));
+
+const qualityPastaReview = createProductReviewDraft({
+  mainKeyword: "부천 파스타 맛집 후기",
+  experienceMemo:
+    "분위기 좋음\n양 많음\n주차 편함\n직원 친절",
+  tone: "친근한",
+  targetLength: "1500"
+});
+assert.equal(qualityPastaReview.category, "restaurant");
+assert.ok(qualityPastaReview.outline.includes("파스타 먹을 곳을 찾다가 눈에 들어온 곳"));
+assert.ok(qualityPastaReview.body.includes("파스타"));
+assert.ok(qualityPastaReview.body.includes("분위기"));
+assert.ok(qualityPastaReview.body.includes("양"));
+assert.ok(qualityPastaReview.body.includes("주차"));
+assert.ok(qualityPastaReview.body.includes("직원 응대"));
+assert.ok(!/발림감|사용감|아침저녁|텍스처|제품 전체|사용 장면/u.test(qualityPastaReview.body));
 
 const tistoryDraft = createTistoryDraft({
   keyword: "초등 독서노트 쓰는 법",
