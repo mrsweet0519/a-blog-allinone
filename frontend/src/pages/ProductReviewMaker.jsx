@@ -1004,22 +1004,22 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
 
   return (
     <div className="space-y-3">
-      <section className="rounded-xl border border-line/60 bg-white p-4 shadow-[0_8px_18px_rgba(31,36,40,0.025)]">
+      <section className="rounded-xl border border-moss/20 bg-[#fbfdf9] p-4 shadow-[0_10px_24px_rgba(31,36,40,0.035)]">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h4 className="text-sm font-bold text-ink/75">1. 제목 후보 5개</h4>
+            <h4 className="text-sm font-bold text-moss">1. 최종 추천 제목</h4>
             <p className="mt-1 text-xs font-semibold text-ink/45">
-              {packageData.mainKeyword || "메인 키워드"} 기준으로 검색 의도별 후보를 비교하세요.
+              바로 복사해 네이버 제목에 사용할 수 있는 추천안입니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => copyText("titles")}
-              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-line/70 bg-white px-2.5 text-xs font-bold text-ink/55 transition hover:border-moss/50 hover:text-moss"
+              onClick={() => copyText("finalTitle")}
+              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-moss/20 bg-white px-2.5 text-xs font-bold text-moss transition hover:border-moss"
             >
-              {copied === "titles" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
-              {copied === "titles" ? "복사됨" : "후보 복사"}
+              {copied === "finalTitle" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+              {copied === "finalTitle" ? "복사됨" : "제목 복사"}
             </button>
             <button
               type="button"
@@ -1027,12 +1027,25 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
               className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
             >
               {copied === "full" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
-              {copied === "full" ? "전체 복사됨" : "전체 글 복사"}
+              {copied === "full" ? "전체 복사됨" : "전체 글 복사하기"}
             </button>
           </div>
         </div>
+        <input
+          value={finalTitle}
+          onChange={(event) => updateSelectedTitle(event.target.value)}
+          className="focus-ring mt-3 min-h-14 w-full rounded-md border border-moss/25 bg-white px-4 text-xl font-bold leading-8 text-ink"
+          aria-label="최종 추천 제목 직접 수정"
+        />
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <ResultMetric label="메인 키워드" value={packageData.mainKeyword || "키워드 없음"} />
+          <ResultMetric label="본문 글자수" value={`${bodyLength}자`} />
+          <ResultMetric label="해시태그 개수" value={`${hashtags.length}개`} />
+        </div>
+      </section>
 
-        <div className="mt-3 grid gap-2">
+      <ResultDetailSection title="2. 제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
+        <div className="grid gap-2">
           {titleCandidates.slice(0, 5).map((title, index) => {
             const selected = finalTitle === title || result.selectedTitle === title;
 
@@ -1041,10 +1054,10 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
                 type="button"
                 key={title}
                 onClick={() => selectTitle(title)}
-                className={`focus-ring flex min-h-12 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition ${
+                className={`focus-ring flex min-h-11 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition ${
                   selected
                     ? "border-moss/70 bg-moss/10 text-moss"
-                    : "border-line/70 bg-[#fffefa] hover:border-moss hover:bg-[#fbfdf9]"
+                    : "border-line/70 bg-white hover:border-moss hover:bg-[#fbfdf9]"
                 }`}
               >
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-current text-xs font-bold">
@@ -1055,32 +1068,7 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
             );
           })}
         </div>
-      </section>
-
-      <section className="rounded-xl border border-moss/20 bg-[#fbfdf9] p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h4 className="text-sm font-bold text-moss">2. 최종 추천 제목</h4>
-          <button
-            type="button"
-            onClick={() => copyText("finalTitle")}
-            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-moss/20 bg-white px-2.5 text-xs font-bold text-moss transition hover:border-moss"
-          >
-            {copied === "finalTitle" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
-            {copied === "finalTitle" ? "복사됨" : "이 부분 복사"}
-          </button>
-        </div>
-        <input
-          value={finalTitle}
-          onChange={(event) => updateSelectedTitle(event.target.value)}
-          className="focus-ring mt-3 min-h-12 w-full rounded-md border border-moss/25 bg-white px-3 text-lg font-bold leading-7 text-ink"
-          aria-label="최종 추천 제목 직접 수정"
-        />
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <ResultMetric label="메인 키워드" value={packageData.mainKeyword || "키워드 없음"} />
-          <ResultMetric label="본문 글자수" value={`${bodyLength}자`} />
-          <ResultMetric label="해시태그 개수" value={`${hashtags.length}개`} />
-        </div>
-      </section>
+      </ResultDetailSection>
 
       <ResultDetailSection title="3. 블로그 본문" defaultOpen copyActive={copied === "body"} onCopy={() => copyText("body")}>
         <textarea

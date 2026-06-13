@@ -724,10 +724,18 @@ assert.ok(requestedGoldBuyTitles[3].includes("체크 포인트"));
 assert.ok(requestedGoldBuyTitles[4].includes("금값"));
 
 const productReviewMakerSource = readFileSync(new URL("../frontend/src/pages/ProductReviewMaker.jsx", import.meta.url), "utf8");
-assert.ok(productReviewMakerSource.indexOf("1. 제목 후보 5개") < productReviewMakerSource.indexOf("2. 최종 추천 제목"));
-assert.ok(productReviewMakerSource.indexOf("2. 최종 추천 제목") < productReviewMakerSource.indexOf("3. 블로그 본문"));
+assert.ok(productReviewMakerSource.indexOf("1. 최종 추천 제목") < productReviewMakerSource.indexOf("2. 제목 더보기"));
+assert.ok(productReviewMakerSource.indexOf("2. 제목 더보기") < productReviewMakerSource.indexOf("3. 블로그 본문"));
+assert.ok(productReviewMakerSource.includes('<ResultDetailSection title="2. 제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>'));
+assert.ok(!productReviewMakerSource.includes("1. 제목 후보 5개"));
 assert.ok(!productReviewMakerSource.includes("이런 분께 추천해요"));
 assert.ok(!productReviewMakerSource.includes("상세 분석 보기"));
+const resultToClipboardSource = productReviewMakerSource.slice(
+  productReviewMakerSource.indexOf("const resultToClipboard"),
+  productReviewMakerSource.indexOf("const imageKeywordsToClipboard")
+);
+assert.ok(!resultToClipboardSource.includes("titleCandidates"));
+assert.ok(!resultToClipboardSource.includes("제목 더보기"));
 
 const requestedFamilyCafePackageReview = createProductReviewDraft({
   mainKeyword: "부천 아이랑 갈만한 카페",
