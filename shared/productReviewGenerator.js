@@ -20,12 +20,24 @@ const toHashTag = (value) => {
   return tag ? `#${tag}` : "";
 };
 
-const stripReviewSuffix = (value = "") =>
-  text(value).replace(/\s*(?:후기|리뷰|방문기|사용기)$/u, "").trim();
+const REVIEW_TOPIC_TAIL_PATTERN =
+  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리)$/u;
+
+const stripReviewSuffix = (value = "") => {
+  let current = text(value);
+
+  for (let index = 0; index < 3; index += 1) {
+    const next = current.replace(REVIEW_TOPIC_TAIL_PATTERN, "").trim();
+    if (next === current) break;
+    current = next;
+  }
+
+  return current;
+};
 
 const deriveMainKeywordFromTopic = (value = "") =>
   stripReviewSuffix(value)
-    .replace(/\s*(?:직접\s*)?(?:써본|다녀온|방문한)\s*$/u, "")
+    .replace(/\s*(?:직접\s*)?(?:써본|사용해본|다녀온|방문한|참여한)\s*$/u, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -865,6 +877,133 @@ const getTitleVariantIndex = (form = {}) => {
   return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
 };
 
+const SEO_TITLE_SUPPORT_PHRASES = {
+  store: ["상담 분위기와 확인할 점", "방문 전 참고한 후기", "상담 기준 정리", "체크 포인트", "알아본 이유"],
+  restaurant: ["방문 전 확인할 점", "가족 후기", "메뉴와 좌석 기준", "체크 포인트", "알아본 이유"],
+  product: ["사용감과 확인할 점", "직접 써본 후기", "구매 전 기준", "사용 상황 체크", "알아본 이유"],
+  education: ["수업 흐름과 확인할 점", "강의 후기", "커리큘럼 기준", "준비 체크", "알아본 이유"],
+  hospital: ["방문 전 확인할 점", "상담 후기", "예약 기준", "접수 체크", "궁금했던 이유"],
+  service: ["상담 과정과 확인할 점", "진행 후기", "비용 기준", "상담 체크", "알아본 이유"],
+  travel: ["동선과 확인할 점", "여행 후기", "코스 기준", "방문 체크", "알아본 이유"],
+  experience: ["체험 흐름과 확인할 점", "체험 후기", "준비물 기준", "참여 체크", "알아본 이유"],
+  "kids-place": ["아이 반응과 확인할 점", "가족 후기", "체험 기준", "방문 체크", "알아본 이유"],
+  place: ["방문 전 확인할 점", "직접 다녀온 후기", "이용 기준", "체크 포인트", "알아본 이유"]
+};
+
+const SEO_TITLE_EXPANSION_PHRASES = {
+  store: [
+    "상담 전 확인한 분위기와 방문 포인트",
+    "처음 방문하며 느낀 상담 흐름과 확인할 점",
+    "방문 전 알아두면 좋은 매입 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "금값 흐름 때문에 알아본 상담 기준과 포인트"
+  ],
+  restaurant: [
+    "방문 전 확인한 메뉴와 분위기 포인트",
+    "직접 다녀오며 느낀 식사 흐름과 후기",
+    "가기 전 알아두면 좋은 좌석 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "모임 장소로 알아본 이유와 방문 포인트"
+  ],
+  product: [
+    "사용 전 확인한 장점과 아쉬운 점",
+    "직접 써보며 느낀 사용감과 실제 후기",
+    "구매 전 알아두면 좋은 사용 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "필요한 순간에 알아본 이유와 사용 포인트"
+  ],
+  education: [
+    "수강 전 확인한 준비 과정과 진행 흐름",
+    "직접 들어보며 느낀 수업 흐름과 후기",
+    "신청 전 알아두면 좋은 커리큘럼 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "초보자 입장에서 알아본 이유와 확인 포인트"
+  ],
+  hospital: [
+    "방문 전 확인한 접수 흐름과 안내 분위기",
+    "직접 방문하며 느낀 상담 분위기와 후기",
+    "예약 전 알아두면 좋은 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "처음 방문 전 궁금했던 기준과 포인트"
+  ],
+  service: [
+    "상담 전 확인한 진행 기준과 체크 포인트",
+    "직접 이용하며 느낀 진행 흐름과 후기",
+    "신청 전 알아두면 좋은 비용 기준과 확인할 점",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "처음 알아보게 된 이유와 상담 포인트"
+  ],
+  travel: [
+    "방문 전 확인한 동선과 분위기 포인트",
+    "직접 다녀오며 느낀 여행 흐름과 후기",
+    "가기 전 알아두면 좋은 코스 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "사진을 보고 알아본 이유와 포인트"
+  ],
+  experience: [
+    "처음 참여 전 확인한 준비 과정과 진행 흐름",
+    "직접 경험하며 느낀 진행 흐름과 참여 포인트",
+    "참여 전 알아두면 좋은 준비 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "궁금해서 알아본 이유와 참여 전 확인 포인트"
+  ],
+  "kids-place": [
+    "방문 전 확인한 아이 반응과 동선 포인트",
+    "직접 다녀오며 느낀 체험 흐름과 후기",
+    "가기 전 알아두면 좋은 가족 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "아이와 가볼 만한지 알아본 포인트"
+  ],
+  place: [
+    "방문 전 확인한 분위기와 동선 포인트",
+    "직접 다녀오며 느낀 이용 흐름과 후기",
+    "가기 전 알아두면 좋은 기준과 체크 포인트",
+    "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
+    "궁금해서 알아본 이유와 방문 포인트"
+  ]
+};
+
+const escapeRegExp = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const normalizeSeoTitleCandidate = (candidate = "", mainKeyword = "", category = "place", index = 0) => {
+  const keyword = text(mainKeyword);
+  let title = text(candidate)
+    .replace(/인생|무조건|대박|효과\s*보장|완전\s*추천/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!keyword || !title) return title;
+
+  if (!title.includes(keyword)) {
+    title = `${keyword} ${title}`;
+  } else if (title.indexOf(keyword) > 8) {
+    title = `${keyword} ${title.replace(new RegExp(escapeRegExp(keyword), "u"), "").trim()}`;
+  }
+
+  let keywordCount = 0;
+  title = title
+    .replace(new RegExp(escapeRegExp(keyword), "gu"), (match) => {
+      keywordCount += 1;
+      return keywordCount === 1 ? match : "";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const visibleLength = Array.from(title).length;
+  const reviewTitle = withReviewTitleSuffix(keyword);
+  const simpleReviewTitle = compact(title) === compact(reviewTitle);
+
+  if (visibleLength < 28 || simpleReviewTitle) {
+    const expansion =
+      (SEO_TITLE_EXPANSION_PHRASES[category] || SEO_TITLE_EXPANSION_PHRASES.place)[index] ||
+      (SEO_TITLE_SUPPORT_PHRASES[category] || SEO_TITLE_SUPPORT_PHRASES.place)[index] ||
+      "방문 전 확인한 기준과 포인트";
+    title = `${reviewTitle}｜${expansion}`;
+  }
+
+  return title.replace(/\s+/g, " ").trim();
+};
+
 const createExperienceTitleCandidates = (form = {}, category = inferReviewCategory(form)) => {
   const mainKeyword = getMainKeyword(form);
   const baseKeyword = getReviewTitleBase(mainKeyword);
@@ -1102,12 +1241,7 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
       : titleMap[category] || titleMap.place;
 
   return uniqueText(sourceTitles)
-    .map((title) =>
-      title
-        .replace(/인생|무조건|대박|효과\s*보장|완전\s*추천/gu, "")
-        .replace(/\s+/g, " ")
-        .trim()
-    )
+    .map((title, index) => normalizeSeoTitleCandidate(title, titleKeyword, category, index))
     .filter(Boolean)
     .slice(0, 5);
 };
@@ -1468,7 +1602,7 @@ const getDisclosureSentence = (form = {}) => {
 };
 
 const WRITING_GUIDE_PATTERN =
-  /후기\s*흐름으로\s*정리해보려고|정리해보려고|기준으로\s*풀어두면\s*자연스럽|기준으로\s*풀어두면|중심으로\s*정리(?:했|하)|아래\s*내용은\s*정리했습니다|아래\s*내용은|글에\s*담아보겠습니다|이런\s*흐름으로\s*작성|과하게\s*단정하기보다|기준으로\s*볼\s*것\s*같아요|먼저\s*보려고\s*했/u;
+  /후기\s*흐름으로\s*정리해보려고|정리해보려고|기준으로\s*풀어두면\s*자연스럽|기준으로\s*풀어두면|중심으로\s*정리(?:했|하)|아래\s*내용은\s*정리했습니다|아래\s*내용은|글에\s*담아보겠습니다|이런\s*흐름으로\s*작성|과하게\s*단정하기보다|기준으로\s*볼\s*것\s*같아요|먼저\s*보려고\s*했|사진이\s*있다면|사진과\s*메모만으로도\s*초안|발행\s*전|본문\s*흐름|글\s*흐름|작성\s*가이드|검색자가\s*궁금해할\s*포인트|제공된\s*메모|확인\s*필요\s*정보는\s*따로|최종\s*발행|네이버\s*검색/u;
 
 const removeWritingGuideParagraphs = (body = "") =>
   normalizeBody(body)
@@ -1972,6 +2106,42 @@ const insertPhotoMarkersIntoBody = (body = "", category = "place") => {
   });
 
   return normalizeBody([...result, ...markers.slice(markerIndex)].join("\n\n"));
+};
+
+const replaceRepeatedPhrase = (value = "", phrase = "", alternatives = [], keepCount = 1) => {
+  if (!phrase || alternatives.length === 0) return value;
+  let seen = 0;
+
+  return value.replace(new RegExp(escapeRegExp(phrase), "gu"), (match) => {
+    seen += 1;
+    if (seen <= keepCount) return match;
+    return alternatives[(seen - keepCount - 1) % alternatives.length];
+  });
+};
+
+const polishPublishableBlogBody = (body = "") => {
+  let polished = removeWritingGuideParagraphs(body);
+
+  polished = replaceRepeatedPhrase(polished, "좋더라고요", [
+    "편하게 느껴졌어요",
+    "판단하기 쉬웠어요",
+    "조금 더 자연스럽게 다가왔어요"
+  ]);
+  polished = replaceRepeatedPhrase(polished, "좋아요", [
+    "도움이 됩니다",
+    "확인해두면 마음이 놓입니다",
+    "읽기 편합니다"
+  ], 2);
+  polished = replaceRepeatedPhrase(polished, "좋겠습니다", [
+    "확인해두면 편합니다",
+    "챙겨보면 도움이 됩니다"
+  ], 2);
+  polished = replaceRepeatedPhrase(polished, "도움이 돼요", [
+    "판단하기가 한결 쉽습니다",
+    "방문 전 기준을 잡기 편합니다"
+  ], 2);
+
+  return normalizeBody(polished);
 };
 
 const getInfoValue = (value = "") => text(value) || "[확인 필요]";
@@ -2774,6 +2944,8 @@ const createPublishableReviewBody = ({
   if (desiredMin > 0 && getBodyLength(body) < desiredMin) {
     body = normalizeBody([body, ...createNaturalReviewFinishingSections(form, category)].join("\n\n"));
   }
+
+  body = polishPublishableBlogBody(body);
 
   return insertPhotoMarkersIntoBody(body, category);
 };

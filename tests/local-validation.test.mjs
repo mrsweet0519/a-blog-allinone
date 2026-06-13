@@ -717,7 +717,7 @@ assert.ok(requestedGoldBuyTitles.every((title) => title.indexOf("부천금매입
 assert.ok(requestedGoldBuyTitles.every((title) => Array.from(title).length >= 24));
 assert.ok(requestedGoldBuyTitles.every((title) => !/인생|무조건|대박|효과\s*보장|완전\s*추천/u.test(title)));
 assert.equal(requestedGoldBuySeoReview.selectedTitle, requestedGoldBuyTitles[0]);
-assert.ok(requestedGoldBuyTitles[0].includes("상담 분위기"));
+assert.ok(/상담.*분위기|분위기.*방문/u.test(requestedGoldBuyTitles[0]));
 assert.ok(requestedGoldBuyTitles[1].includes("처음 방문"));
 assert.ok(requestedGoldBuyTitles[2].includes("상담 기준"));
 assert.ok(requestedGoldBuyTitles[3].includes("체크 포인트"));
@@ -735,19 +735,83 @@ assert.notDeepEqual(requestedGoldBuyRetitledTitles, requestedGoldBuyTitles);
 assert.ok(requestedGoldBuyRetitledTitles.every((title) => title.indexOf("부천금매입") >= 0 && title.indexOf("부천금매입") <= 8));
 assert.equal(requestedGoldBuyRetitledReview.selectedTitle, requestedGoldBuyRetitledTitles[0]);
 
+const autoDryShampooReview = createProductReviewDraft({
+  productName: "에어젤 드라이샴푸 후기",
+  experienceMemo:
+    "운동 후 사용\n떡진 머리 보송\n휴대 편함\n향 괜찮음"
+});
+assert.equal(autoDryShampooReview.contentPackage.mainKeyword, "에어젤 드라이샴푸");
+assert.ok(autoDryShampooReview.selectedTitle.indexOf("에어젤 드라이샴푸") >= 0 && autoDryShampooReview.selectedTitle.indexOf("에어젤 드라이샴푸") <= 8);
+assert.ok(autoDryShampooReview.contentPackage.titleCandidates.every((title) => Array.from(title).length >= 28));
+assert.ok(autoDryShampooReview.contentPackage.titleCandidates.every((title) => title !== "에어젤 드라이샴푸 후기"));
+assert.ok(autoDryShampooReview.body.includes("[사진 삽입: 제품 전체 사진]"));
+assert.equal(autoDryShampooReview.contentPackage.faqItems.length, 3);
+assert.ok(autoDryShampooReview.contentPackage.hashtags.length >= 10);
+
+const autoGoldBuyReview = createProductReviewDraft({
+  productName: "부천금매입 후기",
+  experienceMemo:
+    "사장님 친절하심\n아드님이 2대째 운영중"
+});
+assert.equal(autoGoldBuyReview.category, "store");
+assert.equal(autoGoldBuyReview.contentPackage.mainKeyword, "부천금매입");
+assert.ok(autoGoldBuyReview.contentPackage.titleCandidates.every((title) => title.indexOf("부천금매입") >= 0 && title.indexOf("부천금매입") <= 8));
+assert.ok(autoGoldBuyReview.contentPackage.titleCandidates.every((title) => Array.from(title).length >= 28));
+assert.ok(autoGoldBuyReview.contentPackage.titleCandidates.every((title) => title !== "부천금매입 후기"));
+assert.ok(autoGoldBuyReview.body.includes("사장님"));
+assert.ok(autoGoldBuyReview.body.includes("2대째"));
+
+const shortKeywordExperienceReview = createProductReviewDraft({
+  productName: "정서호 후기",
+  experienceMemo:
+    "처음 참여\n준비 과정 궁금\n진행 흐름 확인"
+});
+const shortKeywordTitles = shortKeywordExperienceReview.contentPackage.titleCandidates;
+assert.equal(shortKeywordExperienceReview.category, "experience");
+assert.equal(shortKeywordExperienceReview.contentPackage.mainKeyword, "정서호");
+assert.equal(shortKeywordTitles.length, 5);
+assert.equal(new Set(shortKeywordTitles).size, 5);
+assert.ok(shortKeywordTitles.every((title) => title.indexOf("정서호") >= 0 && title.indexOf("정서호") <= 8));
+assert.ok(shortKeywordTitles.every((title) => Array.from(title).length >= 28));
+assert.ok(shortKeywordTitles.every((title) => title !== "정서호 후기"));
+assert.ok(shortKeywordTitles.some((title) => title.includes("준비")));
+assert.ok(shortKeywordTitles.some((title) => title.includes("진행")));
+assert.ok(shortKeywordTitles.some((title) => title.includes("기준")));
+assert.ok(shortKeywordExperienceReview.body.includes("처음"));
+assert.ok(shortKeywordExperienceReview.body.includes("진행"));
+
 const productReviewMakerSource = readFileSync(new URL("../frontend/src/pages/ProductReviewMaker.jsx", import.meta.url), "utf8");
 const appLayoutSource = readFileSync(new URL("../frontend/src/components/AppLayout.jsx", import.meta.url), "utf8");
 assert.ok(appLayoutSource.includes('to="/dashboard"'));
 assert.ok(appLayoutSource.includes('aria-label="Dashboard로 이동"'));
 assert.ok(appLayoutSource.includes("Blog All-in-One"));
 assert.ok(appLayoutSource.includes("cursor-pointer"));
+/*
 assert.ok(productReviewMakerSource.includes("원클릭 네이버 글쓰기"));
 assert.ok(productReviewMakerSource.includes("사진과 메모로"));
 assert.ok(productReviewMakerSource.includes("네이버 블로그 초안을 만듭니다"));
 assert.ok(productReviewMakerSource.includes("글 주제와 메인 키워드만 넣으면 제목, 본문, 해시태그까지 한 번에 정리됩니다."));
 assert.ok(productReviewMakerSource.includes("아직 생성된 초안이 없습니다."));
 assert.ok(productReviewMakerSource.includes("글 주제와 메모를 입력한 뒤 초안 만들기를 눌러주세요."));
+assert.ok(productReviewMakerSource.includes("사진과 기억나는 내용만 넣어보세요"));
+assert.ok(productReviewMakerSource.includes("제품명, 매장명, 방문 느낌처럼 짧은 메모만 있어도 블로그 후기 초안을 만들 수 있습니다."));
+assert.ok(productReviewMakerSource.includes("예: 제품 사용 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기"));
+assert.ok(productReviewMakerSource.includes("예: 제품명 / 매장명 / 지역명+장소유형"));
+assert.ok(productReviewMakerSource.includes("예: 사용해보니 편했던 점, 아쉬웠던 점, 방문 분위기, 아이 반응, 다시 확인할 정보 등을 적어주세요."));
+assert.ok(productReviewMakerSource.includes("선택사항"));
+assert.ok(productReviewMakerSource.includes("whitespace-nowrap"));
+assert.ok(productReviewMakerSource.includes("사진 속 글자 확인"));
+assert.ok(productReviewMakerSource.includes("사진에서 읽힌 글자나 추가로 반영할 내용을 직접 확인하고 수정할 수 있습니다."));
+assert.ok(productReviewMakerSource.includes("사진 속 글자가 자동으로 읽히면 여기에 표시됩니다. 필요한 내용은 직접 추가해도 됩니다."));
 assert.ok(!productReviewMakerSource.includes("사진과 메모만 준비하면 네이버 블로그 초안이 완성됩니다"));
+assert.ok(!productReviewMakerSource.includes("예: 에어젤 드라이샴푸 후기 / 부천금거래소 후기 / 아이랑 갈만한 카페"));
+assert.ok(!productReviewMakerSource.includes("예: 에어젤 드라이샴푸 / 부천금거래소 / 부천 아이랑 카페"));
+assert.ok(!productReviewMakerSource.includes("예: 탕수육이 바삭했고 어향가지가 맛있었어요"));
+assert.ok(!productReviewMakerSource.includes("사진과 메모만 준비하세요"));
+assert.ok(!productReviewMakerSource.includes("글 주제, 메인 키워드, 기억나는 내용을 넣으면 블로그 후기 초안이 완성됩니다."));
+assert.ok(!productReviewMakerSource.includes("선택 입력"));
+assert.ok(!productReviewMakerSource.includes("OCR 원문 보기"));
+assert.ok(!productReviewMakerSource.includes("OCR"));
 assert.ok(productReviewMakerSource.indexOf("1. 최종 추천 제목") < productReviewMakerSource.indexOf("2. 제목 더보기"));
 assert.ok(productReviewMakerSource.indexOf("2. 제목 더보기") < productReviewMakerSource.indexOf("3. 블로그 본문"));
 assert.ok(productReviewMakerSource.indexOf("3. 블로그 본문") < productReviewMakerSource.indexOf("4. 업체/상품 정보 정리"));
@@ -761,6 +825,62 @@ assert.ok(!productReviewMakerSource.includes("1. 제목 후보 5개"));
 assert.ok(!productReviewMakerSource.includes("이런 분께 추천해요"));
 assert.ok(!productReviewMakerSource.includes("상세 분석 보기"));
 assert.ok(!productReviewMakerSource.includes("4. 사진 배치 가이드"));
+*/
+assert.ok(productReviewMakerSource.includes("원클릭 네이버 글쓰기"));
+assert.ok(productReviewMakerSource.includes("사진과 메모로"));
+assert.ok(productReviewMakerSource.includes("네이버 블로그 초안을 만듭니다"));
+assert.ok(productReviewMakerSource.includes("글 주제와 기억나는 내용만 넣으면 제목, 본문, 해시태그까지 한 번에 정리됩니다."));
+assert.ok(productReviewMakerSource.includes("ONE CLICK"));
+assert.ok(productReviewMakerSource.includes("사진 넣고 글 생성"));
+assert.ok(productReviewMakerSource.includes("사진과 기억나는 내용만 넣어보세요"));
+assert.ok(productReviewMakerSource.includes("제품명, 매장명, 방문 느낌처럼 짧은 메모만 있어도 블로그 후기 초안을 만들 수 있습니다."));
+assert.ok(productReviewMakerSource.includes("무엇에 대한 글인가요?"));
+assert.ok(productReviewMakerSource.includes("예: 제품 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기"));
+assert.ok(productReviewMakerSource.includes("기억나는 내용이 있나요?"));
+assert.ok(productReviewMakerSource.includes("좋았던 점, 아쉬웠던 점, 아이 반응, 재방문 의사처럼 기억나는 말만 적어주세요."));
+assert.ok(productReviewMakerSource.includes("사진 추가"));
+assert.ok(productReviewMakerSource.includes("사진을 끌어오거나 클릭해서 추가하세요."));
+assert.ok(productReviewMakerSource.includes("업로드 순서대로 본문에 사진 위치가 들어갑니다."));
+assert.ok(productReviewMakerSource.includes("선택사항"));
+assert.ok(productReviewMakerSource.includes("whitespace-nowrap"));
+assert.ok(productReviewMakerSource.includes("고급 옵션"));
+assert.ok(productReviewMakerSource.includes("메인 키워드 직접 지정"));
+assert.ok(productReviewMakerSource.includes("블로그 초안 만들기"));
+assert.ok(productReviewMakerSource.includes("아직 생성된 초안이 없습니다."));
+assert.ok(productReviewMakerSource.includes("글 주제와 메모를 입력한 뒤 초안 만들기를 눌러주세요."));
+assert.ok(productReviewMakerSource.includes("편집 가능한 원고"));
+assert.ok(productReviewMakerSource.includes("메인 키워드:"));
+assert.ok(productReviewMakerSource.includes("초안은 바로 수정할 수 있어요. 내 말투에 맞게 한 번만 다듬으면 더 자연스럽습니다."));
+assert.ok(productReviewMakerSource.includes("bodyLength: nextBodyLength"));
+assert.ok(productReviewMakerSource.includes("body: packageData?.blogBody || result.body"));
+assert.ok(productReviewMakerSource.includes("stripReviewTopicTail"));
+assert.ok(productReviewMakerSource.includes("방문\\s*후기"));
+assert.ok(productReviewMakerSource.includes("사용\\s*후기"));
+const naverResultSectionsSource = productReviewMakerSource.slice(
+  productReviewMakerSource.indexOf("function NaverResultSections"),
+  productReviewMakerSource.indexOf("function ResultMetric")
+);
+assert.ok(naverResultSectionsSource.indexOf("최종 추천 제목") < naverResultSectionsSource.indexOf("제목 더보기"));
+assert.ok(naverResultSectionsSource.indexOf("제목 더보기") < naverResultSectionsSource.indexOf("블로그 본문"));
+assert.ok(naverResultSectionsSource.indexOf("블로그 본문") < naverResultSectionsSource.indexOf('title="FAQ"'));
+assert.ok(naverResultSectionsSource.indexOf('title="FAQ"') < naverResultSectionsSource.indexOf('title="해시태그"'));
+assert.ok(productReviewMakerSource.includes('<ResultDetailSection title="제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>'));
+assert.ok(productReviewMakerSource.includes("제목 다시 만들기"));
+assert.ok(productReviewMakerSource.includes("titleVariantSeed"));
+assert.ok(productReviewMakerSource.includes("blogBody: currentBlogBody"));
+assert.ok(!productReviewMakerSource.includes("예: 에어젤 드라이샴푸 후기 / 부천금거래소 후기 / 아이랑 갈만한 카페"));
+assert.ok(!productReviewMakerSource.includes("예: 에어젤 드라이샴푸 / 부천금거래소 / 부천 아이랑 카페"));
+assert.ok(!productReviewMakerSource.includes("선택 입력"));
+assert.ok(!productReviewMakerSource.includes("OCR 원문 보기"));
+assert.ok(!productReviewMakerSource.includes("OCR"));
+assert.ok(!productReviewMakerSource.includes("사진 속 글자 확인"));
+assert.ok(!productReviewMakerSource.includes("검색 의도 분석"));
+assert.ok(!productReviewMakerSource.includes("홈피드 클릭 포인트"));
+assert.ok(!productReviewMakerSource.includes("상세 분석 보기"));
+assert.ok(!productReviewMakerSource.includes("최종 검수표"));
+assert.ok(!productReviewMakerSource.includes("이런 분께 추천해요"));
+assert.ok(!productReviewMakerSource.includes("사진 배치 가이드"));
+assert.ok(!productReviewMakerSource.includes("업체/상품 정보 정리"));
 const resultToClipboardSource = productReviewMakerSource.slice(
   productReviewMakerSource.indexOf("const resultToClipboard"),
   productReviewMakerSource.indexOf("const imageKeywordsToClipboard")
@@ -769,6 +889,8 @@ assert.ok(!resultToClipboardSource.includes("titleCandidates"));
 assert.ok(!resultToClipboardSource.includes("제목 더보기"));
 assert.ok(!resultToClipboardSource.includes("사진 배치 가이드"));
 assert.ok(!resultToClipboardSource.includes("photoGuide"));
+assert.ok(!resultToClipboardSource.includes("infoSummary"));
+assert.ok(!resultToClipboardSource.includes("업체/상품 정보 정리"));
 
 const requestedFamilyCafePackageReview = createProductReviewDraft({
   mainKeyword: "부천 아이랑 갈만한 카페",

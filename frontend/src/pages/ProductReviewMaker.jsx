@@ -3,7 +3,6 @@ import {
   ArrowUp,
   Check,
   Clipboard,
-  FileText,
   Image,
   Loader2,
   PackageSearch,
@@ -137,9 +136,6 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
       "블로그 본문",
       includeImageMarkers ? packageData.blogBody : stripImageMarkers(packageData.blogBody),
       "",
-      "업체/상품 정보 정리",
-      formatKeyValueItems(packageData.infoSummary || []),
-      "",
       "FAQ",
       formatFaqItems(packageData.faqItems || []),
       "",
@@ -208,11 +204,24 @@ const mergeTextBlocks = (...blocks) =>
     )
   ).join("\n");
 
+const reviewTopicTailPattern =
+  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리)$/u;
+
+const stripReviewTopicTail = (value = "") => {
+  let current = String(value ?? "").trim();
+
+  for (let index = 0; index < 3; index += 1) {
+    const next = current.replace(reviewTopicTailPattern, "").trim();
+    if (next === current) break;
+    current = next;
+  }
+
+  return current;
+};
+
 const deriveMainKeywordFromTopic = (value = "") =>
-  String(value ?? "")
-    .trim()
-    .replace(/\s*(?:후기|리뷰|방문기|사용기)$/u, "")
-    .replace(/\s*(?:직접\s*)?(?:써본|다녀온|방문한)\s*$/u, "")
+  stripReviewTopicTail(value)
+    .replace(/\s*(?:직접\s*)?(?:써본|사용해본|다녀온|방문한|참여한)\s*$/u, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -316,7 +325,7 @@ export default function ProductReviewMaker() {
       return [...current, ...nextFiles.map((file) => createImageItem(file, source))];
     });
     setOcrStatus("idle");
-    setOcrMessage("사진이 추가되었습니다. 필요한 경우 자세한 설정에서 사진 속 글자를 읽을 수 있습니다.");
+    setOcrMessage("사진이 추가되었습니다.");
     setDraftId("");
     setDraftMessage("");
   };
@@ -336,6 +345,11 @@ export default function ProductReviewMaker() {
 
     event.preventDefault();
     appendImages(files, "paste");
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    appendImages(event.dataTransfer?.files || [], "drop");
   };
 
   const removeImage = (id) => {
@@ -448,14 +462,14 @@ export default function ProductReviewMaker() {
     for (const item of images) {
       updateImageOcrState(item.id, {
         ocrStatus: "reading",
-        message: "OCR 진행 중",
+        message: "사진 속 글자 읽는 중",
         warnings: []
       });
 
       const ocrResult = await extractCaptureTextFromImage(item.file, {
         logger: (progress) => {
           if (progress?.status) {
-            updateImageOcrState(item.id, { message: `OCR 진행 중: ${progress.status}` });
+            updateImageOcrState(item.id, { message: `사진 속 글자 읽는 중: ${progress.status}` });
           }
         }
       });
@@ -595,7 +609,7 @@ export default function ProductReviewMaker() {
       secondaryKeywords: linesToClipboard(packageData?.secondaryKeywords || []),
       searchIntent: formatObjectSummary(packageData?.searchIntentAnalysis || {}),
       homeFeed: formatObjectSummary(packageData?.homeFeedClickPoint || {}),
-      body: stripImageMarkers(result.body),
+      body: packageData?.blogBody || result.body,
       titles: linesToClipboard(packageData?.titleCandidates || result.titles.slice(0, 5)),
       finalTitle: packageData?.finalRecommendedTitle || result.selectedTitle,
       openings: linesToClipboard(packageData?.openingSentenceCandidates || []),
@@ -632,7 +646,7 @@ export default function ProductReviewMaker() {
             <span className="block">네이버 블로그 초안을 만듭니다</span>
           </h2>
           <p className="mt-3 max-w-xl text-sm font-semibold leading-6 text-ink/58">
-            글 주제와 메인 키워드만 넣으면 제목, 본문, 해시태그까지 한 번에 정리됩니다.
+            글 주제와 기억나는 내용만 넣으면 제목, 본문, 해시태그까지 한 번에 정리됩니다.
           </p>
         </div>
         <StatusBadge status={status} />
@@ -641,73 +655,78 @@ export default function ProductReviewMaker() {
       <UsageSteps />
 
       <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(340px,0.38fr)_minmax(0,0.62fr)]">
-        <section className="min-w-0 rounded-2xl bg-white/90 p-5 shadow-[0_14px_34px_rgba(31,36,40,0.045)]">
+        <section className="min-w-0 rounded-[28px] bg-white/92 p-5 shadow-[0_18px_44px_rgba(31,36,40,0.045)] sm:p-6">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold">글쓰기 입력</h3>
-            <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
-              {isReady ? "초안 준비 완료" : "사진/메모 입력"}
+            <div>
+              <p className="text-[11px] font-bold tracking-wide text-moss/70">ONE CLICK</p>
+              <h3 className="mt-1 text-xl font-bold leading-tight text-ink">사진 넣고 글 생성</h3>
+            </div>
+            <span className="rounded-full bg-[#fff8e6] px-3 py-1 text-xs font-bold text-moss">
+              {isReady ? "준비 완료" : "30초 입력"}
             </span>
           </div>
-          <div className="mt-3 flex items-start gap-3 rounded-xl bg-[#fff8e6] px-3.5 py-3 text-sm leading-6 text-ink/70 shadow-[0_8px_18px_rgba(31,36,40,0.025)]">
+
+          <div className="mt-4 flex items-start gap-3 rounded-2xl bg-[#fff8e6]/80 px-3.5 py-3 text-sm leading-6 text-ink/66">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/85 text-moss">
               <WandSparkles size={16} aria-hidden="true" />
             </span>
             <div className="min-w-0">
               <p className="text-[15px] font-bold leading-5 text-ink">
-                사진과 메모만 준비하세요
+                사진과 기억나는 내용만 넣어보세요
               </p>
               <p className="mt-0.5 text-[13px] font-semibold leading-5 text-ink/58">
-                글 주제, 메인 키워드, 기억나는 내용을 넣으면 블로그 후기 초안이 완성됩니다.
+                제품명, 매장명, 방문 느낌처럼 짧은 메모만 있어도 블로그 후기 초안을 만들 수 있습니다.
               </p>
             </div>
           </div>
 
-          <div className="mt-4 flex flex-col gap-4">
-            <label className="block">
-              <FieldLabel required>글 주제</FieldLabel>
-              <input
+          <div className="mt-4 space-y-4">
+            <section className="rounded-2xl bg-[#fbfaf6] p-4">
+              <StepLabel number="1" title="무엇에 대한 글인가요?" />
+              <textarea
                 value={form.productName}
                 onChange={(event) => updateForm("productName", event.target.value)}
-                className="focus-ring mt-2 min-h-12 w-full rounded-md border border-line/80 bg-[#fbfaf6] px-3 text-base"
-                placeholder="예: 에어젤 드라이샴푸 후기 / 부천금거래소 후기 / 아이랑 갈만한 카페"
+                rows={2}
+                className="focus-ring mt-3 min-h-[76px] w-full resize-none rounded-2xl border border-line/40 bg-white px-4 py-3 text-lg font-bold leading-7 text-ink placeholder:text-ink/28"
+                placeholder="예: 제품 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기"
               />
-            </label>
+            </section>
 
-            <label className="block">
-              <FieldLabel>메인 키워드</FieldLabel>
-              <input
-                value={form.mainKeyword}
-                onChange={(event) => updateForm("mainKeyword", event.target.value)}
-                className="focus-ring mt-2 min-h-12 w-full rounded-md border border-line/80 bg-[#fbfaf6] px-3 text-base"
-                placeholder="예: 에어젤 드라이샴푸 / 부천금거래소 / 부천 아이랑 카페"
+            <section className="rounded-2xl bg-[#fbfaf6] p-4">
+              <StepLabel number="2" title="기억나는 내용이 있나요?" optional />
+              <textarea
+                value={form.experienceMemo}
+                onChange={(event) => updateForm("experienceMemo", event.target.value)}
+                rows={4}
+                className="focus-ring mt-3 w-full resize-y rounded-2xl border border-line/40 bg-white p-4 text-base leading-7 text-ink/82 placeholder:text-ink/32"
+                placeholder="좋았던 점, 아쉬웠던 점, 아이 반응, 재방문 의사처럼 기억나는 말만 적어주세요."
               />
-              <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                메인 키워드는 제목과 첫 문장에 자연스럽게 들어갑니다.
-              </p>
-            </label>
+            </section>
 
-            <section className="order-4">
-              <FieldLabel>사진 넣기</FieldLabel>
+            <section className="rounded-2xl bg-[#fbfaf6] p-4">
+              <StepLabel number="3" title="사진 추가" optional />
               <div
                 ref={pasteAreaRef}
                 role="button"
                 tabIndex={0}
                 onPaste={handlePaste}
+                onDrop={handleDrop}
+                onDragOver={(event) => event.preventDefault()}
                 onClick={() => pasteAreaRef.current?.focus()}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") pasteAreaRef.current?.focus();
                 }}
-                className="focus-ring mt-2 rounded-lg border border-dashed border-line/80 bg-[#fbfaf6] p-5 transition hover:border-moss hover:bg-white"
+                className="focus-ring mt-3 rounded-2xl border border-dashed border-moss/30 bg-white px-4 py-5 transition hover:border-moss hover:bg-[#fffefa]"
               >
                 <div className="flex flex-col items-center justify-center text-center">
-                  <Upload size={24} className="text-moss" aria-hidden="true" />
-                  <p className="mt-2 text-sm font-bold text-ink/70">
-                    사진은 최대 {MAX_REVIEW_IMAGES}장까지 넣을 수 있어요.
+                  <Upload size={26} className="text-moss" aria-hidden="true" />
+                  <p className="mt-2 text-sm font-bold text-ink/72">
+                    사진을 끌어오거나 클릭해서 추가하세요.
                   </p>
-                  <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                    Ctrl+V로 붙여넣어도 됩니다. 사진이 없으면 기억나는 내용만 적어도 괜찮아요.
+                  <p className="mt-1 text-xs font-semibold leading-5 text-ink/48">
+                    업로드 순서대로 본문에 사진 위치가 들어갑니다.
                   </p>
-                  <label className="focus-ring mt-3 inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-moss hover:text-moss">
+                  <label className="focus-ring mt-3 inline-flex min-h-10 cursor-pointer items-center justify-center rounded-full bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61]">
                     사진 선택
                     <input
                       type="file"
@@ -720,18 +739,11 @@ export default function ProductReviewMaker() {
                 </div>
               </div>
 
-              {ocrMessage && (
-                <div className="mt-3 rounded-md border border-line bg-paper p-3 text-sm">
-                  <div className="flex items-center gap-2 font-bold text-ink/70">
-                    {isReading ? (
-                      <Loader2 size={16} className="animate-spin text-moss" aria-hidden="true" />
-                    ) : (
-                      <FileText size={16} className="text-moss" aria-hidden="true" />
-                    )}
-                    <span>{ocrMessage}</span>
-                  </div>
+              {(ocrMessage || ocrWarnings.length > 0) && (
+                <div className="mt-3 rounded-xl bg-white/70 px-3 py-2 text-xs font-semibold leading-5 text-ink/50 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
+                  {ocrMessage && <p>{ocrMessage}</p>}
                   {ocrWarnings.length > 0 && (
-                    <ul className="mt-2 grid gap-1 text-xs font-semibold leading-5 text-coral">
+                    <ul className="mt-1 grid gap-1 text-coral">
                       {ocrWarnings.map((warning) => (
                         <li key={warning}>{warning}</li>
                       ))}
@@ -749,55 +761,48 @@ export default function ProductReviewMaker() {
               />
             </section>
 
-            <label className="order-3 block">
-              <FieldLabel>기억나는 내용</FieldLabel>
-              <textarea
-                value={form.experienceMemo}
-                onChange={(event) => updateForm("experienceMemo", event.target.value)}
-                rows={6}
-                className="focus-ring mt-2 w-full rounded-md border border-line/80 bg-[#fbfaf6] p-3 text-base leading-7"
-                placeholder="예: 탕수육이 바삭했고 어향가지가 맛있었어요. 4명이 먹기 좋았고 직장인 회식 장소로 괜찮아 보였어요. 가격과 주차는 확인이 필요해요."
-              />
-            </label>
-
-            <details className="order-5 rounded-lg border border-line/80 bg-[#fbfaf6] p-4">
+            <details className="rounded-2xl bg-white/70 px-4 py-3 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.045)]">
               <summary className="cursor-pointer list-none">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <span className="text-sm font-bold text-ink/70">자세한 설정</span>
-                    <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                      글 톤, 협찬 표시, 사진 속 글자 읽기, 사진별 메모는 필요할 때만 열어보세요.
-                    </p>
-                  </div>
-                  <span className="inline-flex min-h-8 items-center justify-center rounded-md border border-line bg-white px-3 text-xs font-bold text-moss">
-                    선택 입력
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-bold text-ink/62">고급 옵션</span>
+                  <span className="inline-flex min-h-7 min-w-[74px] shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-[#fbfaf6] px-3 text-[12px] font-bold text-moss">
+                    선택사항
                   </span>
                 </div>
               </summary>
 
-              <div className="mt-4 space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="block">
-                    <FieldLabel>카테고리</FieldLabel>
-                    <select
-                      value={form.category}
-                      onChange={(event) => updateForm("category", event.target.value)}
-                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
-                    >
-                      {reviewCategoryOptions.map((option) => (
-                        <option key={option.value || "auto"} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <FieldLabel>메인 키워드 직접 지정</FieldLabel>
+                  <input
+                    value={form.mainKeyword}
+                    onChange={(event) => updateForm("mainKeyword", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
+                    placeholder="비워두면 글 주제에서 자동으로 잡습니다."
+                  />
+                </label>
+
+                <label className="block">
+                  <FieldLabel>카테고리</FieldLabel>
+                  <select
+                    value={form.category}
+                    onChange={(event) => updateForm("category", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
+                  >
+                    {reviewCategoryOptions.map((option) => (
+                      <option key={option.value || "auto"} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
                 <label className="block">
                   <FieldLabel>글 톤</FieldLabel>
                   <select
                     value={form.tone}
                     onChange={(event) => updateForm("tone", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
                   >
                     {toneOptions.map((tone) => (
                       <option key={tone} value={tone}>
@@ -808,149 +813,46 @@ export default function ProductReviewMaker() {
                 </label>
 
                 <label className="block">
-                  <FieldLabel>목표 글자수</FieldLabel>
-                  <input
-                    type="number"
-                    min="600"
-                    max="5000"
-                    value={form.targetLength}
-                    onChange={(event) => updateForm("targetLength", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
-                  />
+                  <FieldLabel>협찬 여부</FieldLabel>
+                  <select
+                    value={form.sponsorshipType}
+                    onChange={(event) => updateForm("sponsorshipType", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
+                  >
+                    <option value="">선택 안 함</option>
+                    {sponsorshipOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
                 </label>
 
-                  <label className="block">
-                    <FieldLabel>협찬 여부</FieldLabel>
-                    <select
-                      value={form.sponsorshipType}
-                      onChange={(event) => updateForm("sponsorshipType", event.target.value)}
-                      className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
-                    >
-                      <option value="">선택 안 함</option>
-                      {sponsorshipOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                <label className="block">
-                  <FieldLabel>강조하고 싶은 포인트</FieldLabel>
-                  <input
-                    value={form.emphasisPoints}
-                    onChange={(event) => updateForm("emphasisPoints", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
-                    placeholder="예: 메뉴, 분위기, 사용감, 주차, 추천 대상"
-                  />
-                </label>
-
-                <label className="block">
-                  <FieldLabel>피하고 싶은 표현/금지어</FieldLabel>
+                <label className="block sm:col-span-2">
+                  <FieldLabel>피하고 싶은 표현</FieldLabel>
                   <input
                     value={form.avoidWords}
                     onChange={(event) => updateForm("avoidWords", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line bg-white px-3 text-sm"
-                    placeholder="예: 무조건, 보장, 완벽, 즉시효과"
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
+                    placeholder="예: 무조건, 보장, 대박"
                   />
                 </label>
               </div>
-
-                <div className="rounded-md border border-line bg-white p-3">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-sm font-bold text-ink/70">이미지에서 읽은 내용 · 이미지별 메모</p>
-                      <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
-                        사진 속 글자와 사진별 메모가 글 생성에 함께 반영됩니다. 업로드 파일명은 본문에 넣지 않습니다.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={extractInfoFromImages}
-                      disabled={isReading}
-                      className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-xs font-bold transition hover:border-moss hover:text-moss disabled:cursor-not-allowed disabled:text-ink/30"
-                    >
-                      {isReading ? <Loader2 size={15} className="animate-spin" aria-hidden="true" /> : <FileText size={15} aria-hidden="true" />}
-                      사진 속 글자 읽기
-                    </button>
-                  </div>
-
-                  <ImageGrid
-                    images={images}
-                    onRemove={removeImage}
-                    onMove={moveImage}
-                    onNoteChange={updateImageNote}
-                    showDetails
-                  />
-
-                  <details
-                    open={productInfoOpen}
-                    onToggle={(event) => setProductInfoOpen(event.currentTarget.open)}
-                    className="mt-3 rounded-md border border-line bg-paper p-3"
-                  >
-                    <summary className="cursor-pointer text-sm font-bold text-moss">
-                      상품/장소 정보 보정
-                    </summary>
-
-                    <div className="mt-3 grid gap-3">
-                      {fieldLabels.map(([field, label]) => (
-                        <label key={field} className="block">
-                          <span className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-ink/55">{label}</span>
-                            <FieldStatusBadge meta={fieldMeta[field]} />
-                          </span>
-                          <textarea
-                            value={form[field]}
-                            onChange={(event) => updateForm(field, event.target.value)}
-                            rows={field === "productName" || field === "brandName" ? 1 : 2}
-                            className="focus-ring mt-1 w-full rounded-md border border-line bg-white p-2 text-sm leading-6"
-                            placeholder={form[field] ? `${label}을 직접 수정할 수 있습니다.` : "직접 입력해도 됩니다."}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </details>
-
-                  <details
-                    open={rawTextOpen}
-                    onToggle={(event) => setRawTextOpen(event.currentTarget.open)}
-                    className="mt-3 rounded-md border border-line bg-paper p-3"
-                  >
-                    <summary className="cursor-pointer text-sm font-bold text-moss">
-                      OCR 원문 보기
-                    </summary>
-                    <textarea
-                      value={form.productInfoText}
-                      onChange={(event) => updateForm("productInfoText", event.target.value)}
-                      rows={6}
-                      className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-3 text-sm leading-6"
-                      placeholder="사진에서 읽은 원문이나 추가 정보를 직접 적을 수 있습니다."
-                    />
-                  </details>
-                </div>
-              </div>
             </details>
 
-            <div className="order-6 pt-1">
-              <p className="text-sm font-semibold leading-6 text-ink/56">
-                {isReady
-                  ? "사진과 메모를 바탕으로 바로 복사 가능한 네이버 블로그 초안을 만듭니다."
-                  : "어떤 글을 쓸지 적고, 사진 또는 기억나는 내용 중 하나 이상을 넣어주세요."}
-              </p>
-              <button
-                type="button"
-                onClick={() => generateReview()}
-                disabled={!isReady || status === "generating" || isReading}
-                className="focus-ring mt-3 inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-md bg-moss px-4 py-3 text-base font-bold text-white transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25"
-              >
-                <WandSparkles size={18} aria-hidden="true" />
-                블로그 글 초안 만들기
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => generateReview()}
+              disabled={!isReady || status === "generating" || isReading}
+              className="focus-ring inline-flex min-h-[58px] w-full items-center justify-center gap-2 rounded-2xl bg-moss px-5 py-4 text-base font-bold text-white shadow-[0_14px_28px_rgba(73,111,99,0.22)] transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25 disabled:shadow-none"
+            >
+              <WandSparkles size={19} aria-hidden="true" />
+              블로그 초안 만들기
+            </button>
           </div>
         </section>
 
-        <section className="min-w-0 rounded-2xl bg-white/90 p-5 shadow-[0_14px_34px_rgba(31,36,40,0.045)]">
+        <section className="min-w-0 rounded-[28px] bg-white/88 p-5 shadow-[0_18px_44px_rgba(31,36,40,0.04)]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-bold text-moss">생성 결과</p>
@@ -960,7 +862,7 @@ export default function ProductReviewMaker() {
           </div>
 
           {!hasResult && (
-            <div className="mt-4 rounded-xl bg-[#fbfaf6] px-4 py-4 text-left text-sm font-semibold leading-6 text-ink/55 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
+          <div className="mt-4 rounded-2xl bg-[#fbfaf6] px-4 py-4 text-left text-sm font-semibold leading-6 text-ink/55">
               <p className="font-bold text-ink/68">아직 생성된 초안이 없습니다.</p>
               <p className="mt-1">글 주제와 메모를 입력한 뒤 초안 만들기를 눌러주세요.</p>
             </div>
@@ -978,28 +880,25 @@ export default function ProductReviewMaker() {
                 setForm={setForm}
               />
 
-              <div>
-                <h4 className="text-sm font-bold text-ink/70">저장/다시 만들기</h4>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                   <button
                     type="button"
                     onClick={() => generateReview(result.selectedTitle)}
-                    className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-moss hover:text-moss"
+                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-white px-3 text-xs font-bold text-ink/55 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.06)] transition hover:text-moss"
                   >
-                    <RefreshCw size={17} aria-hidden="true" />
+                    <RefreshCw size={14} aria-hidden="true" />
                     다시 만들기
                   </button>
                   <button
                     type="button"
                     onClick={saveCurrentDraft}
-                    className="focus-ring inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 text-sm font-bold transition hover:border-moss hover:text-moss"
+                    className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-white px-3 text-xs font-bold text-ink/55 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.06)] transition hover:text-moss"
                   >
-                    <Save size={17} aria-hidden="true" />
+                    <Save size={14} aria-hidden="true" />
                     보관함 저장
                   </button>
-                </div>
                 {draftMessage && (
-                  <p className="mt-2 text-xs font-bold text-moss">{draftMessage}</p>
+                  <p className="text-xs font-bold text-moss">{draftMessage}</p>
                 )}
               </div>
 
@@ -1017,7 +916,8 @@ function NaverResultSections({ result, copied, copyText, selectTitle, regenerate
   const finalTitle = packageData.finalRecommendedTitle || result.selectedTitle;
   const blogBody = packageData.blogBody || result.body;
   const hashtags = packageData.hashtags || result.hashtags || [];
-  const bodyLength = result.bodyLength || blogBody.replace(/\s+/g, "").length;
+  const mainKeyword = packageData.mainKeyword || result.mainKeyword || "";
+  const bodyLength = blogBody.replace(/\s+/g, "").length;
 
   const updateSelectedTitle = (title) => {
     setResult((current) => ({
@@ -1034,9 +934,11 @@ function NaverResultSections({ result, copied, copyText, selectTitle, regenerate
   };
 
   const updateBody = (body) => {
+    const nextBodyLength = body.replace(/\s+/g, "").length;
     setResult((current) => ({
       ...current,
       body,
+      bodyLength: nextBodyLength,
       contentPackage: current.contentPackage
         ? {
             ...current.contentPackage,
@@ -1048,90 +950,98 @@ function NaverResultSections({ result, copied, copyText, selectTitle, regenerate
 
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl bg-[#fbfdf9] p-5 shadow-[0_16px_36px_rgba(31,36,40,0.055)]">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h4 className="text-sm font-bold text-moss">1. 최종 추천 제목</h4>
-            <p className="mt-1 text-xs font-semibold text-ink/45">
-              바로 복사해 네이버 제목에 사용할 수 있는 추천안입니다.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
+      <div className="sticky top-3 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/94 px-4 py-3 shadow-[0_12px_28px_rgba(31,36,40,0.075)] backdrop-blur">
+        <div>
+          <p className="text-xs font-bold text-moss">편집 가능한 원고</p>
+          <p className="mt-0.5 text-xs font-semibold text-ink/48">
+            메인 키워드 {mainKeyword || "자동 추출 중"} · 본문 {bodyLength}자 · 해시태그 {hashtags.length}개
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => copyText("full")}
+          className="focus-ring inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61]"
+        >
+          {copied === "full" ? <Check size={15} aria-hidden="true" /> : <Clipboard size={15} aria-hidden="true" />}
+          {copied === "full" ? "전체 복사됨" : "전체 복사"}
+        </button>
+      </div>
+
+      <article className="rounded-[30px] bg-white p-5 shadow-[0_18px_48px_rgba(31,36,40,0.045)] sm:p-7">
+        <header>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-moss/70">Final title</p>
+              <h4 className="mt-1 text-sm font-bold text-moss">최종 추천 제목</h4>
+            </div>
             <button
               type="button"
               onClick={() => copyText("finalTitle")}
-              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-moss/20 bg-white px-2.5 text-xs font-bold text-moss transition hover:border-moss"
+              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-moss/18 bg-white px-2.5 text-xs font-bold text-moss transition hover:border-moss"
             >
               {copied === "finalTitle" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
               {copied === "finalTitle" ? "복사됨" : "제목 복사"}
             </button>
+          </div>
+          <input
+            value={finalTitle}
+            onChange={(event) => updateSelectedTitle(event.target.value)}
+            className="focus-ring mt-3 min-h-14 w-full rounded-2xl border border-line/35 bg-[#fffefa] px-4 text-xl font-bold leading-8 text-ink shadow-[inset_0_0_0_1px_rgba(31,36,40,0.012)]"
+            aria-label="최종 추천 제목 직접 수정"
+          />
+          <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-ink/50">
+            <span className="rounded-full bg-moss/10 px-3 py-1.5 text-moss">
+              메인 키워드: {mainKeyword || "자동 추출"}
+            </span>
+            <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">본문 {bodyLength}자</span>
+            <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">해시태그 {hashtags.length}개</span>
+          </div>
+        </header>
+
+        <ResultDetailSection title="제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
+          <div className="flex justify-end">
             <button
               type="button"
-              onClick={() => copyText("full")}
-              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
+              onClick={regenerateTitles}
+              className="focus-ring inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
             >
-              {copied === "full" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
-              {copied === "full" ? "전체 복사됨" : "전체 글 복사하기"}
+              <RefreshCw size={14} aria-hidden="true" />
+              제목 다시 만들기
             </button>
           </div>
-        </div>
-        <input
-          value={finalTitle}
-          onChange={(event) => updateSelectedTitle(event.target.value)}
-          className="focus-ring mt-4 min-h-14 w-full rounded-xl border border-moss/15 bg-white px-4 text-xl font-bold leading-8 text-ink shadow-[0_8px_20px_rgba(31,36,40,0.035)]"
-          aria-label="최종 추천 제목 직접 수정"
-        />
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <ResultMetric label="메인 키워드" value={packageData.mainKeyword || "키워드 없음"} />
-          <ResultMetric label="본문 글자수" value={`${bodyLength}자`} />
-          <ResultMetric label="해시태그 개수" value={`${hashtags.length}개`} />
-        </div>
-      </section>
+          <div className="grid gap-2">
+            {titleCandidates.slice(0, 5).map((title, index) => {
+              const selected = finalTitle === title || result.selectedTitle === title;
 
-      <ResultDetailSection title="2. 제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={regenerateTitles}
-            className="focus-ring inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
-          >
-            <RefreshCw size={14} aria-hidden="true" />
-            제목 다시 만들기
-          </button>
-        </div>
-        <div className="grid gap-2">
-          {titleCandidates.slice(0, 5).map((title, index) => {
-            const selected = finalTitle === title || result.selectedTitle === title;
-
-            return (
-              <button
-                type="button"
-                key={title}
-                onClick={() => selectTitle(title)}
-                className={`focus-ring flex min-h-11 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition ${
-                  selected
-                    ? "border-moss/40 bg-moss/10 text-moss"
-                    : "border-line/50 bg-white hover:border-moss/50 hover:bg-[#fbfdf9]"
-                }`}
-              >
-                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-current text-xs font-bold">
-                  {selected ? <Check size={14} aria-hidden="true" /> : index + 1}
-                </span>
-                <span className="font-bold leading-6">{title}</span>
-              </button>
-            );
-          })}
-        </div>
-      </ResultDetailSection>
-
-      <section className="rounded-2xl bg-white p-5 shadow-[0_16px_38px_rgba(31,36,40,0.05)]">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h4 className="text-sm font-bold text-ink/75">3. 블로그 본문</h4>
-            <p className="mt-1 text-xs font-semibold text-ink/45">
-              그대로 붙여넣기 좋게 사진 삽입 위치까지 본문 안에 넣었습니다.
-            </p>
+              return (
+                <button
+                  type="button"
+                  key={title}
+                  onClick={() => selectTitle(title)}
+                  className={`focus-ring flex min-h-11 items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${
+                    selected
+                      ? "bg-moss/10 text-moss shadow-[inset_0_0_0_1px_rgba(73,111,99,0.18)]"
+                      : "bg-[#fbfaf6] hover:bg-[#fff8e6]"
+                  }`}
+                >
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-current text-xs font-bold">
+                    {selected ? <Check size={14} aria-hidden="true" /> : index + 1}
+                  </span>
+                  <span className="font-bold leading-6">{title}</span>
+                </button>
+              );
+            })}
           </div>
+        </ResultDetailSection>
+
+        <section className="border-t border-line/35 pt-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h4 className="text-base font-bold text-ink">블로그 본문</h4>
+              <p className="mt-1 max-w-xl text-xs font-semibold leading-5 text-ink/45">
+                초안은 바로 수정할 수 있어요. 내 말투에 맞게 한 번만 다듬으면 더 자연스럽습니다.
+              </p>
+            </div>
           <button
             type="button"
             onClick={() => copyText("body")}
@@ -1141,25 +1051,22 @@ function NaverResultSections({ result, copied, copyText, selectTitle, regenerate
             {copied === "body" ? "복사됨" : "본문 복사"}
           </button>
         </div>
-        <textarea
-          value={blogBody}
-          onChange={(event) => updateBody(event.target.value)}
-          rows={28}
-          className="focus-ring mt-4 min-h-[680px] w-full resize-y rounded-xl border border-line/30 bg-white p-6 text-[16px] leading-8 text-ink/85 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.015)] whitespace-pre-wrap"
-        />
-      </section>
+          <textarea
+            value={blogBody}
+            onChange={(event) => updateBody(event.target.value)}
+            rows={30}
+            className="focus-ring mt-4 min-h-[760px] w-full resize-y rounded-2xl border border-line/20 bg-white p-5 text-[16px] leading-8 text-ink/88 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.008)] whitespace-pre-wrap sm:p-6"
+          />
+        </section>
 
-      <ResultDetailSection title="4. 업체/상품 정보 정리" copyActive={copied === "info"} onCopy={() => copyText("info")}>
-        <KeyValueList items={packageData.infoSummary || []} />
-      </ResultDetailSection>
+        <ResultDetailSection title="FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
+          <FaqList items={packageData.faqItems || []} />
+        </ResultDetailSection>
 
-      <ResultDetailSection title="5. FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
-        <FaqList items={packageData.faqItems || []} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="6. 해시태그" copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
-        <KeywordChips items={hashtags} />
-      </ResultDetailSection>
+        <ResultDetailSection title="해시태그" copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
+          <KeywordChips items={hashtags} />
+        </ResultDetailSection>
+      </article>
     </div>
   );
 }
@@ -1175,11 +1082,14 @@ function ResultMetric({ label, value }) {
 
 function ResultDetailSection({ title, children, defaultOpen = false, copyActive = false, onCopy }) {
   return (
-    <details open={defaultOpen} className="rounded-2xl bg-[#fffefa] p-4 shadow-[0_10px_26px_rgba(31,36,40,0.035)]">
-      <summary className="cursor-pointer text-sm font-bold text-ink/75">
-        {title}
+    <details open={defaultOpen} className="border-t border-line/35 py-4">
+      <summary className="cursor-pointer list-none text-sm font-bold text-ink/72">
+        <span className="inline-flex items-center gap-2">
+          <span className="text-ink/40">▸</span>
+          {title}
+        </span>
       </summary>
-      <div className="mt-3 space-y-3">
+      <div className="mt-3 space-y-3 pl-0 sm:pl-5">
         {onCopy && (
           <button
             type="button"
@@ -1330,6 +1240,24 @@ function FieldLabel({ children, required = false }) {
   );
 }
 
+function StepLabel({ number, title, optional = false }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-moss text-[11px] font-bold text-white">
+          {number}
+        </span>
+        <h4 className="truncate text-[15px] font-bold text-ink">{title}</h4>
+      </div>
+      {optional && (
+        <span className="shrink-0 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/45">
+          선택사항
+        </span>
+      )}
+    </div>
+  );
+}
+
 function UsageSteps() {
   const steps = [
     ["입력", "사진 또는 메모를 넣습니다."],
@@ -1415,7 +1343,7 @@ function ImageGrid({ images = [], onRemove, onMove, onNoteChange, showDetails = 
                 onChange={(event) => onNoteChange(item.id, event.target.value)}
                 rows={2}
                 className="focus-ring mt-2 w-full rounded-md border border-line bg-white p-2 leading-5"
-                placeholder="예: 탕수육 클로즈업, 메뉴판, 성분표, 아이가 좋아한 공간"
+                placeholder="예: 대표 사진, 메뉴판, 성분표, 아이가 좋아한 공간"
               />
             </details>
           )}
@@ -1424,7 +1352,7 @@ function ImageGrid({ images = [], onRemove, onMove, onNoteChange, showDetails = 
           )}
           {showDetails && item.ocrText && (
             <details className="mt-2 text-xs">
-              <summary className="cursor-pointer font-bold text-moss">추출 원문 보기</summary>
+              <summary className="cursor-pointer font-bold text-moss">사진에서 읽힌 글자 보기</summary>
               <p className="mt-1 whitespace-pre-wrap rounded-md bg-paper p-2 leading-5 text-ink/60">{item.ocrText}</p>
             </details>
           )}
