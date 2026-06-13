@@ -145,9 +145,6 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
       "업체/상품 정보 정리",
       formatKeyValueItems(packageData.infoSummary || []),
       "",
-      "이런 분께 추천해요",
-      linesToClipboard(packageData.recommendedFor || []),
-      "",
       "FAQ",
       formatFaqItems(packageData.faqItems || []),
       "",
@@ -1007,50 +1004,35 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-moss/15 bg-[#fbfdf9] p-4">
-        <div className="grid gap-2 sm:grid-cols-3">
-          <ResultMetric label="메인 키워드" value={packageData.mainKeyword || "키워드 없음"} />
-          <ResultMetric label="본문 글자수" value={`${bodyLength}자`} />
-          <ResultMetric label="해시태그 개수" value={`${hashtags.length}개`} />
+      <section className="rounded-xl border border-line/60 bg-white p-4 shadow-[0_8px_18px_rgba(31,36,40,0.025)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-bold text-ink/75">1. 제목 후보 5개</h4>
+            <p className="mt-1 text-xs font-semibold text-ink/45">
+              {packageData.mainKeyword || "메인 키워드"} 기준으로 검색 의도별 후보를 비교하세요.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => copyText("titles")}
+              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-line/70 bg-white px-2.5 text-xs font-bold text-ink/55 transition hover:border-moss/50 hover:text-moss"
+            >
+              {copied === "titles" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+              {copied === "titles" ? "복사됨" : "후보 복사"}
+            </button>
+            <button
+              type="button"
+              onClick={() => copyText("full")}
+              className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
+            >
+              {copied === "full" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+              {copied === "full" ? "전체 복사됨" : "전체 글 복사"}
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          onClick={() => copyText("full")}
-          className="focus-ring mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61]"
-        >
-          {copied === "full" ? <Check size={17} aria-hidden="true" /> : <Clipboard size={17} aria-hidden="true" />}
-          {copied === "full" ? "전체 글 복사됨" : "전체 글 복사하기"}
-        </button>
-      </div>
 
-      <ResultDetailSection title="1. 최종 추천 제목" defaultOpen copyActive={copied === "finalTitle"} onCopy={() => copyText("finalTitle")}>
-        <input
-          value={finalTitle}
-          onChange={(event) => updateSelectedTitle(event.target.value)}
-          className="focus-ring min-h-12 w-full rounded-md border border-line/80 bg-white px-3 text-lg font-bold leading-7 text-ink"
-          aria-label="최종 추천 제목 직접 수정"
-        />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="2. 블로그 본문" defaultOpen copyActive={copied === "body"} onCopy={() => copyText("body")}>
-        <textarea
-          value={blogBody}
-          onChange={(event) => updateBody(event.target.value)}
-          rows={24}
-          className="focus-ring min-h-[560px] w-full rounded-md border border-line/70 bg-white p-5 text-[15px] leading-8 text-ink/85 shadow-inner shadow-black/[0.015] whitespace-pre-wrap"
-        />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="3. 사진 배치 가이드" defaultOpen copyActive={copied === "images"} onCopy={() => copyText("images")}>
-        <PhotoGuideList items={photoGuide} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="4. 해시태그" defaultOpen copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
-        <KeywordChips items={hashtags} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="5. 제목 후보 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
-        <div className="grid gap-2">
+        <div className="mt-3 grid gap-2">
           {titleCandidates.slice(0, 5).map((title, index) => {
             const selected = finalTitle === title || result.selectedTitle === title;
 
@@ -1059,71 +1041,70 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
                 type="button"
                 key={title}
                 onClick={() => selectTitle(title)}
-                className={`focus-ring flex min-h-11 items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition ${
+                className={`focus-ring flex min-h-12 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition ${
                   selected
-                    ? "border-moss/60 bg-moss/10 text-moss"
-                    : "border-line/70 bg-white hover:border-moss hover:bg-[#fbfdf9]"
+                    ? "border-moss/70 bg-moss/10 text-moss"
+                    : "border-line/70 bg-[#fffefa] hover:border-moss hover:bg-[#fbfdf9]"
                 }`}
               >
-                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current text-xs">
-                  {selected ? <Check size={13} aria-hidden="true" /> : index + 1}
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-current text-xs font-bold">
+                  {selected ? <Check size={14} aria-hidden="true" /> : index + 1}
                 </span>
-                <span className="font-bold">{title}</span>
+                <span className="font-bold leading-6">{title}</span>
               </button>
             );
           })}
         </div>
+      </section>
+
+      <section className="rounded-xl border border-moss/20 bg-[#fbfdf9] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className="text-sm font-bold text-moss">2. 최종 추천 제목</h4>
+          <button
+            type="button"
+            onClick={() => copyText("finalTitle")}
+            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-moss/20 bg-white px-2.5 text-xs font-bold text-moss transition hover:border-moss"
+          >
+            {copied === "finalTitle" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+            {copied === "finalTitle" ? "복사됨" : "이 부분 복사"}
+          </button>
+        </div>
+        <input
+          value={finalTitle}
+          onChange={(event) => updateSelectedTitle(event.target.value)}
+          className="focus-ring mt-3 min-h-12 w-full rounded-md border border-moss/25 bg-white px-3 text-lg font-bold leading-7 text-ink"
+          aria-label="최종 추천 제목 직접 수정"
+        />
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <ResultMetric label="메인 키워드" value={packageData.mainKeyword || "키워드 없음"} />
+          <ResultMetric label="본문 글자수" value={`${bodyLength}자`} />
+          <ResultMetric label="해시태그 개수" value={`${hashtags.length}개`} />
+        </div>
+      </section>
+
+      <ResultDetailSection title="3. 블로그 본문" defaultOpen copyActive={copied === "body"} onCopy={() => copyText("body")}>
+        <textarea
+          value={blogBody}
+          onChange={(event) => updateBody(event.target.value)}
+          rows={24}
+          className="focus-ring min-h-[560px] w-full rounded-md border border-line/70 bg-white p-5 text-[15px] leading-8 text-ink/85 shadow-inner shadow-black/[0.015] whitespace-pre-wrap"
+        />
+      </ResultDetailSection>
+
+      <ResultDetailSection title="4. 사진 배치 가이드" defaultOpen copyActive={copied === "images"} onCopy={() => copyText("images")}>
+        <PhotoGuideList items={photoGuide} />
+      </ResultDetailSection>
+
+      <ResultDetailSection title="5. 업체/상품 정보 정리" copyActive={copied === "info"} onCopy={() => copyText("info")}>
+        <KeyValueList items={packageData.infoSummary || []} />
       </ResultDetailSection>
 
       <ResultDetailSection title="6. FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
         <FaqList items={packageData.faqItems || []} />
       </ResultDetailSection>
 
-      <ResultDetailSection title="7. 이런 분께 추천해요" copyActive={copied === "recommended"} onCopy={() => copyText("recommended")}>
-        <NumberedList items={packageData.recommendedFor || []} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="8. 업체/상품 정보 정리" copyActive={copied === "info"} onCopy={() => copyText("info")}>
-        <KeyValueList items={packageData.infoSummary || []} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="9. 상세 분석 보기">
-        <div className="grid gap-4">
-          <div>
-            <p className="text-xs font-bold text-ink/45">내부 카테고리 판단 결과</p>
-            <p className="mt-1 text-sm font-bold text-ink/70">{result.category || "자동 추정"}</p>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-ink/45">보조 키워드 분석</p>
-            <div className="mt-2">
-              <KeywordChips items={packageData.secondaryKeywords || []} />
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-ink/45">검색 의도 분석</p>
-            <div className="mt-2">
-              <ObjectSummary value={packageData.searchIntentAnalysis} />
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-ink/45">홈피드 클릭 포인트</p>
-            <div className="mt-2">
-              <ObjectSummary value={packageData.homeFeedClickPoint} />
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-ink/45">첫 문장 후보 3개</p>
-            <div className="mt-2">
-              <NumberedList items={packageData.openingSentenceCandidates || []} />
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-bold text-ink/45">최종 검수표</p>
-            <div className="mt-2">
-              <ChecklistList items={packageData.finalChecklist || []} />
-            </div>
-          </div>
-        </div>
+      <ResultDetailSection title="7. 해시태그" copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
+        <KeywordChips items={hashtags} />
       </ResultDetailSection>
     </div>
   );

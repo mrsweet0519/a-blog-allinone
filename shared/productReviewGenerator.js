@@ -862,88 +862,120 @@ const getReviewProfile = (category) => {
 
 const createExperienceTitleCandidates = (form = {}, category = inferReviewCategory(form)) => {
   const mainKeyword = getMainKeyword(form);
-  const reviewKeyword = withReviewTitleSuffix(mainKeyword);
   const baseKeyword = getReviewTitleBase(mainKeyword);
-  const profile = getReviewProfile(category);
+  const titleKeyword = text(mainKeyword) || baseKeyword;
+  const reviewKeyword = withReviewTitleSuffix(titleKeyword);
+  const memoText = getFormMemoText(form);
+  const hasGoldSignal = /금값|금\s*시세|금시세|매입|금거래소/u.test(`${titleKeyword} ${memoText}`);
+  const hasKidsCafeSignal = /아이|카페|좌석|음료/u.test(`${titleKeyword} ${memoText}`);
+  const hasDryShampooSignal = /드라이샴푸|운동|떡진|보송|휴대/u.test(`${titleKeyword} ${memoText}`);
 
   const titleMap = {
-    restaurant: [
-      reviewKeyword,
-      `${baseKeyword} 회식 장소로 본 솔직 후기`,
-      `${baseKeyword} 메뉴와 분위기`,
-      `${baseKeyword} 가격과 주차 확인 포인트`,
-      `${baseKeyword} 재방문 기준`
-    ],
-    product: [
-      reviewKeyword,
-      `${baseKeyword} 사용감 중심 후기`,
-      `${baseKeyword} 장점과 아쉬운 점`,
-      `${baseKeyword} 추천 대상까지 본 후기`,
-      `${baseKeyword} 구매 전 확인할 사용 포인트`
-    ],
-    store: [
-      reviewKeyword,
-      `${baseKeyword} 방문 전 상담 분위기`,
-      `${baseKeyword} 친절했던 응대 후기`,
-      `${baseKeyword} 확인할 점과 방문 팁`,
-      `${baseKeyword} 처음 가기 전 참고할 후기`
+    store: hasGoldSignal
+      ? [
+          `${reviewKeyword} 상담 분위기와 방문 전 확인할 점`,
+          `${titleKeyword} 처음 방문 전 상담 흐름 참고 후기`,
+          `${titleKeyword} 알아볼 때 확인한 상담 기준과 시세 체크`,
+          `${titleKeyword} 방문 전 봐야 할 매입 상담 체크 포인트`,
+          `금값 오를 때 ${titleKeyword} 알아본 이유와 확인할 점`
+        ]
+      : [
+          `${reviewKeyword} 상담 분위기와 방문 전 확인할 점`,
+          `${titleKeyword} 처음 방문 전 응대 흐름 참고 후기`,
+          `${titleKeyword} 알아볼 때 확인한 상담 기준 정리`,
+          `${titleKeyword} 방문 전 봐야 할 체크 포인트`,
+          `${titleKeyword} 처음 가기 전 궁금했던 이유와 후기`
+        ],
+    restaurant: hasKidsCafeSignal
+      ? [
+          `${reviewKeyword} 아이 음료와 좌석 분위기 확인`,
+          `${titleKeyword} 아이랑 방문 전 참고한 가족 후기`,
+          `${titleKeyword} 알아볼 때 확인한 좌석과 메뉴 기준`,
+          `${titleKeyword} 방문 전 봐야 할 가족 카페 체크 포인트`,
+          `주말 가족 나들이로 ${titleKeyword} 알아본 이유`
+        ]
+      : [
+          `${reviewKeyword} 메뉴와 분위기 방문 전 확인할 점`,
+          `${titleKeyword} 처음 방문 전 참고한 식사 후기`,
+          `${titleKeyword} 알아볼 때 확인한 메뉴와 주차 기준`,
+          `${titleKeyword} 방문 전 봐야 할 식사 장소 체크 포인트`,
+          `${titleKeyword} 모임 장소로 알아본 이유와 후기`
+        ],
+    product: hasDryShampooSignal
+      ? [
+          `${reviewKeyword} 운동 후 사용감과 확인할 점`,
+          `${titleKeyword} 운동 후 직접 써본 보송함 후기`,
+          `${titleKeyword} 알아볼 때 확인한 휴대성과 향 기준`,
+          `${titleKeyword} 구매 전 봐야 할 사용 상황 체크 포인트`,
+          `운동 후 머리 신경 쓰일 때 ${titleKeyword} 알아본 이유`
+        ]
+      : [
+          `${reviewKeyword} 사용감과 구매 전 확인할 점`,
+          `${titleKeyword} 직접 써본 장점과 아쉬운 점 후기`,
+          `${titleKeyword} 알아볼 때 확인한 사용 기준 정리`,
+          `${titleKeyword} 구매 전 봐야 할 체크 포인트`,
+          `${titleKeyword} 생활 루틴에 맞는지 알아본 이유`
+        ],
+    education: [
+      `${reviewKeyword} 수업 흐름과 수강 전 확인할 점`,
+      `${titleKeyword} 처음 듣기 전 참고한 강의 후기`,
+      `${titleKeyword} 알아볼 때 확인한 커리큘럼 기준`,
+      `${titleKeyword} 수강 전 봐야 할 준비 체크 포인트`,
+      `${titleKeyword} 초보자 입장에서 알아본 이유`
     ],
     hospital: [
-      reviewKeyword,
-      `${baseKeyword} 접수와 상담 분위기`,
-      `${baseKeyword} 처음 방문 전 확인할 점`,
-      `${baseKeyword} 대기와 안내 흐름`,
-      `${baseKeyword} 방문 전 참고 후기`
+      `${reviewKeyword} 접수 흐름과 방문 전 확인할 점`,
+      `${titleKeyword} 처음 방문 전 참고한 상담 후기`,
+      `${titleKeyword} 알아볼 때 확인한 예약과 안내 기준`,
+      `${titleKeyword} 방문 전 봐야 할 접수 체크 포인트`,
+      `${titleKeyword} 처음 진료 전 궁금했던 이유`
     ],
     service: [
-      reviewKeyword,
-      `${baseKeyword} 상담부터 진행까지`,
-      `${baseKeyword} 이용 전 확인할 점`,
-      `${baseKeyword} 좋았던 점과 아쉬운 점`,
-      `${baseKeyword} 처음 이용해본 후기`
+      `${reviewKeyword} 상담 과정과 이용 전 확인할 점`,
+      `${titleKeyword} 처음 이용 전 참고한 진행 후기`,
+      `${titleKeyword} 알아볼 때 확인한 비용과 일정 기준`,
+      `${titleKeyword} 신청 전 봐야 할 상담 체크 포인트`,
+      `${titleKeyword} 맡기기 전 궁금했던 이유와 후기`
     ],
     travel: [
-      reviewKeyword,
-      `${baseKeyword} 코스와 동선 후기`,
-      `${baseKeyword} 좋았던 장면과 아쉬운 점`,
-      `${baseKeyword} 여행 전 확인할 팁`,
-      `${baseKeyword} 다시 가고 싶은 기준`
+      `${reviewKeyword} 동선과 여행 전 확인할 점`,
+      `${titleKeyword} 처음 가기 전 참고한 여행 후기`,
+      `${titleKeyword} 알아볼 때 확인한 코스와 분위기 기준`,
+      `${titleKeyword} 떠나기 전 봐야 할 동선 체크 포인트`,
+      `${titleKeyword} 사진 보고 알아본 이유와 후기`
     ],
     experience: [
-      reviewKeyword,
-      `${baseKeyword} 체험 흐름과 느낀 점`,
-      `${baseKeyword} 준비물과 확인할 점`,
-      `${baseKeyword} 좋았던 점과 아쉬운 점`,
-      `${baseKeyword} 처음 가기 전 참고 후기`
+      `${reviewKeyword} 체험 흐름과 방문 전 확인할 점`,
+      `${titleKeyword} 처음 참여 전 참고한 체험 후기`,
+      `${titleKeyword} 알아볼 때 확인한 준비물과 진행 기준`,
+      `${titleKeyword} 체험 전 봐야 할 체크 포인트`,
+      `${titleKeyword} 직접 해보기 전 궁금했던 이유`
     ],
     "kids-place": [
-      reviewKeyword,
-      `${baseKeyword} 아이 반응 중심 방문 후기`,
-      `${baseKeyword} 동선과 부모 대기 공간`,
-      `${baseKeyword} 주차까지 확인할 포인트`,
-      `${baseKeyword} 아이랑 가기 전 체크할 점`
+      `${reviewKeyword} 아이 반응과 방문 전 확인할 점`,
+      `${titleKeyword} 아이랑 가기 전 참고한 체험 후기`,
+      `${titleKeyword} 알아볼 때 확인한 동선과 대기 기준`,
+      `${titleKeyword} 방문 전 봐야 할 가족 체크 포인트`,
+      `주말 아이와 갈 곳으로 ${titleKeyword} 알아본 이유`
     ],
     place: [
-      reviewKeyword,
-      `${baseKeyword} 동선과 분위기`,
-      `${baseKeyword} 방문 전 확인할 포인트`,
-      `${baseKeyword} 주차와 편의성`,
-      `${baseKeyword} 다시 가도 좋을지 본 후기`
-    ],
-    education: [
-      reviewKeyword,
-      `${baseKeyword} 수업 흐름과 느낀 점`,
-      `${baseKeyword} 커리큘럼 중심 후기`,
-      `${baseKeyword} 준비물과 결과물`,
-      `${baseKeyword} 수강 전 확인할 포인트`
+      `${reviewKeyword} 동선과 방문 전 확인할 점`,
+      `${titleKeyword} 처음 가기 전 참고한 방문 후기`,
+      `${titleKeyword} 알아볼 때 확인한 분위기와 편의 기준`,
+      `${titleKeyword} 방문 전 봐야 할 체크 포인트`,
+      `${titleKeyword} 직접 가보기 전 궁금했던 이유`
     ]
   };
 
-  return uniqueText(titleMap[category] || [
-    reviewKeyword,
-    `${baseKeyword} ${profile.label}`,
-    `${baseKeyword} 방문 전 확인할 포인트`
-  ]).slice(0, 5);
+  return uniqueText(titleMap[category] || titleMap.place)
+    .map((title) =>
+      title
+        .replace(/인생|무조건|대박|효과\s*보장|완전\s*추천/gu, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(Boolean)
+    .slice(0, 5);
 };
 
 const createExperienceHashtags = (form = {}, category = inferReviewCategory(form)) => {
@@ -2493,7 +2525,8 @@ const createNaturalReviewFinishingSections = (form = {}, category = inferReviewC
           `${withTopicParticle(mainKeyword)} 단순히 가격만 보는 곳이라기보다 상담을 통해 기준을 잡는 과정이 중요하게 느껴졌습니다`,
           "방문 전에는 막연했던 부분도 실제 응대와 설명 흐름을 떠올리면 훨씬 현실적으로 비교할 수 있습니다",
           "처음 알아보는 분이라면 시세, 매입 기준, 운영시간을 따로 확인하고, 현장에서는 설명이 충분히 이해되는지 차분히 보는 편이 좋겠습니다",
-          "무엇보다 급하게 결정하기보다 충분히 설명을 듣고 비교할 수 있는 분위기인지 보는 것이 가장 중요하게 느껴졌습니다"
+          "무엇보다 급하게 결정하기보다 충분히 설명을 듣고 비교할 수 있는 분위기인지 보는 것이 가장 중요하게 느껴졌습니다",
+          "방문 전에는 짧은 후기라도 상담 흐름과 확인할 점이 함께 보이면 첫 상담을 준비하는 데 훨씬 도움이 됩니다"
         ]
       ], tone)
     ];

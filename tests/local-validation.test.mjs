@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { accessCodes } from "../frontend/src/data/accessCodes.js";
 import {
   clearAccessSession,
@@ -702,6 +703,31 @@ assert.ok(requestedGoldStorePackageReview.contentPackage.infoSummary.some(([, va
 assert.ok(!forbiddenReviewGuidePattern.test(requestedGoldStorePackageReview.body));
 assert.ok(!/발림감|사용감|아침저녁|텍스처|제품 전체|사용 장면|(?:^|[\s,])향(?:은|이|도|을|를|처럼|의|이나)?/u.test(requestedGoldStorePackageReview.body));
 assert.ok(!/가격\s*[0-9]|영업시간\s*[0-9]|주차\s*가능/u.test(requestedGoldStorePackageReview.body));
+
+const requestedGoldBuySeoReview = createProductReviewDraft({
+  productName: "부천금매입 후기",
+  mainKeyword: "부천금매입",
+  experienceMemo:
+    "사장님 친절하심\n아드님이 2대째 운영중"
+});
+const requestedGoldBuyTitles = requestedGoldBuySeoReview.contentPackage.titleCandidates;
+assert.equal(requestedGoldBuyTitles.length, 5);
+assert.equal(new Set(requestedGoldBuyTitles).size, 5);
+assert.ok(requestedGoldBuyTitles.every((title) => title.indexOf("부천금매입") >= 0 && title.indexOf("부천금매입") <= 8));
+assert.ok(requestedGoldBuyTitles.every((title) => Array.from(title).length >= 24));
+assert.ok(requestedGoldBuyTitles.every((title) => !/인생|무조건|대박|효과\s*보장|완전\s*추천/u.test(title)));
+assert.equal(requestedGoldBuySeoReview.selectedTitle, requestedGoldBuyTitles[0]);
+assert.ok(requestedGoldBuyTitles[0].includes("상담 분위기"));
+assert.ok(requestedGoldBuyTitles[1].includes("처음 방문"));
+assert.ok(requestedGoldBuyTitles[2].includes("상담 기준"));
+assert.ok(requestedGoldBuyTitles[3].includes("체크 포인트"));
+assert.ok(requestedGoldBuyTitles[4].includes("금값"));
+
+const productReviewMakerSource = readFileSync(new URL("../frontend/src/pages/ProductReviewMaker.jsx", import.meta.url), "utf8");
+assert.ok(productReviewMakerSource.indexOf("1. 제목 후보 5개") < productReviewMakerSource.indexOf("2. 최종 추천 제목"));
+assert.ok(productReviewMakerSource.indexOf("2. 최종 추천 제목") < productReviewMakerSource.indexOf("3. 블로그 본문"));
+assert.ok(!productReviewMakerSource.includes("이런 분께 추천해요"));
+assert.ok(!productReviewMakerSource.includes("상세 분석 보기"));
 
 const requestedFamilyCafePackageReview = createProductReviewDraft({
   mainKeyword: "부천 아이랑 갈만한 카페",
