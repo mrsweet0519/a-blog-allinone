@@ -736,6 +736,18 @@ assert.ok(requestedGoldBuyRetitledTitles.every((title) => title.indexOf("부천�
 assert.equal(requestedGoldBuyRetitledReview.selectedTitle, requestedGoldBuyRetitledTitles[0]);
 
 const productReviewMakerSource = readFileSync(new URL("../frontend/src/pages/ProductReviewMaker.jsx", import.meta.url), "utf8");
+const appLayoutSource = readFileSync(new URL("../frontend/src/components/AppLayout.jsx", import.meta.url), "utf8");
+assert.ok(appLayoutSource.includes('to="/dashboard"'));
+assert.ok(appLayoutSource.includes('aria-label="Dashboard로 이동"'));
+assert.ok(appLayoutSource.includes("Blog All-in-One"));
+assert.ok(appLayoutSource.includes("cursor-pointer"));
+assert.ok(productReviewMakerSource.includes("원클릭 네이버 글쓰기"));
+assert.ok(productReviewMakerSource.includes("사진과 메모로"));
+assert.ok(productReviewMakerSource.includes("네이버 블로그 초안을 만듭니다"));
+assert.ok(productReviewMakerSource.includes("글 주제와 메인 키워드만 넣으면 제목, 본문, 해시태그까지 한 번에 정리됩니다."));
+assert.ok(productReviewMakerSource.includes("아직 생성된 초안이 없습니다."));
+assert.ok(productReviewMakerSource.includes("글 주제와 메모를 입력한 뒤 초안 만들기를 눌러주세요."));
+assert.ok(!productReviewMakerSource.includes("사진과 메모만 준비하면 네이버 블로그 초안이 완성됩니다"));
 assert.ok(productReviewMakerSource.indexOf("1. 최종 추천 제목") < productReviewMakerSource.indexOf("2. 제목 더보기"));
 assert.ok(productReviewMakerSource.indexOf("2. 제목 더보기") < productReviewMakerSource.indexOf("3. 블로그 본문"));
 assert.ok(productReviewMakerSource.indexOf("3. 블로그 본문") < productReviewMakerSource.indexOf("4. 업체/상품 정보 정리"));

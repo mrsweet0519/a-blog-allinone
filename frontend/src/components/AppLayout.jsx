@@ -8,7 +8,7 @@ import {
   Sparkles,
   WandSparkles
 } from "lucide-react";
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import EnvironmentBanner from "./EnvironmentBanner.jsx";
 import { getAccessDaysRemaining } from "../lib/accessControl.js";
 
@@ -70,15 +70,19 @@ export default function AppLayout({ children, accessSession, accessMessage = "",
       <div className={isLandingRoute ? "min-h-screen w-full" : "flex min-h-screen w-full flex-col lg:flex-row"}>
         {!isLandingRoute && (
         <aside className="border-b border-line bg-white/90 px-4 py-4 text-ink lg:min-h-screen lg:w-64 lg:shrink-0 lg:border-b-0 lg:border-r">
-          <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-moss text-white">
+          <Link
+            to="/dashboard"
+            aria-label="Dashboard로 이동"
+            className="focus-ring group flex cursor-pointer items-center gap-3 rounded-xl p-1 transition hover:bg-paper"
+          >
+            <div className="grid h-9 w-9 place-items-center rounded-lg bg-moss text-white transition group-hover:bg-[#456b61]">
               <Sparkles size={18} aria-hidden="true" />
             </div>
             <div>
               <p className="text-xs font-semibold text-ink/45">사진+메모 글쓰기</p>
-              <h1 className="text-lg font-bold">Blog All-in-One</h1>
+              <h1 className="text-lg font-bold text-ink">Blog All-in-One</h1>
             </div>
-          </div>
+          </Link>
 
           <nav className="mt-7 space-y-6">
             {navGroups.map((group) => (

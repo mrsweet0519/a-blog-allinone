@@ -623,15 +623,16 @@ export default function ProductReviewMaker() {
   };
 
   return (
-    <div className="min-w-0 space-y-5">
+    <div className="min-w-0 space-y-4">
       <header className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <p className="text-sm font-semibold text-coral">원클릭 네이버 블로그 글쓰기</p>
-          <h2 className="mt-1 max-w-3xl text-2xl font-bold leading-tight tracking-normal sm:text-3xl">
-            사진과 메모만 준비하면 네이버 블로그 초안이 완성됩니다
+        <div className="max-w-2xl">
+          <p className="text-xs font-bold tracking-wide text-coral">원클릭 네이버 글쓰기</p>
+          <h2 className="mt-2 max-w-xl text-[24px] font-bold leading-[1.18] tracking-normal text-ink sm:text-[28px]">
+            <span className="block">사진과 메모로</span>
+            <span className="block">네이버 블로그 초안을 만듭니다</span>
           </h2>
-          <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-ink/60">
-            입력 → 생성 → 결과 흐름만 남기고, SEO 포스팅 구조는 결과물 안에서 정리합니다.
+          <p className="mt-3 max-w-xl text-sm font-semibold leading-6 text-ink/58">
+            글 주제와 메인 키워드만 넣으면 제목, 본문, 해시태그까지 한 번에 정리됩니다.
           </p>
         </div>
         <StatusBadge status={status} />
@@ -639,23 +640,23 @@ export default function ProductReviewMaker() {
 
       <UsageSteps />
 
-      <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(340px,0.38fr)_minmax(0,0.62fr)]">
-        <section className="min-w-0 rounded-2xl bg-white/95 p-6 shadow-[0_20px_50px_rgba(31,36,40,0.06)]">
+      <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[minmax(340px,0.38fr)_minmax(0,0.62fr)]">
+        <section className="min-w-0 rounded-2xl bg-white/90 p-5 shadow-[0_14px_34px_rgba(31,36,40,0.045)]">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-bold">원클릭 네이버 블로그 글쓰기</h3>
+            <h3 className="text-lg font-bold">글쓰기 입력</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
               {isReady ? "초안 준비 완료" : "사진/메모 입력"}
             </span>
           </div>
-          <div className="mt-4 flex gap-3 rounded-2xl bg-[#fff7d8] px-4 py-4 text-sm leading-6 text-ink/70 shadow-[0_10px_24px_rgba(31,36,40,0.035)]">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-moss shadow-sm">
-              <WandSparkles size={18} aria-hidden="true" />
+          <div className="mt-3 flex items-start gap-3 rounded-xl bg-[#fff8e6] px-3.5 py-3 text-sm leading-6 text-ink/70 shadow-[0_8px_18px_rgba(31,36,40,0.025)]">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/85 text-moss">
+              <WandSparkles size={16} aria-hidden="true" />
             </span>
-            <div>
-              <p className="font-bold text-ink">
+            <div className="min-w-0">
+              <p className="text-[15px] font-bold leading-5 text-ink">
                 사진과 메모만 준비하세요
               </p>
-              <p className="mt-1 font-semibold text-ink/60">
+              <p className="mt-0.5 text-[13px] font-semibold leading-5 text-ink/58">
                 글 주제, 메인 키워드, 기억나는 내용을 넣으면 블로그 후기 초안이 완성됩니다.
               </p>
             </div>
@@ -930,8 +931,8 @@ export default function ProductReviewMaker() {
               </div>
             </details>
 
-            <div className="order-6 rounded-lg border border-moss/20 bg-[#f3f7f3] p-4">
-              <p className="text-sm font-semibold leading-6 text-ink/60">
+            <div className="order-6 pt-1">
+              <p className="text-sm font-semibold leading-6 text-ink/56">
                 {isReady
                   ? "사진과 메모를 바탕으로 바로 복사 가능한 네이버 블로그 초안을 만듭니다."
                   : "어떤 글을 쓸지 적고, 사진 또는 기억나는 내용 중 하나 이상을 넣어주세요."}
@@ -949,7 +950,7 @@ export default function ProductReviewMaker() {
           </div>
         </section>
 
-        <section className="min-w-0 rounded-2xl bg-white/95 p-6 shadow-[0_20px_50px_rgba(31,36,40,0.06)]">
+        <section className="min-w-0 rounded-2xl bg-white/90 p-5 shadow-[0_14px_34px_rgba(31,36,40,0.045)]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-bold text-moss">생성 결과</p>
@@ -959,9 +960,9 @@ export default function ProductReviewMaker() {
           </div>
 
           {!hasResult && (
-            <div className="mt-4 rounded-xl border border-dashed border-line/80 bg-[#fbfaf6] p-5 text-center text-sm font-semibold leading-6 text-ink/55">
-              <p className="font-bold text-ink/65">아직 생성된 글이 없습니다.</p>
-              <p className="mt-1">주제와 메모를 입력한 뒤 초안 만들기를 눌러주세요.</p>
+            <div className="mt-4 rounded-xl bg-[#fbfaf6] px-4 py-4 text-left text-sm font-semibold leading-6 text-ink/55 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
+              <p className="font-bold text-ink/68">아직 생성된 초안이 없습니다.</p>
+              <p className="mt-1">글 주제와 메모를 입력한 뒤 초안 만들기를 눌러주세요.</p>
             </div>
           )}
 
@@ -1337,17 +1338,17 @@ function UsageSteps() {
   ];
 
   return (
-    <details className="rounded-lg border border-line/70 bg-white/85 px-4 py-3 shadow-[0_8px_22px_rgba(31,36,40,0.04)]">
-      <summary className="cursor-pointer text-sm font-bold text-ink/65">
-        간단 흐름 보기: 입력 → 생성 → 결과
+    <details className="rounded-xl bg-white/70 px-3 py-2 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.045)]">
+      <summary className="cursor-pointer text-xs font-bold text-ink/58">
+        간단 흐름: 입력 → 생성 → 결과
       </summary>
-      <ol className="mt-3 grid gap-2 md:grid-cols-3">
+      <ol className="mt-2 grid gap-2 md:grid-cols-3">
         {steps.map(([step, description]) => (
-          <li key={step} className="rounded-md border border-line/70 bg-[#fbfaf6] p-3">
-            <span className="inline-flex min-h-6 items-center rounded-md bg-moss/10 px-2 text-xs font-bold text-moss">
+          <li key={step} className="rounded-lg bg-[#fbfaf6] p-2.5 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.035)]">
+            <span className="inline-flex min-h-5 items-center rounded-md bg-moss/10 px-2 text-[11px] font-bold text-moss">
               {step}
             </span>
-            <p className="mt-2 text-xs font-semibold leading-5 text-ink/55">{description}</p>
+            <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/52">{description}</p>
           </li>
         ))}
       </ol>
@@ -1377,7 +1378,7 @@ function FieldStatusBadge({ meta }) {
 function ImageGrid({ images = [], onRemove, onMove, onNoteChange, showDetails = true }) {
   if (images.length === 0) {
     return (
-      <div className="mt-3 rounded-md border border-dashed border-line bg-white p-4 text-center text-sm font-semibold text-ink/50">
+      <div className="mt-3 rounded-lg bg-white/75 p-3 text-center text-sm font-semibold text-ink/46 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
         아직 추가된 사진이 없습니다.
       </div>
     );
