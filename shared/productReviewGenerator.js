@@ -21,7 +21,13 @@ const toHashTag = (value) => {
 };
 
 const stripReviewSuffix = (value = "") =>
-  text(value).replace(/\s*후기$/u, "").trim();
+  text(value).replace(/\s*(?:후기|리뷰|방문기|사용기)$/u, "").trim();
+
+const deriveMainKeywordFromTopic = (value = "") =>
+  stripReviewSuffix(value)
+    .replace(/\s*(?:직접\s*)?(?:써본|다녀온|방문한)\s*$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
 const getReviewTitleBase = (value = "") => {
   const withoutSuffix = stripReviewSuffix(value);
@@ -149,7 +155,7 @@ const getKeywordParts = (form = {}) =>
   uniqueText(splitCommaList(form.mainKeyword || form.keyword, 5));
 
 const getMainKeyword = (form = {}) =>
-  getKeywordParts(form)[0] || text(form.productName) || "상품 후기";
+  getKeywordParts(form)[0] || deriveMainKeywordFromTopic(form.productName) || "상품 후기";
 
 const getProductName = (form = {}) =>
   text(form.productName) || getMainKeyword(form);
@@ -1710,14 +1716,43 @@ const createOpeningSentenceCandidates = (form = {}, category = inferReviewCatego
   ]).slice(0, 3);
 };
 
-const createPhotoGuideItems = (imageSuggestions = []) =>
-  imageSuggestions.slice(0, 5).map((item) => ({
-    title: item.title,
-    insertAfter: item.label,
-    guide: item.directShotGuide || item.description,
-    marker: `[사진 가이드: ${item.title}]`,
-    description: item.description
-  }));
+const PHOTO_GUIDE_LABELS = ["대표 사진", "사용 장면", "상세 사진", "분위기 사진", "마무리 사진"];
+
+const createShortPhotoGuideText = (item = {}, index = 0, form = {}) => {
+  const memoText = getFormMemoText(form);
+  const source = `${item.title || ""} ${item.description || ""} ${item.directShotGuide || ""} ${getMainKeyword(form)} ${memoText}`;
+
+  if (index === 1 && /운동|드라이샴푸|떡진|보송/u.test(source)) return "운동 후 사용 상황을 보여줄 수 있는 사진";
+  if (/패키지|제품명|제품\s*전체/u.test(source)) return "제품명과 패키지가 잘 보이는 사진";
+  if (/성분|용량|사용법|상세|정보/u.test(source)) return "용량, 사용법, 성분을 확인할 수 있는 사진";
+  if (/사용|텍스처|발림|운동|장면/u.test(source)) return "실제로 사용하는 상황을 보여줄 수 있는 사진";
+  if (/입구|외관|대표|첫/u.test(source)) return "입구와 전체 분위기가 잘 보이는 사진";
+  if (/메뉴|가격|안내|시세|커리큘럼/u.test(source)) return "가격, 메뉴, 안내 정보를 확인할 수 있는 사진";
+  if (/내부|공간|분위기|좌석/u.test(source)) return "공간 분위기와 동선이 보이는 사진";
+  if (/마무리|정리|추천/u.test(source)) return "글 마지막에 넣기 좋은 정리용 사진";
+
+  return [
+    "전체 모습이 잘 보이는 대표 사진",
+    "직접 경험한 상황을 보여주는 사진",
+    "세부 정보를 확인할 수 있는 사진",
+    "분위기와 동선을 보여주는 사진",
+    "마무리 전에 넣기 좋은 사진"
+  ][index] || "글 흐름에 맞춰 넣기 좋은 사진";
+};
+
+const createPhotoGuideItems = (imageSuggestions = [], form = {}) =>
+  imageSuggestions.slice(0, 5).map((item, index) => {
+    const marker = `[${PHOTO_GUIDE_LABELS[index] || item.title || `사진 ${index + 1}`}]`;
+    const guide = createShortPhotoGuideText(item, index, form);
+
+    return {
+      title: PHOTO_GUIDE_LABELS[index] || item.title,
+      insertAfter: item.label,
+      guide,
+      marker,
+      description: guide
+    };
+  });
 
 const getInfoValue = (value = "") => text(value) || "[확인 필요]";
 
@@ -1749,7 +1784,7 @@ const createProductInfoSummaryForReview = (form = {}) => {
   );
 
   return [
-    ["상품명/브랜드명", getInfoValue(text(form.productName) || text(form.brandName) || getMainKeyword(form))],
+    ["상품명/브랜드명", getInfoValue(text(form.brandName) || getMainKeyword(form))],
     ["가격", getInfoValue(text(form.price) || productInfoItems.price)],
     ["용량/구성", getInfoValue(text(form.capacity) || text(form.composition) || productInfoItems.capacity || productInfoItems.composition)],
     ["구매처", getInfoValue(form.purchaseUrl || form.purchaseNotes || productInfoItems.purchaseNotes)],
@@ -2210,27 +2245,316 @@ const createChecklistBodySection = (items = []) =>
     ...items.map((item) => `- ${item.label}: ${item.detail}`)
   ].join("\n");
 
+const getBodyLength = (body = "") => String(body || "").replace(/\s+/g, "").length;
+
+const createNaturalReviewExpansionSections = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const baseKeyword = getReviewTitleBase(mainKeyword);
+  const memoText = getFormMemoText(form);
+  const tone = normalizeTone(form.tone);
+  const isDryShampoo = category === "product" && /드라이샴푸|운동|떡진|보송/u.test(`${mainKeyword} ${memoText}`);
+
+  if (category === "product") {
+    return [
+      createSectionBlock("왜 사용하게 됐는지", [
+        [
+          isDryShampoo
+            ? "운동을 하고 난 뒤 바로 씻거나 드라이할 시간이 없을 때 머리 상태가 가장 신경 쓰였습니다"
+            : "처음에는 제품 설명보다 실제 생활 안에서 손이 자주 갈 수 있는지가 더 궁금했습니다",
+          `${withTopicParticle(mainKeyword)} 그런 순간에 바로 꺼내 쓸 수 있는지, 사용 후 느낌이 부담스럽지 않은지를 중심으로 보게 됐습니다`,
+          "후기를 남길 때도 과장된 표현보다 내가 실제로 불편했던 상황에서 얼마나 도움이 됐는지가 더 중요하게 느껴졌습니다"
+        ]
+      ], tone),
+      createSectionBlock("직접 사용하며 느낀 점", [
+        [
+          isDryShampoo
+            ? "운동 후에는 앞머리나 정수리 쪽이 눌려 보이는 순간이 있는데, 그때 빠르게 정돈할 수 있다는 점이 가장 먼저 남았습니다"
+            : "처음 사용할 때는 향, 질감, 사용 후 남는 느낌처럼 작은 부분을 더 자세히 보게 됐습니다",
+          /휴대/u.test(memoText)
+            ? "휴대가 편하다는 점은 생각보다 크게 느껴졌습니다. 집에서만 쓰는 제품이면 손이 덜 가는데, 가방에 넣어두기 괜찮으면 필요한 순간에 바로 꺼내기 쉽습니다"
+            : "사용 과정이 번거롭지 않은지는 오래 쓰게 되는 제품인지 판단할 때 꽤 중요한 기준이었습니다",
+          /향/u.test(memoText)
+            ? "향은 너무 강하게 남는 쪽보다 무난하게 지나가는 쪽으로 느껴졌고, 운동 후에 써도 부담이 크지 않았습니다"
+            : "향이나 마무리감은 사람마다 다르게 느낄 수 있어서 처음에는 적은 양으로 확인해보는 편이 편했습니다"
+        ]
+      ], tone),
+      createSectionBlock("좋았던 점", [
+        [
+          /보송/u.test(memoText)
+            ? "가장 좋았던 점은 떡져 보이는 느낌을 조금 더 보송하게 정리할 수 있었다는 부분입니다"
+            : "가장 좋았던 점은 손이 가는 상황이 분명하다는 부분이었습니다",
+          isDryShampoo
+            ? "완전히 스타일링을 새로 하는 느낌은 아니어도, 급하게 사람을 만나거나 이동해야 할 때 머리 상태가 덜 신경 쓰이게 해주는 정도로는 충분히 만족스러웠습니다"
+            : "매일 쓰는 제품은 드라마틱한 변화보다 불편함 없이 반복해서 쓸 수 있는지가 더 중요하다고 느꼈습니다",
+          "사용 전후를 사진으로 남겨두면 내가 느낀 차이를 나중에 다시 보기에도 좋고, 글을 읽는 사람도 사용 상황을 더 쉽게 떠올릴 수 있을 것 같습니다"
+        ]
+      ], tone),
+      createSectionBlock("아쉬운 점", [
+        [
+          isDryShampoo
+            ? "아쉬운 점은 어디까지나 급할 때 쓰는 보조 제품에 가깝다는 점입니다"
+            : "아쉬운 점은 기대한 사용감과 실제 느낌이 사람마다 조금씩 다를 수 있다는 부분입니다",
+          "가격, 용량, 구매처처럼 바뀔 수 있는 정보는 직접 확인한 뒤 비교하는 편이 좋겠고, 사용감은 내 두피나 생활 패턴과 맞는지도 같이 봐야 합니다",
+          "그래도 짧은 시간 안에 정리가 필요했던 상황을 떠올리면, 이런 제품을 하나쯤 챙겨두는 이유는 분명히 느껴졌습니다"
+        ]
+      ], tone),
+      createSectionBlock("이런 분께 추천해요", [
+        [
+          isDryShampoo
+            ? "운동 후 바로 약속이 있거나 출근 전 시간이 부족한 분이라면 특히 활용도가 있을 것 같습니다"
+            : "사용 과정이 간단하고 일상에서 부담 없이 쓸 제품을 찾는 분께 잘 맞을 것 같습니다",
+          /휴대/u.test(memoText)
+            ? "휴대성을 중요하게 보는 분에게도 괜찮습니다. 큰 준비 없이 가방에 넣어두고 필요할 때 꺼내는 용도로 생각하면 기대치가 더 잘 맞습니다"
+            : "매일 쓰는 루틴에 새 제품을 추가할 때 번거로움을 싫어하는 분이라면 사용 방식부터 먼저 비교해보면 좋겠습니다",
+          /향/u.test(memoText)
+            ? "향이 너무 강한 제품을 부담스러워하는 분이라면 향의 잔향이 내 취향과 맞는지도 같이 보면 좋겠습니다"
+            : "향이나 마무리감은 취향 차이가 있어서, 가능하면 실제 사용 후기를 여러 개 비교해보는 편이 편합니다"
+        ]
+      ], tone),
+      createSectionBlock("전체적으로 보면", [
+        [
+          `${withTopicParticle(mainKeyword)} 한 번에 모든 고민을 해결해주는 제품이라기보다, 필요한 순간에 빠르게 정리해주는 보조 아이템에 가깝게 느껴졌습니다`,
+          "그 기준으로 보면 장점이 꽤 분명합니다. 사용 상황이 맞으면 만족도가 올라가고, 기대하는 역할이 다르면 아쉬움도 생길 수 있습니다",
+          "저는 운동 후처럼 머리 상태가 갑자기 신경 쓰이는 순간을 기준으로 봤을 때, 휴대성과 간편함이 가장 크게 남았습니다",
+          "바쁜 날에는 작은 불편함을 빨리 줄여주는 제품이 더 자주 손에 잡히는데, 이 제품도 그런 용도로 생각하면 기대치가 잘 맞았습니다"
+        ]
+      ], tone),
+      createSectionBlock("마무리", [
+        [
+          `${withTopicParticle(mainKeyword)} 바쁜 일정 사이에 머리 상태를 빠르게 정돈하고 싶을 때 떠올리기 좋은 제품이었습니다`,
+          isDryShampoo
+            ? "특히 운동 후 바로 이동해야 하거나 머리를 감기 애매한 상황이 자주 있는 분이라면 한 번쯤 비교해볼 만합니다"
+            : `${withConditionalParticle(`${baseKeyword} 사용감`)} 중요하게 보는 분이라면 내 루틴과 맞는지 기준을 잡아보기 좋습니다`,
+          "사용 전에는 기대치를 너무 크게 잡기보다 내가 불편했던 순간을 줄여주는지에 맞춰 보는 편이 좋았습니다",
+          "좋았던 점과 아쉬운 점이 모두 있는 만큼, 내 상황에 맞는 보조 아이템인지 차분히 보고 선택하면 더 만족스럽게 쓸 수 있을 것 같습니다",
+          "저처럼 운동 후 머리 상태가 신경 쓰였던 분이라면 사용 상황을 떠올려보고, 향과 마무리감이 취향에 맞는지도 함께 보면 좋겠습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "store") {
+    return [
+      createSectionBlock("왜 방문하게 됐는지", [
+        [
+          `${withObjectParticle(mainKeyword)} 알아보게 된 건 처음 방문해도 편하게 상담을 받을 수 있는 곳인지 궁금했기 때문입니다`,
+          "금액이나 조건이 얽힌 일은 설명을 듣는 과정이 편해야 마음이 놓이는데, 그래서 응대 분위기를 가장 먼저 보게 됐습니다",
+          "처음부터 결정을 내리기보다 어떤 흐름으로 상담이 이어지는지, 궁금한 점을 물어보기 괜찮은 분위기인지가 중요했습니다"
+        ]
+      ], tone),
+      createSectionBlock("방문하면서 느낀 점", [
+        [
+          `${withObjectParticle(mainKeyword)} 알아볼 때는 가격이나 조건도 중요하지만, 처음 상담을 받을 때 부담이 덜한지가 크게 느껴졌습니다`,
+          /친절|사장님/u.test(memoText)
+            ? "응대가 친절했다는 기억이 남아 있으면 처음 방문하는 사람도 조금 더 편하게 들어갈 수 있겠다는 생각이 듭니다"
+            : "처음 방문하는 매장은 설명을 차분하게 들을 수 있는지부터 보게 됩니다",
+          /아드님|2대째|이대째/u.test(memoText)
+            ? "2대째 이어오는 곳이라는 점도 오래 운영된 분위기를 느끼게 해줘서 인상적이었습니다"
+            : "상담 과정이 너무 빠르게 지나가지 않고 궁금한 부분을 물어볼 수 있으면 훨씬 편합니다",
+          "매장 분위기가 딱딱하지 않으면 처음 가는 사람도 내가 알고 싶은 내용을 차분히 정리해서 물어볼 수 있습니다"
+        ]
+      ], tone),
+      createSectionBlock("좋았던 점과 확인할 점", [
+        [
+          "좋았던 점은 방문 전 막연했던 부분을 실제 분위기 중심으로 떠올릴 수 있었다는 점입니다",
+          "시세나 비용처럼 매일 달라질 수 있는 정보는 글만 보고 단정하기보다 방문 시점에 다시 확인하는 편이 좋겠습니다",
+          `${withConditionalParticle(mainKeyword)} 처음 알아보는 분이라면 상담 분위기와 설명 흐름을 먼저 보고 비교해보면 도움이 될 것 같습니다`,
+          "친절한 응대가 기억에 남는다는 건 단순히 기분 좋은 경험을 넘어서, 다시 문의할 수 있겠다는 기준이 되기도 합니다"
+        ]
+      ], tone),
+      createSectionBlock("아쉬운 점", [
+        [
+          "아쉬운 점이라기보다 미리 알고 가면 좋을 부분은 있습니다",
+          "금 시세나 매입 기준은 방문 시점과 물품 상태에 따라 달라질 수 있어서, 글을 보고 바로 판단하기보다 현장에서 다시 확인하는 편이 안전합니다",
+          "운영시간이나 주차처럼 실제 방문에 영향을 주는 정보도 가기 전에 한 번 더 보는 편이 마음이 편했습니다"
+        ]
+      ], tone),
+      createSectionBlock("이런 분께 추천해요", [
+        [
+          "처음 금거래소를 알아보는 분, 상담 분위기가 너무 딱딱할까 봐 걱정되는 분께 참고가 될 것 같습니다",
+          "가족과 함께 시세나 매입 여부를 차분히 비교해보고 싶은 분에게도 이런 분위기 정보가 도움이 될 수 있습니다",
+          "무엇보다 친절하게 설명을 듣고 싶은 분이라면 방문 후보로 두고 직접 상담해보는 것도 좋겠습니다"
+        ]
+      ], tone),
+      createSectionBlock("마무리", [
+        [
+          "전체적으로 처음 방문하기 전의 긴장감을 줄이고, 어떤 분위기에서 상담이 이어지는지 가늠하기 좋은 경험이었습니다",
+          "금액이 오가는 일일수록 친절한 설명과 차분한 응대가 중요하게 느껴졌고, 그런 부분을 기준으로 다시 비교해보게 됐습니다",
+          `${withTopicParticle(mainKeyword)} 시세만 보는 곳이 아니라 상담을 어떻게 받을 수 있는지도 함께 보고 싶은 분께 남겨두고 싶은 후기입니다`
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "restaurant") {
+    return [
+      createSectionBlock("왜 찾게 됐는지", [
+        [
+          `${withObjectParticle(mainKeyword)} 알아본 건 아이와 함께 움직일 때 편하게 머물 수 있는 공간인지 궁금했기 때문입니다`,
+          "가족이 함께 가는 카페나 식사 장소는 맛이나 분위기만큼 아이가 마실 메뉴가 있는지, 좌석이 답답하지 않은지도 중요하게 느껴집니다",
+          "주말에 움직이면 작은 불편함도 크게 느껴질 때가 있어서 방문 전 기준을 조금 더 꼼꼼하게 보게 됐습니다"
+        ]
+      ], tone),
+      createSectionBlock("직접 방문하며 느낀 점", [
+        [
+          `${withObjectParticle(mainKeyword)} 떠올리면 음식 맛뿐 아니라 같이 간 사람이 편하게 머물 수 있었는지가 함께 생각납니다`,
+          /아이\s*음료/u.test(memoText)
+            ? "아이 음료가 있다는 점은 가족이 함께 움직일 때 작은 것 같아도 꽤 반가운 요소였습니다"
+            : "함께 방문하는 자리라면 메뉴 구성, 좌석 간격, 대화하기 좋은 분위기가 모두 만족도에 영향을 줍니다",
+          /좌석\s*넓/u.test(memoText)
+            ? "좌석이 넓게 느껴졌다는 점도 아이와 함께 가거나 여러 명이 움직일 때 편한 기준이 됐습니다"
+            : "가격이나 주차처럼 바뀔 수 있는 정보는 방문 전에 한 번 더 확인하면 더 편하게 다녀올 수 있습니다",
+          "아이와 같이 있으면 오래 앉아 있는 시간보다 움직임이 불편하지 않은지가 더 크게 남을 때가 많습니다"
+        ]
+      ], tone),
+      createSectionBlock("좋았던 점과 아쉬운 점", [
+        [
+          "좋았던 점은 방문 목적이 비교적 분명하게 맞아떨어졌다는 부분입니다",
+          "다만 시간대에 따라 분위기나 대기 상황은 달라질 수 있으니, 중요한 약속이라면 예약 가능 여부를 같이 보는 편이 좋겠습니다",
+          `${withConditionalParticle(mainKeyword)} 분위기와 편의성을 함께 보는 분이라면 후보로 두기 괜찮아 보였습니다`,
+          "아이 음료와 좌석처럼 가족 방문에서 체감되는 요소가 기억에 남아서, 단순히 예쁜 공간보다 실제로 머물기 괜찮은지가 더 중요하게 느껴졌습니다"
+        ]
+      ], tone),
+      createSectionBlock("아이와 함께 갈 때 본 기준", [
+        [
+          "아이와 함께 가는 카페는 메뉴가 다양하다는 말보다 아이가 마실 수 있는 선택지가 있는지가 먼저 눈에 들어옵니다",
+          "좌석이 넓으면 짐을 두거나 아이가 잠깐 움직일 때도 덜 불편해서 보호자 입장에서도 훨씬 여유가 생깁니다",
+          "공간이 너무 복잡하지 않고 머무는 동안 시선이 편안하면 짧게 들러도 만족도가 더 좋게 남습니다"
+        ]
+      ], tone),
+      createSectionBlock("이런 분께 추천해요", [
+        [
+          "아이와 함께 갈 카페를 찾는 가족에게 가장 먼저 참고가 될 것 같습니다",
+          "좌석 여유와 아이 음료처럼 현장에서 바로 체감되는 요소를 중요하게 보는 분에게도 잘 맞아 보입니다",
+          "주말에 가족과 가볍게 머물 공간을 찾는다면 분위기와 편의성을 함께 비교해보는 후보로 두기 좋겠습니다"
+        ]
+      ], tone),
+      createSectionBlock("마무리", [
+        [
+          `${withTopicParticle(mainKeyword)} 처음 알아볼 때 기대했던 건 아이와 함께 가도 부담이 덜한 공간인지였습니다`,
+          "직접 떠올려보니 아이 음료, 넓은 좌석, 가족 방문 분위기가 가장 기억에 남았습니다",
+          "가격이나 주차처럼 바뀔 수 있는 정보는 방문 전에 한 번 더 확인하고, 가족 일정에 맞는 시간대로 다녀오면 더 편하게 즐길 수 있을 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "education") {
+    return [
+      createSectionBlock("수업을 보며 느낀 점", [
+        [
+          `${withObjectParticle(mainKeyword)} 알아볼 때는 설명이 얼마나 쉬운지, 처음 듣는 사람도 흐름을 따라갈 수 있는지가 가장 중요했습니다`,
+          /초보자|이해/u.test(memoText)
+            ? "초보자도 이해하기 쉬웠다는 점이 남아 있으면 수업을 시작하기 전 부담이 줄어듭니다"
+            : "처음 배우는 내용일수록 용어보다 전체 흐름을 먼저 잡는 과정이 필요했습니다",
+          /커리큘럼|입찰|공고|낙찰/u.test(memoText)
+            ? "커리큘럼과 단계가 보이면 내가 어디에서 막히는지, 어떤 부분을 더 확인해야 하는지도 조금 더 분명해집니다"
+            : "수강 전에는 시간, 준비물, 난이도처럼 실제 참여에 영향을 주는 부분도 함께 보게 됩니다"
+        ]
+      ], tone),
+      createSectionBlock("마무리", [
+        [
+          "전체적으로 처음 접하는 사람에게 큰 흐름을 잡아주는 수업인지가 가장 기억에 남았습니다",
+          "바로 결정하기보다 내 목적과 난이도에 맞는지 차분히 보고 선택하면 더 편하게 시작할 수 있을 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  return [
+    createSectionBlock("직접 경험하며 느낀 점", [
+      [
+        `${withObjectParticle(mainKeyword)} 경험하면서 가장 먼저 본 건 처음 접하는 사람도 부담 없이 이해할 수 있는지였습니다`,
+        "좋았던 부분은 실제로 기억에 남은 장면이 분명했다는 점이고, 아쉬운 부분은 상황에 따라 달라질 수 있는 정보가 있다는 점입니다",
+        "전체적으로 내 상황과 맞는지 차분히 비교해보기 좋은 경험으로 남았습니다"
+      ]
+    ], tone)
+  ];
+};
+
+const createNaturalReviewFinishingSections = (form = {}, category = inferReviewCategory(form)) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const tone = normalizeTone(form.tone);
+
+  if (category === "store") {
+    return [
+      createSectionBlock("다시 방문한다면", [
+        [
+          "다시 방문한다면 먼저 당일 시세와 상담 가능 시간을 확인하고 갈 것 같습니다",
+          "처음에는 긴장되기 쉬운 곳이라도 설명이 차분하게 이어지면 비교할 기준이 조금 더 분명해집니다",
+          /친절|사장님/u.test(memoText)
+            ? "친절한 응대가 기억에 남았기 때문에, 다음에도 궁금한 부분을 정리해서 물어보기 좋겠다는 생각이 들었습니다"
+            : "상담을 받을 때는 내가 궁금한 내용을 미리 적어가면 훨씬 편하게 이야기를 나눌 수 있을 것 같습니다"
+        ]
+      ], tone),
+      createSectionBlock("전체적으로 남은 느낌", [
+        [
+          `${withTopicParticle(mainKeyword)} 단순히 가격만 보는 곳이라기보다 상담을 통해 기준을 잡는 과정이 중요하게 느껴졌습니다`,
+          "방문 전에는 막연했던 부분도 실제 응대와 설명 흐름을 떠올리면 훨씬 현실적으로 비교할 수 있습니다",
+          "처음 알아보는 분이라면 시세, 매입 기준, 운영시간을 따로 확인하고, 현장에서는 설명이 충분히 이해되는지 차분히 보는 편이 좋겠습니다",
+          "무엇보다 급하게 결정하기보다 충분히 설명을 듣고 비교할 수 있는 분위기인지 보는 것이 가장 중요하게 느껴졌습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "restaurant") {
+    return [
+      createSectionBlock("다시 간다면 보고 싶은 점", [
+        [
+          "다시 간다면 방문 시간대에 따라 좌석 여유가 어떤지 먼저 볼 것 같습니다",
+          /아이\s*음료/u.test(memoText)
+            ? "아이 음료가 있다는 점은 좋았지만, 아이가 오래 머물기 편한 분위기인지도 함께 보면 더 좋겠습니다"
+            : "아이와 함께 간다면 아이 메뉴나 음료, 화장실 동선처럼 실제로 필요한 부분을 같이 확인하게 됩니다",
+          /좌석\s*넓/u.test(memoText)
+            ? "좌석이 넓게 느껴졌던 점은 다시 방문할 때도 중요한 기준으로 남았습니다"
+            : "좌석 간격과 대기 여부는 시간대에 따라 달라질 수 있어 한 번 더 보는 편이 좋겠습니다",
+          "아이와 함께 움직이는 날에는 작은 동선 하나도 크게 느껴져서, 들어가고 앉고 주문하는 흐름이 복잡하지 않은지도 다시 보고 싶습니다"
+        ]
+      ], tone),
+      createSectionBlock("전체적으로 남은 느낌", [
+        [
+          `${withTopicParticle(mainKeyword)} 가족이 함께 움직일 때 필요한 기준을 떠올리기 좋은 곳으로 남았습니다`,
+          "아이와 함께 가는 장소는 예쁜 사진보다 실제로 앉아 있기 편한지, 주문과 이동이 복잡하지 않은지가 더 크게 느껴집니다",
+          "가볍게 들를 카페를 찾는 분이라면 아이 음료와 좌석 분위기를 중심으로 비교해보면 선택이 조금 쉬워질 것 같습니다",
+          "주말처럼 사람이 몰릴 수 있는 날에는 방문 시간대와 주차 가능 여부까지 함께 보면 더 편안하게 다녀올 수 있습니다",
+          "결국 가족 카페는 아이가 편하고 보호자도 지치지 않는지가 오래 남는 기준이라, 그런 부분을 중심으로 보면 만족도가 더 분명해질 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  return [
+    createSectionBlock("마지막으로 남은 느낌", [
+      [
+        `${withTopicParticle(mainKeyword)} 직접 경험한 상황을 기준으로 보면 좋았던 점과 다시 확인하고 싶은 점이 모두 있었습니다`,
+        "처음 알아볼 때는 막연했지만, 실제 장면을 떠올리며 정리하니 어떤 기준으로 보면 좋을지 조금 더 분명해졌습니다",
+        "내 상황과 맞는지 차분히 비교해보고 선택하면 더 만족스럽게 경험할 수 있을 것 같습니다"
+      ]
+    ], tone)
+  ];
+};
+
 const createPublishableReviewBody = ({
   baseBody = "",
   form = {},
-  category = inferReviewCategory(form),
-  photoGuide = [],
-  infoSummary = [],
-  recommendedFor = [],
-  faqItems = []
+  category = inferReviewCategory(form)
 } = {}) => {
   const targetLength = normalizeTargetLength(form.targetLength);
-  const sections = [
-    baseBody,
-    targetLength >= 2600 ? createLongFormSupportSection(form, category) : "",
-    ...(targetLength >= 2600 ? createDepthSupportSections({ form, category, infoSummary, recommendedFor }) : []),
-    createPhotoGuideBodySection(photoGuide),
-    createInfoSummaryBodySection(infoSummary),
-    createRecommendedBodySection(recommendedFor),
-    createFaqBodySection(faqItems)
-  ].filter(Boolean);
+  const memoCount = splitMemoLines(form.experienceMemo).length;
+  const desiredMin = targetLength >= 2600 ? (memoCount >= 6 || getImageCount(form) > 0 ? 2500 : 1800) : 0;
+  let body = normalizeBody(baseBody);
 
-  return normalizeBody(sections.join("\n\n"));
+  if (desiredMin > 0 && getBodyLength(body) < desiredMin) {
+    body = normalizeBody([body, ...createNaturalReviewExpansionSections(form, category)].join("\n\n"));
+  }
+
+  if (desiredMin > 0 && getBodyLength(body) < desiredMin) {
+    body = normalizeBody([body, ...createNaturalReviewFinishingSections(form, category)].join("\n\n"));
+  }
+
+  return body;
 };
 
 const createProductReviewContentPackage = ({
@@ -3127,7 +3451,7 @@ const createHumanReviewSections = (analysis) => {
           /운동|떡진|보송/u.test(memoText)
             ? "운동하고 난 뒤에는 머리를 다시 감기 애매한 순간이 있는데, 그럴 때 바로 쓸 수 있는지가 가장 현실적인 기준이었어요"
             : "처음 써보기 전에는 장점만큼이나 내 생활에 실제로 맞을지가 더 궁금했습니다",
-          "후기는 좋은 말만 있는 것보다 언제 쓰면 편한지와 아쉬운 점이 같이 있어야 판단하기 쉽더라고요"
+          "막상 써보니 편했던 순간과 조금 아쉬웠던 부분이 같이 남아서 더 현실적으로 느껴졌습니다"
         ]
       ], tone),
       createSectionBlock(outline[1], [
@@ -3161,7 +3485,7 @@ const createHumanReviewSections = (analysis) => {
       createSectionBlock(outline[4], [
         [
           `${withConditionalParticle(recommendedReader)} 참고하기 좋아요`,
-          "재구매 의향은 사용자가 직접 남긴 경우에만 단정하고, 정보가 부족하면 구매 전에 비교해볼 기준으로 정리하는 편이 좋습니다"
+          "구매 전에는 가격, 용량, 구매처처럼 바뀔 수 있는 정보만 한 번 더 비교해보면 좋겠습니다"
         ]
       ], tone)
     ];
@@ -3689,7 +4013,7 @@ export function createProductReviewDraft(form = {}) {
   const outline = createReviewOutline(form, category);
   const thumbnailTexts = createThumbnailTexts(form, category);
   const searchKeywords = createSearchKeywordSummary(form, category);
-  const photoGuide = createPhotoGuideItems(imageSuggestions);
+  const photoGuide = createPhotoGuideItems(imageSuggestions, form);
   const infoSummary = createGenericInfoSummary(form, category);
   const recommendedFor = createRecommendedForItems(form, category);
   const faqItems = createFaqItems(form, category);
@@ -3712,7 +4036,7 @@ export function createProductReviewDraft(form = {}) {
     photoGuide,
     infoSummary
   });
-  const body = normalizeBody([bodyWithoutChecklist, createChecklistBodySection(finalChecklist)].join("\n\n"));
+  const body = normalizeBody(bodyWithoutChecklist);
   const closingParagraph = extractClosingParagraph(baseBody);
   const contentPackage = createProductReviewContentPackage({
     form,

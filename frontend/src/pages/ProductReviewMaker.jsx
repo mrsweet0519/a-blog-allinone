@@ -131,49 +131,28 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
 
   if (packageData) {
     return [
-      "1. 메인 키워드",
-      packageData.mainKeyword,
-      "",
-      "2. 보조 키워드 5개",
-      linesToClipboard(packageData.secondaryKeywords || []),
-      "",
-      "3. 검색 의도 분석",
-      formatObjectSummary(packageData.searchIntentAnalysis || {}),
-      "",
-      "4. 홈피드 클릭 포인트",
-      formatObjectSummary(packageData.homeFeedClickPoint || {}),
-      "",
-      "5. 제목 후보 5개",
-      linesToClipboard(packageData.titleCandidates || result.titles || []),
-      "",
-      "6. 최종 추천 제목 1개",
+      "최종 추천 제목",
       packageData.finalRecommendedTitle || result.selectedTitle,
       "",
-      "7. 첫 문장 후보 3개",
-      linesToClipboard(packageData.openingSentenceCandidates || []),
-      "",
-      "8. 블로그 본문",
+      "블로그 본문",
       includeImageMarkers ? packageData.blogBody : stripImageMarkers(packageData.blogBody),
       "",
-      "9. 사진 배치 가이드",
+      "사진 배치 가이드",
       (packageData.photoGuide || [])
-        .map((item, index) => `${index + 1}. ${item.marker} ${item.guide}`)
-        .join("\n"),
+        .map((item) => `${item.marker}\n${item.guide}`)
+        .join("\n\n"),
       "",
-      "10. 업체 정보 또는 상품 정보 정리",
+      "업체/상품 정보 정리",
       formatKeyValueItems(packageData.infoSummary || []),
       "",
-      "11. 이런 분께 추천해요",
+      "이런 분께 추천해요",
       linesToClipboard(packageData.recommendedFor || []),
       "",
-      "12. FAQ 3개",
+      "FAQ",
       formatFaqItems(packageData.faqItems || []),
       "",
-      "13. 해시태그 10~15개",
-      (packageData.hashtags || result.hashtags || []).join(" "),
-      "",
-      "14. 최종 검수표",
-      formatChecklistItems(packageData.finalChecklist || [])
+      "해시태그",
+      (packageData.hashtags || result.hashtags || []).join(" ")
     ]
       .filter((line) => line !== undefined && line !== null)
       .join("\n")
@@ -181,25 +160,17 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
   }
 
   return [
-    "추천 제목 3개",
-    ...(result.titles || []).slice(0, 3).map((title, index) => `${index + 1}. ${title}`),
+    "최종 추천 제목",
+    result.selectedTitle,
     "",
-    `선택 제목: ${result.selectedTitle}`,
-    "",
-    "본문",
+    "블로그 본문",
     includeImageMarkers ? result.body : stripImageMarkers(result.body),
     "",
-    "사진 삽입 추천",
+    "사진 배치 가이드",
     ...(result.imageSuggestions || []).map((item, index) => `${index + 1}. ${item.title} - ${item.description}`),
     "",
-    "썸네일 문구 3줄",
-    ...(result.thumbnailTexts || []).map((line, index) => `${index + 1}. ${line}`),
-    "",
     "해시태그",
-    result.hashtags.join(" "),
-    "",
-    "SEO 키워드 정리",
-    (result.searchKeywords || []).join(", ")
+    result.hashtags.join(" ")
   ]
     .filter((line) => line !== undefined && line !== null)
     .join("\n")
@@ -248,6 +219,14 @@ const mergeTextBlocks = (...blocks) =>
     )
   ).join("\n");
 
+const deriveMainKeywordFromTopic = (value = "") =>
+  String(value ?? "")
+    .trim()
+    .replace(/\s*(?:후기|리뷰|방문기|사용기)$/u, "")
+    .replace(/\s*(?:직접\s*)?(?:써본|다녀온|방문한)\s*$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export default function ProductReviewMaker() {
   const pasteAreaRef = useRef(null);
   const imagesRef = useRef([]);
@@ -266,7 +245,11 @@ export default function ProductReviewMaker() {
   const [draftMessage, setDraftMessage] = useState("");
 
   const reviewTopic = useMemo(
-    () => form.mainKeyword.trim() || form.productName.trim(),
+    () => form.productName.trim() || form.mainKeyword.trim(),
+    [form.mainKeyword, form.productName]
+  );
+  const resolvedMainKeyword = useMemo(
+    () => form.mainKeyword.trim() || deriveMainKeywordFromTopic(form.productName),
     [form.mainKeyword, form.productName]
   );
   const hasSeedInput = useMemo(
@@ -444,13 +427,14 @@ export default function ProductReviewMaker() {
         ].filter(Boolean).join("\n")
       )
     );
-    const topic = reviewTopic || form.mainKeyword || form.productName;
+    const topic = reviewTopic || form.productName || resolvedMainKeyword;
+    const mainKeyword = resolvedMainKeyword || topic;
 
     return {
       ...form,
       productName: form.productName || topic,
-      mainKeyword: topic,
-      keyword: topic,
+      mainKeyword,
+      keyword: mainKeyword,
       productInfoText: mergeTextBlocks(form.productInfoText, imageText),
       selectedTitle: selectedTitle || form.selectedTitle,
       imageContext,
@@ -553,7 +537,7 @@ export default function ProductReviewMaker() {
     const saved = saveDraft(
       {
         ...createReviewPayload(result.selectedTitle),
-        keyword: reviewTopic,
+        keyword: resolvedMainKeyword || reviewTopic,
         targetLengthOption: form.targetLength,
         customTargetLength: form.targetLength
       },
@@ -637,18 +621,31 @@ export default function ProductReviewMaker() {
             </p>
           </div>
 
-          <div className="mt-4 space-y-4">
+          <div className="mt-4 flex flex-col gap-4">
             <label className="block">
-              <FieldLabel required>어떤 글을 쓸까요?</FieldLabel>
+              <FieldLabel required>글 주제</FieldLabel>
+              <input
+                value={form.productName}
+                onChange={(event) => updateForm("productName", event.target.value)}
+                className="focus-ring mt-2 min-h-12 w-full rounded-md border border-line/80 bg-[#fbfaf6] px-3 text-base"
+                placeholder="예: 에어젤 드라이샴푸 후기 / 부천금거래소 후기 / 아이랑 갈만한 카페"
+              />
+            </label>
+
+            <label className="block">
+              <FieldLabel>메인 키워드</FieldLabel>
               <input
                 value={form.mainKeyword}
                 onChange={(event) => updateForm("mainKeyword", event.target.value)}
                 className="focus-ring mt-2 min-h-12 w-full rounded-md border border-line/80 bg-[#fbfaf6] px-3 text-base"
-                placeholder="예: 역삼역 중식당 회식 후기 / 수분크림 직접 써본 후기 / 아이랑 다녀온 실내 체험공간 후기"
+                placeholder="예: 에어젤 드라이샴푸 / 부천금거래소 / 부천 아이랑 카페"
               />
+              <p className="mt-1 text-xs font-semibold leading-5 text-ink/50">
+                메인 키워드는 제목과 첫 문장에 자연스럽게 들어갑니다.
+              </p>
             </label>
 
-            <section>
+            <section className="order-4">
               <FieldLabel>사진 넣기</FieldLabel>
               <div
                 ref={pasteAreaRef}
@@ -711,7 +708,7 @@ export default function ProductReviewMaker() {
               />
             </section>
 
-            <label className="block">
+            <label className="order-3 block">
               <FieldLabel>기억나는 내용</FieldLabel>
               <textarea
                 value={form.experienceMemo}
@@ -722,7 +719,7 @@ export default function ProductReviewMaker() {
               />
             </label>
 
-            <details className="rounded-lg border border-line/80 bg-[#fbfaf6] p-4">
+            <details className="order-5 rounded-lg border border-line/80 bg-[#fbfaf6] p-4">
               <summary className="cursor-pointer list-none">
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -893,7 +890,7 @@ export default function ProductReviewMaker() {
               </div>
             </details>
 
-            <div className="rounded-lg border border-moss/20 bg-[#f3f7f3] p-4">
+            <div className="order-6 rounded-lg border border-moss/20 bg-[#f3f7f3] p-4">
               <p className="text-sm font-semibold leading-6 text-ink/60">
                 {isReady
                   ? "사진과 메모를 바탕으로 바로 복사 가능한 네이버 블로그 초안을 만듭니다."
@@ -921,28 +918,6 @@ export default function ProductReviewMaker() {
             <PackageSearch size={22} className="text-moss" aria-hidden="true" />
           </div>
 
-          {hasResult && (
-            <div className="mt-5 rounded-xl border border-moss/20 bg-[#f3f7f3] p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-base font-bold text-moss">복사해서 바로 블로그에 붙여넣기 가능</p>
-                  <p className="mt-1 text-sm font-semibold leading-6 text-ink/60">
-                    제목, 본문, 사진 위치, 썸네일 문구, 해시태그, SEO 키워드까지 한 번에 정리했습니다.
-                    초안은 복사 후 내 말투에 맞게 한 번만 다듬으면 더 자연스럽습니다.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => copyText("full")}
-                  className="focus-ring inline-flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61]"
-                >
-                  {copied === "full" ? <Check size={17} aria-hidden="true" /> : <Clipboard size={17} aria-hidden="true" />}
-                  {copied === "full" ? "전체 글 복사됨" : "전체 글 복사하기"}
-                </button>
-              </div>
-            </div>
-          )}
-
           {!hasResult && (
             <div className="mt-4 rounded-xl border border-dashed border-line/80 bg-[#fbfaf6] p-5 text-center text-sm font-semibold leading-6 text-ink/55">
               <p className="font-bold text-ink/65">아직 생성된 글이 없습니다.</p>
@@ -963,10 +938,7 @@ export default function ProductReviewMaker() {
 
               <div>
                 <h4 className="text-sm font-bold text-ink/70">저장/다시 만들기</h4>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  <CopyButton active={copied === "full"} onClick={() => copyText("full")}>
-                    전체 글 복사하기
-                  </CopyButton>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => generateReview(result.selectedTitle)}
@@ -989,29 +961,6 @@ export default function ProductReviewMaker() {
                 )}
               </div>
 
-              <details className="rounded-md border border-line bg-paper p-3">
-                <summary className="cursor-pointer text-sm font-bold text-moss">
-                  글 작성 참고 정보 보기
-                </summary>
-                <div className="mt-4 space-y-5">
-                  <ListBlock title="소제목 구조" items={result.outline} />
-                  {result.closingParagraph && (
-                    <div className="rounded-md border border-line bg-white p-3">
-                      <p className="text-sm font-bold text-ink/70">마무리 문단</p>
-                      <p className="mt-2 text-sm leading-7 text-ink/65">{result.closingParagraph}</p>
-                    </div>
-                  )}
-                  <TitleCandidates result={result} onSelect={selectTitle} onRegenerate={() => generateReview()} />
-                  <ImageSuggestionCards items={result.imageSuggestions} />
-                  <div className="rounded-md border border-line bg-white p-3 text-sm leading-6 text-ink/65">
-                    <p className="font-bold text-ink/70">입력 반영 정보</p>
-                    <p className="mt-2">글 주제: {reviewTopic || "미입력"}</p>
-                    <p>카테고리: {reviewCategoryOptions.find((option) => option.value === form.category)?.label || "자동 추정"}</p>
-                    <p>사진 수: {images.length}장</p>
-                    <p>메모: {form.experienceMemo.trim() ? "반영됨" : "미입력"}</p>
-                  </div>
-                </div>
-              </details>
             </div>
           )}
         </section>
@@ -1025,6 +974,9 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
   const titleCandidates = packageData.titleCandidates || result.titles || [];
   const finalTitle = packageData.finalRecommendedTitle || result.selectedTitle;
   const blogBody = packageData.blogBody || result.body;
+  const hashtags = packageData.hashtags || result.hashtags || [];
+  const photoGuide = packageData.photoGuide || [];
+  const bodyLength = result.bodyLength || blogBody.replace(/\s+/g, "").length;
 
   const updateSelectedTitle = (title) => {
     setResult((current) => ({
@@ -1055,31 +1007,49 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-3">
-        <ResultMetric label="메인 키워드" value={packageData.mainKeyword || "키워드 없음"} />
-        <ResultMetric label="본문 길이" value={`${result.bodyLength || blogBody.replace(/\s+/g, "").length}자`} />
-        <ResultMetric label="해시태그" value={`${(packageData.hashtags || result.hashtags || []).length}개`} />
+      <div className="rounded-xl border border-moss/15 bg-[#fbfdf9] p-4">
+        <div className="grid gap-2 sm:grid-cols-3">
+          <ResultMetric label="메인 키워드" value={packageData.mainKeyword || "키워드 없음"} />
+          <ResultMetric label="본문 글자수" value={`${bodyLength}자`} />
+          <ResultMetric label="해시태그 개수" value={`${hashtags.length}개`} />
+        </div>
+        <button
+          type="button"
+          onClick={() => copyText("full")}
+          className="focus-ring mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-moss px-4 text-sm font-bold text-white transition hover:bg-[#456b61]"
+        >
+          {copied === "full" ? <Check size={17} aria-hidden="true" /> : <Clipboard size={17} aria-hidden="true" />}
+          {copied === "full" ? "전체 글 복사됨" : "전체 글 복사하기"}
+        </button>
       </div>
 
-      <ResultDetailSection title="1. 메인 키워드" defaultOpen copyActive={copied === "mainKeyword"} onCopy={() => copyText("mainKeyword")}>
-        <p className="rounded-md border border-line bg-paper p-3 text-base font-bold text-ink">
-          {packageData.mainKeyword}
-        </p>
+      <ResultDetailSection title="1. 최종 추천 제목" defaultOpen copyActive={copied === "finalTitle"} onCopy={() => copyText("finalTitle")}>
+        <input
+          value={finalTitle}
+          onChange={(event) => updateSelectedTitle(event.target.value)}
+          className="focus-ring min-h-12 w-full rounded-md border border-line/80 bg-white px-3 text-lg font-bold leading-7 text-ink"
+          aria-label="최종 추천 제목 직접 수정"
+        />
       </ResultDetailSection>
 
-      <ResultDetailSection title="2. 보조 키워드 5개" copyActive={copied === "secondaryKeywords"} onCopy={() => copyText("secondaryKeywords")}>
-        <KeywordChips items={packageData.secondaryKeywords || []} />
+      <ResultDetailSection title="2. 블로그 본문" defaultOpen copyActive={copied === "body"} onCopy={() => copyText("body")}>
+        <textarea
+          value={blogBody}
+          onChange={(event) => updateBody(event.target.value)}
+          rows={24}
+          className="focus-ring min-h-[560px] w-full rounded-md border border-line/70 bg-white p-5 text-[15px] leading-8 text-ink/85 shadow-inner shadow-black/[0.015] whitespace-pre-wrap"
+        />
       </ResultDetailSection>
 
-      <ResultDetailSection title="3. 검색 의도 분석" copyActive={copied === "searchIntent"} onCopy={() => copyText("searchIntent")}>
-        <ObjectSummary value={packageData.searchIntentAnalysis} />
+      <ResultDetailSection title="3. 사진 배치 가이드" defaultOpen copyActive={copied === "images"} onCopy={() => copyText("images")}>
+        <PhotoGuideList items={photoGuide} />
       </ResultDetailSection>
 
-      <ResultDetailSection title="4. 홈피드 클릭 포인트" copyActive={copied === "homeFeed"} onCopy={() => copyText("homeFeed")}>
-        <ObjectSummary value={packageData.homeFeedClickPoint} />
+      <ResultDetailSection title="4. 해시태그" defaultOpen copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
+        <KeywordChips items={hashtags} />
       </ResultDetailSection>
 
-      <ResultDetailSection title="5. 제목 후보 5개" defaultOpen copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
+      <ResultDetailSection title="5. 제목 후보 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
         <div className="grid gap-2">
           {titleCandidates.slice(0, 5).map((title, index) => {
             const selected = finalTitle === title || result.selectedTitle === title;
@@ -1091,8 +1061,8 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
                 onClick={() => selectTitle(title)}
                 className={`focus-ring flex min-h-11 items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition ${
                   selected
-                    ? "border-moss bg-moss/10 text-moss"
-                    : "border-line bg-paper hover:border-moss hover:bg-white"
+                    ? "border-moss/60 bg-moss/10 text-moss"
+                    : "border-line/70 bg-white hover:border-moss hover:bg-[#fbfdf9]"
                 }`}
               >
                 <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current text-xs">
@@ -1105,50 +1075,55 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
         </div>
       </ResultDetailSection>
 
-      <ResultDetailSection title="6. 최종 추천 제목 1개" defaultOpen copyActive={copied === "finalTitle"} onCopy={() => copyText("finalTitle")}>
-        <input
-          value={finalTitle}
-          onChange={(event) => updateSelectedTitle(event.target.value)}
-          className="focus-ring min-h-12 w-full rounded-md border border-line/80 bg-white px-3 text-base font-bold text-ink"
-          aria-label="최종 추천 제목 직접 수정"
-        />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="7. 첫 문장 후보 3개" copyActive={copied === "openings"} onCopy={() => copyText("openings")}>
-        <NumberedList items={packageData.openingSentenceCandidates || []} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="8. 블로그 본문" defaultOpen copyActive={copied === "body"} onCopy={() => copyText("body")}>
-        <textarea
-          value={blogBody}
-          onChange={(event) => updateBody(event.target.value)}
-          rows={22}
-          className="focus-ring w-full rounded-md border border-line/80 bg-[#fbfaf6] p-4 text-base leading-8 whitespace-pre-wrap"
-        />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="9. 사진 배치 가이드" copyActive={copied === "images"} onCopy={() => copyText("images")}>
-        <PhotoGuideList items={packageData.photoGuide || []} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="10. 업체 정보 또는 상품 정보 정리" copyActive={copied === "info"} onCopy={() => copyText("info")}>
-        <KeyValueList items={packageData.infoSummary || []} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="11. 이런 분께 추천해요" copyActive={copied === "recommended"} onCopy={() => copyText("recommended")}>
-        <NumberedList items={packageData.recommendedFor || []} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="12. FAQ 3개" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
+      <ResultDetailSection title="6. FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
         <FaqList items={packageData.faqItems || []} />
       </ResultDetailSection>
 
-      <ResultDetailSection title="13. 해시태그 10~15개" copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
-        <KeywordChips items={packageData.hashtags || result.hashtags || []} />
+      <ResultDetailSection title="7. 이런 분께 추천해요" copyActive={copied === "recommended"} onCopy={() => copyText("recommended")}>
+        <NumberedList items={packageData.recommendedFor || []} />
       </ResultDetailSection>
 
-      <ResultDetailSection title="14. 최종 검수표" copyActive={copied === "checklist"} onCopy={() => copyText("checklist")}>
-        <ChecklistList items={packageData.finalChecklist || []} />
+      <ResultDetailSection title="8. 업체/상품 정보 정리" copyActive={copied === "info"} onCopy={() => copyText("info")}>
+        <KeyValueList items={packageData.infoSummary || []} />
+      </ResultDetailSection>
+
+      <ResultDetailSection title="9. 상세 분석 보기">
+        <div className="grid gap-4">
+          <div>
+            <p className="text-xs font-bold text-ink/45">내부 카테고리 판단 결과</p>
+            <p className="mt-1 text-sm font-bold text-ink/70">{result.category || "자동 추정"}</p>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-ink/45">보조 키워드 분석</p>
+            <div className="mt-2">
+              <KeywordChips items={packageData.secondaryKeywords || []} />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-ink/45">검색 의도 분석</p>
+            <div className="mt-2">
+              <ObjectSummary value={packageData.searchIntentAnalysis} />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-ink/45">홈피드 클릭 포인트</p>
+            <div className="mt-2">
+              <ObjectSummary value={packageData.homeFeedClickPoint} />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-ink/45">첫 문장 후보 3개</p>
+            <div className="mt-2">
+              <NumberedList items={packageData.openingSentenceCandidates || []} />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-bold text-ink/45">최종 검수표</p>
+            <div className="mt-2">
+              <ChecklistList items={packageData.finalChecklist || []} />
+            </div>
+          </div>
+        </div>
       </ResultDetailSection>
     </div>
   );
@@ -1156,7 +1131,7 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
 
 function ResultMetric({ label, value }) {
   return (
-    <div className="rounded-md border border-line bg-paper px-3 py-2">
+    <div className="rounded-md border border-line/60 bg-white px-3 py-2">
       <p className="text-[11px] font-bold text-ink/45">{label}</p>
       <p className="mt-1 truncate text-sm font-bold text-ink">{value}</p>
     </div>
@@ -1165,7 +1140,7 @@ function ResultMetric({ label, value }) {
 
 function ResultDetailSection({ title, children, defaultOpen = false, copyActive = false, onCopy }) {
   return (
-    <details open={defaultOpen} className="rounded-lg border border-line bg-white p-3">
+    <details open={defaultOpen} className="rounded-lg border border-line/60 bg-[#fffefa] p-3 shadow-[0_8px_18px_rgba(31,36,40,0.025)]">
       <summary className="cursor-pointer text-sm font-bold text-ink/75">
         {title}
       </summary>
@@ -1174,7 +1149,7 @@ function ResultDetailSection({ title, children, defaultOpen = false, copyActive 
           <button
             type="button"
             onClick={onCopy}
-            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-line bg-paper px-2.5 text-xs font-bold text-ink/60 transition hover:border-moss hover:text-moss"
+            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-line/70 bg-white px-2.5 text-xs font-bold text-ink/55 transition hover:border-moss/50 hover:text-moss"
           >
             {copyActive ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
             {copyActive ? "복사됨" : "이 부분 복사"}
@@ -1204,7 +1179,7 @@ function KeyValueList({ items = [] }) {
   return (
     <dl className="grid gap-2">
       {items.map(([label, value]) => (
-        <div key={label} className="rounded-md border border-line bg-paper p-3 text-sm leading-6">
+        <div key={label} className="rounded-md border border-line/60 bg-white p-3 text-sm leading-6">
           <dt className="text-xs font-bold text-moss">{label}</dt>
           <dd className="mt-1 font-semibold text-ink/70">{value}</dd>
         </div>
@@ -1219,7 +1194,7 @@ function KeywordChips({ items = [] }) {
   }
 
   return (
-    <div className="flex flex-wrap gap-2 rounded-md border border-line bg-paper p-3">
+    <div className="flex flex-wrap gap-2 rounded-md border border-line/60 bg-white p-3">
       {items.map((item) => (
         <span key={item} className="rounded-md bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
           {item}
@@ -1237,7 +1212,7 @@ function NumberedList({ items = [] }) {
   return (
     <ol className="grid gap-2">
       {items.map((item, index) => (
-        <li key={`${item}-${index}`} className="flex gap-2 rounded-md border border-line bg-paper p-3 text-sm leading-6 text-ink/70">
+        <li key={`${item}-${index}`} className="flex gap-2 rounded-md border border-line/60 bg-white p-3 text-sm leading-6 text-ink/70">
           <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white text-xs font-bold text-moss">
             {index + 1}
           </span>
@@ -1256,7 +1231,7 @@ function PhotoGuideList({ items = [] }) {
   return (
     <div className="grid gap-2">
       {items.map((item) => (
-        <div key={`${item.marker}-${item.insertAfter}`} className="rounded-md border border-line bg-paper p-3 text-sm leading-6">
+        <div key={`${item.marker}-${item.insertAfter}`} className="rounded-md border border-line/60 bg-white p-3 text-sm leading-6">
           <p className="text-xs font-bold text-moss">{item.insertAfter}</p>
           <p className="mt-1 font-bold text-ink/75">{item.marker}</p>
           <p className="mt-1 text-ink/60">{item.guide}</p>
@@ -1274,7 +1249,7 @@ function FaqList({ items = [] }) {
   return (
     <div className="grid gap-2">
       {items.map((item, index) => (
-        <div key={item.question} className="rounded-md border border-line bg-paper p-3 text-sm leading-6">
+        <div key={item.question} className="rounded-md border border-line/60 bg-white p-3 text-sm leading-6">
           <p className="font-bold text-ink">Q{index + 1}. {item.question}</p>
           <p className="mt-1 font-semibold text-ink/65">A. {item.answer}</p>
         </div>
@@ -1291,7 +1266,7 @@ function ChecklistList({ items = [] }) {
   return (
     <ul className="grid gap-2">
       {items.map((item) => (
-        <li key={item.label} className="flex gap-2 rounded-md border border-line bg-paper p-3 text-sm leading-6">
+        <li key={item.label} className="flex gap-2 rounded-md border border-line/60 bg-white p-3 text-sm leading-6">
           <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full ${
             item.passed ? "bg-moss text-white" : "bg-amber/20 text-[#7a5a1e]"
           }`}>
