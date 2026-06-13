@@ -137,11 +137,6 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
       "블로그 본문",
       includeImageMarkers ? packageData.blogBody : stripImageMarkers(packageData.blogBody),
       "",
-      "사진 배치 가이드",
-      (packageData.photoGuide || [])
-        .map((item) => `${item.marker}\n${item.guide}`)
-        .join("\n\n"),
-      "",
       "업체/상품 정보 정리",
       formatKeyValueItems(packageData.infoSummary || []),
       "",
@@ -162,9 +157,6 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
     "",
     "블로그 본문",
     includeImageMarkers ? result.body : stripImageMarkers(result.body),
-    "",
-    "사진 배치 가이드",
-    ...(result.imageSuggestions || []).map((item, index) => `${index + 1}. ${item.title} - ${item.description}`),
     "",
     "해시태그",
     result.hashtags.join(" ")
@@ -519,11 +511,54 @@ export default function ProductReviewMaker() {
   };
 
   const selectTitle = (title) => {
-    const draft = createProductReviewDraft(createReviewPayload(title));
-
     setForm((current) => ({ ...current, selectedTitle: title }));
-    setResult(draft);
+    setResult((current) => ({
+      ...current,
+      selectedTitle: title,
+      contentPackage: current.contentPackage
+        ? {
+            ...current.contentPackage,
+            finalRecommendedTitle: title
+          }
+        : current.contentPackage
+    }));
     setStatus("generated");
+    setDraftId("");
+    setDraftMessage("");
+  };
+
+  const regenerateTitles = () => {
+    if (!hasResult) return;
+
+    const currentBlogBody = result.contentPackage?.blogBody || result.body;
+    const nextTitleVariantSeed = Number(result.contentPackage?.titleVariantSeed || 0) + 1;
+    const draft = createProductReviewDraft({
+      ...createReviewPayload(""),
+      selectedTitle: "",
+      titleVariantSeed: nextTitleVariantSeed
+    });
+    const nextTitles = draft.contentPackage?.titleCandidates || draft.titles || [];
+    const nextFinalTitle = draft.contentPackage?.finalRecommendedTitle || draft.selectedTitle || nextTitles[0] || result.selectedTitle;
+
+    setForm((current) => ({ ...current, selectedTitle: nextFinalTitle }));
+    setResult((current) => ({
+      ...current,
+      titles: nextTitles,
+      selectedTitle: nextFinalTitle,
+      body: currentBlogBody,
+      bodyLength: currentBlogBody.replace(/\s+/g, "").length,
+      contentPackage: current.contentPackage
+        ? {
+            ...current.contentPackage,
+            titleCandidates: nextTitles,
+            finalRecommendedTitle: nextFinalTitle,
+            blogBody: currentBlogBody,
+            titleVariantSeed: nextTitleVariantSeed
+          }
+        : current.contentPackage
+    }));
+    setStatus("generated");
+    setCopied("");
     setDraftId("");
     setDraftMessage("");
   };
@@ -593,7 +628,7 @@ export default function ProductReviewMaker() {
         <div>
           <p className="text-sm font-semibold text-coral">원클릭 네이버 블로그 글쓰기</p>
           <h2 className="mt-1 max-w-3xl text-2xl font-bold leading-tight tracking-normal sm:text-3xl">
-            사진과 메모를 넣으면 네이버 블로그 후기글 초안이 생성됩니다
+            사진과 메모만 준비하면 네이버 블로그 초안이 완성됩니다
           </h2>
           <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-ink/60">
             입력 → 생성 → 결과 흐름만 남기고, SEO 포스팅 구조는 결과물 안에서 정리합니다.
@@ -605,17 +640,25 @@ export default function ProductReviewMaker() {
       <UsageSteps />
 
       <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(340px,0.38fr)_minmax(0,0.62fr)]">
-        <section className="min-w-0 rounded-xl border border-line/70 bg-white p-5 shadow-[0_12px_28px_rgba(31,36,40,0.05)]">
+        <section className="min-w-0 rounded-2xl bg-white/95 p-6 shadow-[0_20px_50px_rgba(31,36,40,0.06)]">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-bold">원클릭 네이버 블로그 글쓰기</h3>
             <span className="rounded-md bg-paper px-2.5 py-1 text-xs font-semibold text-ink/60">
               {isReady ? "초안 준비 완료" : "사진/메모 입력"}
             </span>
           </div>
-          <div className="mt-3 rounded-lg border border-moss/15 bg-[#f3f7f3] px-4 py-3 text-sm leading-6 text-ink/70">
-            <p className="font-semibold">
-              사진과 메모를 넣으면 네이버 블로그 후기글 초안이 생성됩니다.
-            </p>
+          <div className="mt-4 flex gap-3 rounded-2xl bg-[#fff7d8] px-4 py-4 text-sm leading-6 text-ink/70 shadow-[0_10px_24px_rgba(31,36,40,0.035)]">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-moss shadow-sm">
+              <WandSparkles size={18} aria-hidden="true" />
+            </span>
+            <div>
+              <p className="font-bold text-ink">
+                사진과 메모만 준비하세요
+              </p>
+              <p className="mt-1 font-semibold text-ink/60">
+                글 주제, 메인 키워드, 기억나는 내용을 넣으면 블로그 후기 초안이 완성됩니다.
+              </p>
+            </div>
           </div>
 
           <div className="mt-4 flex flex-col gap-4">
@@ -906,7 +949,7 @@ export default function ProductReviewMaker() {
           </div>
         </section>
 
-        <section className="min-w-0 rounded-xl border border-line/70 bg-white p-5 shadow-[0_12px_28px_rgba(31,36,40,0.05)]">
+        <section className="min-w-0 rounded-2xl bg-white/95 p-6 shadow-[0_20px_50px_rgba(31,36,40,0.06)]">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-bold text-moss">생성 결과</p>
@@ -929,6 +972,7 @@ export default function ProductReviewMaker() {
                 copied={copied}
                 copyText={copyText}
                 selectTitle={selectTitle}
+                regenerateTitles={regenerateTitles}
                 setResult={setResult}
                 setForm={setForm}
               />
@@ -966,13 +1010,12 @@ export default function ProductReviewMaker() {
   );
 }
 
-function NaverResultSections({ result, copied, copyText, selectTitle, setResult, setForm }) {
+function NaverResultSections({ result, copied, copyText, selectTitle, regenerateTitles, setResult, setForm }) {
   const packageData = result.contentPackage || {};
   const titleCandidates = packageData.titleCandidates || result.titles || [];
   const finalTitle = packageData.finalRecommendedTitle || result.selectedTitle;
   const blogBody = packageData.blogBody || result.body;
   const hashtags = packageData.hashtags || result.hashtags || [];
-  const photoGuide = packageData.photoGuide || [];
   const bodyLength = result.bodyLength || blogBody.replace(/\s+/g, "").length;
 
   const updateSelectedTitle = (title) => {
@@ -1003,8 +1046,8 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
   };
 
   return (
-    <div className="space-y-3">
-      <section className="rounded-xl border border-moss/20 bg-[#fbfdf9] p-4 shadow-[0_10px_24px_rgba(31,36,40,0.035)]">
+    <div className="space-y-4">
+      <section className="rounded-2xl bg-[#fbfdf9] p-5 shadow-[0_16px_36px_rgba(31,36,40,0.055)]">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h4 className="text-sm font-bold text-moss">1. 최종 추천 제목</h4>
@@ -1034,7 +1077,7 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
         <input
           value={finalTitle}
           onChange={(event) => updateSelectedTitle(event.target.value)}
-          className="focus-ring mt-3 min-h-14 w-full rounded-md border border-moss/25 bg-white px-4 text-xl font-bold leading-8 text-ink"
+          className="focus-ring mt-4 min-h-14 w-full rounded-xl border border-moss/15 bg-white px-4 text-xl font-bold leading-8 text-ink shadow-[0_8px_20px_rgba(31,36,40,0.035)]"
           aria-label="최종 추천 제목 직접 수정"
         />
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -1045,6 +1088,16 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
       </section>
 
       <ResultDetailSection title="2. 제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={regenerateTitles}
+            className="focus-ring inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
+          >
+            <RefreshCw size={14} aria-hidden="true" />
+            제목 다시 만들기
+          </button>
+        </div>
         <div className="grid gap-2">
           {titleCandidates.slice(0, 5).map((title, index) => {
             const selected = finalTitle === title || result.selectedTitle === title;
@@ -1056,8 +1109,8 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
                 onClick={() => selectTitle(title)}
                 className={`focus-ring flex min-h-11 items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition ${
                   selected
-                    ? "border-moss/70 bg-moss/10 text-moss"
-                    : "border-line/70 bg-white hover:border-moss hover:bg-[#fbfdf9]"
+                    ? "border-moss/40 bg-moss/10 text-moss"
+                    : "border-line/50 bg-white hover:border-moss/50 hover:bg-[#fbfdf9]"
                 }`}
               >
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-current text-xs font-bold">
@@ -1070,28 +1123,40 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
         </div>
       </ResultDetailSection>
 
-      <ResultDetailSection title="3. 블로그 본문" defaultOpen copyActive={copied === "body"} onCopy={() => copyText("body")}>
+      <section className="rounded-2xl bg-white p-5 shadow-[0_16px_38px_rgba(31,36,40,0.05)]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-bold text-ink/75">3. 블로그 본문</h4>
+            <p className="mt-1 text-xs font-semibold text-ink/45">
+              그대로 붙여넣기 좋게 사진 삽입 위치까지 본문 안에 넣었습니다.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => copyText("body")}
+            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-line/60 bg-white px-2.5 text-xs font-bold text-ink/55 transition hover:border-moss/50 hover:text-moss"
+          >
+            {copied === "body" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
+            {copied === "body" ? "복사됨" : "본문 복사"}
+          </button>
+        </div>
         <textarea
           value={blogBody}
           onChange={(event) => updateBody(event.target.value)}
-          rows={24}
-          className="focus-ring min-h-[560px] w-full rounded-md border border-line/70 bg-white p-5 text-[15px] leading-8 text-ink/85 shadow-inner shadow-black/[0.015] whitespace-pre-wrap"
+          rows={28}
+          className="focus-ring mt-4 min-h-[680px] w-full resize-y rounded-xl border border-line/30 bg-white p-6 text-[16px] leading-8 text-ink/85 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.015)] whitespace-pre-wrap"
         />
-      </ResultDetailSection>
+      </section>
 
-      <ResultDetailSection title="4. 사진 배치 가이드" defaultOpen copyActive={copied === "images"} onCopy={() => copyText("images")}>
-        <PhotoGuideList items={photoGuide} />
-      </ResultDetailSection>
-
-      <ResultDetailSection title="5. 업체/상품 정보 정리" copyActive={copied === "info"} onCopy={() => copyText("info")}>
+      <ResultDetailSection title="4. 업체/상품 정보 정리" copyActive={copied === "info"} onCopy={() => copyText("info")}>
         <KeyValueList items={packageData.infoSummary || []} />
       </ResultDetailSection>
 
-      <ResultDetailSection title="6. FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
+      <ResultDetailSection title="5. FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
         <FaqList items={packageData.faqItems || []} />
       </ResultDetailSection>
 
-      <ResultDetailSection title="7. 해시태그" copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
+      <ResultDetailSection title="6. 해시태그" copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
         <KeywordChips items={hashtags} />
       </ResultDetailSection>
     </div>
@@ -1100,7 +1165,7 @@ function NaverResultSections({ result, copied, copyText, selectTitle, setResult,
 
 function ResultMetric({ label, value }) {
   return (
-    <div className="rounded-md border border-line/60 bg-white px-3 py-2">
+    <div className="rounded-xl bg-white/85 px-3 py-2 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
       <p className="text-[11px] font-bold text-ink/45">{label}</p>
       <p className="mt-1 truncate text-sm font-bold text-ink">{value}</p>
     </div>
@@ -1109,7 +1174,7 @@ function ResultMetric({ label, value }) {
 
 function ResultDetailSection({ title, children, defaultOpen = false, copyActive = false, onCopy }) {
   return (
-    <details open={defaultOpen} className="rounded-lg border border-line/60 bg-[#fffefa] p-3 shadow-[0_8px_18px_rgba(31,36,40,0.025)]">
+    <details open={defaultOpen} className="rounded-2xl bg-[#fffefa] p-4 shadow-[0_10px_26px_rgba(31,36,40,0.035)]">
       <summary className="cursor-pointer text-sm font-bold text-ink/75">
         {title}
       </summary>
@@ -1118,7 +1183,7 @@ function ResultDetailSection({ title, children, defaultOpen = false, copyActive 
           <button
             type="button"
             onClick={onCopy}
-            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-line/70 bg-white px-2.5 text-xs font-bold text-ink/55 transition hover:border-moss/50 hover:text-moss"
+            className="focus-ring inline-flex min-h-8 items-center justify-center gap-1.5 rounded-full border border-line/50 bg-white px-2.5 text-xs font-bold text-ink/55 transition hover:border-moss/50 hover:text-moss"
           >
             {copyActive ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
             {copyActive ? "복사됨" : "이 부분 복사"}
@@ -1148,7 +1213,7 @@ function KeyValueList({ items = [] }) {
   return (
     <dl className="grid gap-2">
       {items.map(([label, value]) => (
-        <div key={label} className="rounded-md border border-line/60 bg-white p-3 text-sm leading-6">
+        <div key={label} className="rounded-xl bg-white/80 p-3 text-sm leading-6 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
           <dt className="text-xs font-bold text-moss">{label}</dt>
           <dd className="mt-1 font-semibold text-ink/70">{value}</dd>
         </div>
@@ -1163,7 +1228,7 @@ function KeywordChips({ items = [] }) {
   }
 
   return (
-    <div className="flex flex-wrap gap-2 rounded-md border border-line/60 bg-white p-3">
+    <div className="flex flex-wrap gap-2 rounded-xl bg-white/75 p-3 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
       {items.map((item) => (
         <span key={item} className="rounded-md bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
           {item}
@@ -1181,7 +1246,7 @@ function NumberedList({ items = [] }) {
   return (
     <ol className="grid gap-2">
       {items.map((item, index) => (
-        <li key={`${item}-${index}`} className="flex gap-2 rounded-md border border-line/60 bg-white p-3 text-sm leading-6 text-ink/70">
+        <li key={`${item}-${index}`} className="flex gap-2 rounded-xl bg-white/80 p-3 text-sm leading-6 text-ink/70 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
           <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white text-xs font-bold text-moss">
             {index + 1}
           </span>
@@ -1218,7 +1283,7 @@ function FaqList({ items = [] }) {
   return (
     <div className="grid gap-2">
       {items.map((item, index) => (
-        <div key={item.question} className="rounded-md border border-line/60 bg-white p-3 text-sm leading-6">
+        <div key={item.question} className="rounded-xl bg-white/80 p-3 text-sm leading-6 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
           <p className="font-bold text-ink">Q{index + 1}. {item.question}</p>
           <p className="mt-1 font-semibold text-ink/65">A. {item.answer}</p>
         </div>

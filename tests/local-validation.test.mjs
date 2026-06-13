@@ -722,20 +722,41 @@ assert.ok(requestedGoldBuyTitles[1].includes("처음 방문"));
 assert.ok(requestedGoldBuyTitles[2].includes("상담 기준"));
 assert.ok(requestedGoldBuyTitles[3].includes("체크 포인트"));
 assert.ok(requestedGoldBuyTitles[4].includes("금값"));
+const requestedGoldBuyRetitledReview = createProductReviewDraft({
+  productName: "부천금매입 후기",
+  mainKeyword: "부천금매입",
+  experienceMemo:
+    "사장님 친절하심\n아드님이 2대째 운영중",
+  titleVariantSeed: 1
+});
+const requestedGoldBuyRetitledTitles = requestedGoldBuyRetitledReview.contentPackage.titleCandidates;
+assert.equal(requestedGoldBuyRetitledTitles.length, 5);
+assert.notDeepEqual(requestedGoldBuyRetitledTitles, requestedGoldBuyTitles);
+assert.ok(requestedGoldBuyRetitledTitles.every((title) => title.indexOf("부천금매입") >= 0 && title.indexOf("부천금매입") <= 8));
+assert.equal(requestedGoldBuyRetitledReview.selectedTitle, requestedGoldBuyRetitledTitles[0]);
 
 const productReviewMakerSource = readFileSync(new URL("../frontend/src/pages/ProductReviewMaker.jsx", import.meta.url), "utf8");
 assert.ok(productReviewMakerSource.indexOf("1. 최종 추천 제목") < productReviewMakerSource.indexOf("2. 제목 더보기"));
 assert.ok(productReviewMakerSource.indexOf("2. 제목 더보기") < productReviewMakerSource.indexOf("3. 블로그 본문"));
+assert.ok(productReviewMakerSource.indexOf("3. 블로그 본문") < productReviewMakerSource.indexOf("4. 업체/상품 정보 정리"));
+assert.ok(productReviewMakerSource.indexOf("4. 업체/상품 정보 정리") < productReviewMakerSource.indexOf("5. FAQ"));
+assert.ok(productReviewMakerSource.indexOf("5. FAQ") < productReviewMakerSource.indexOf("6. 해시태그"));
 assert.ok(productReviewMakerSource.includes('<ResultDetailSection title="2. 제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>'));
+assert.ok(productReviewMakerSource.includes("제목 다시 만들기"));
+assert.ok(productReviewMakerSource.includes("titleVariantSeed"));
+assert.ok(productReviewMakerSource.includes("blogBody: currentBlogBody"));
 assert.ok(!productReviewMakerSource.includes("1. 제목 후보 5개"));
 assert.ok(!productReviewMakerSource.includes("이런 분께 추천해요"));
 assert.ok(!productReviewMakerSource.includes("상세 분석 보기"));
+assert.ok(!productReviewMakerSource.includes("4. 사진 배치 가이드"));
 const resultToClipboardSource = productReviewMakerSource.slice(
   productReviewMakerSource.indexOf("const resultToClipboard"),
   productReviewMakerSource.indexOf("const imageKeywordsToClipboard")
 );
 assert.ok(!resultToClipboardSource.includes("titleCandidates"));
 assert.ok(!resultToClipboardSource.includes("제목 더보기"));
+assert.ok(!resultToClipboardSource.includes("사진 배치 가이드"));
+assert.ok(!resultToClipboardSource.includes("photoGuide"));
 
 const requestedFamilyCafePackageReview = createProductReviewDraft({
   mainKeyword: "부천 아이랑 갈만한 카페",
@@ -771,6 +792,10 @@ assert.ok(requestedDryShampooPackageReview.body.includes("운동"));
 assert.ok(requestedDryShampooPackageReview.body.includes("보송"));
 assert.ok(requestedDryShampooPackageReview.body.includes("휴대"));
 assert.ok(requestedDryShampooPackageReview.body.includes("향"));
+assert.ok(requestedDryShampooPackageReview.body.includes("[사진 삽입: 제품 전체 사진]"));
+assert.ok(requestedDryShampooPackageReview.body.includes("[사진 삽입: 사용 장면]"));
+assert.ok(requestedDryShampooPackageReview.body.includes("[사진 삽입: 상세 정보 사진]"));
+assert.ok(!/사진\s*\d|이미지\s*\d|업로드 파일/u.test(requestedDryShampooPackageReview.body));
 assert.ok(!requestedDryShampooPackageReview.body.includes("최종 검수표"));
 assert.ok(!forbiddenReviewGuidePattern.test(requestedDryShampooPackageReview.body));
 assert.deepEqual(

@@ -860,6 +860,11 @@ const getReviewProfile = (category) => {
   return profiles[category] || profiles.place;
 };
 
+const getTitleVariantIndex = (form = {}) => {
+  const parsed = Number.parseInt(form.titleVariantSeed ?? form.titleRefreshSeed ?? "0", 10);
+  return Number.isFinite(parsed) ? Math.abs(parsed) : 0;
+};
+
 const createExperienceTitleCandidates = (form = {}, category = inferReviewCategory(form)) => {
   const mainKeyword = getMainKeyword(form);
   const baseKeyword = getReviewTitleBase(mainKeyword);
@@ -869,6 +874,7 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
   const hasGoldSignal = /금값|금\s*시세|금시세|매입|금거래소/u.test(`${titleKeyword} ${memoText}`);
   const hasKidsCafeSignal = /아이|카페|좌석|음료/u.test(`${titleKeyword} ${memoText}`);
   const hasDryShampooSignal = /드라이샴푸|운동|떡진|보송|휴대/u.test(`${titleKeyword} ${memoText}`);
+  const titleVariantIndex = getTitleVariantIndex(form);
 
   const titleMap = {
     store: hasGoldSignal
@@ -967,7 +973,135 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
     ]
   };
 
-  return uniqueText(titleMap[category] || titleMap.place)
+  const titleVariantMap = {
+    store: hasGoldSignal
+      ? [
+          [
+            `${reviewKeyword} 시세 확인과 상담 기준 정리`,
+            `${titleKeyword} 처음 알아볼 때 본 응대 흐름 후기`,
+            `${titleKeyword} 방문 전 비교한 매입 기준과 설명`,
+            `${titleKeyword} 상담 전 체크한 시세와 확인 포인트`,
+            `${titleKeyword} 금값 오를 때 알아본 상담 기준`
+          ]
+        ]
+      : [
+          [
+            `${reviewKeyword} 응대 흐름과 확인할 기준 정리`,
+            `${titleKeyword} 처음 방문 전 살펴본 분위기 후기`,
+            `${titleKeyword} 알아볼 때 비교한 상담 기준`,
+            `${titleKeyword} 방문 전에 챙길 체크 포인트`,
+            `${titleKeyword} 처음 알아본 이유와 실제 느낌`
+          ]
+        ],
+    restaurant: hasKidsCafeSignal
+      ? [
+          [
+            `${reviewKeyword} 아이랑 가기 전 확인한 기준`,
+            `${titleKeyword} 가족 방문 전 살펴본 좌석 후기`,
+            `${titleKeyword} 알아볼 때 본 메뉴와 동선 기준`,
+            `${titleKeyword} 아이 동반 전에 볼 체크 포인트`,
+            `${titleKeyword} 주말 가족 카페로 본 이유`
+          ]
+        ]
+      : [
+          [
+            `${reviewKeyword} 메뉴와 주차 기준 정리`,
+            `${titleKeyword} 처음 가기 전 살펴본 식사 후기`,
+            `${titleKeyword} 알아볼 때 본 분위기와 메뉴 기준`,
+            `${titleKeyword} 방문 전에 비교한 체크 포인트`,
+            `${titleKeyword} 모임 장소로 살펴본 이유`
+          ]
+        ],
+    product: hasDryShampooSignal
+      ? [
+          [
+            `${reviewKeyword} 운동 후 보송함과 휴대성 정리`,
+            `${titleKeyword} 직접 써보며 느낀 향과 사용감`,
+            `${titleKeyword} 알아볼 때 본 운동 후 사용 기준`,
+            `${titleKeyword} 구매 전 비교한 장점과 아쉬운 점`,
+            `${titleKeyword} 운동 가방에 넣기 좋은 이유와 후기`
+          ]
+        ]
+      : [
+          [
+            `${reviewKeyword} 사용감과 구매 기준 정리`,
+            `${titleKeyword} 직접 써보며 느낀 장점 후기`,
+            `${titleKeyword} 알아볼 때 본 성분과 사용 기준`,
+            `${titleKeyword} 구매 전에 비교한 체크 포인트`,
+            `${titleKeyword} 내 루틴에 맞는지 살펴본 이유`
+          ]
+        ],
+    education: [
+      [
+        `${reviewKeyword} 수업 흐름과 준비 기준 정리`,
+        `${titleKeyword} 처음 듣기 전 살펴본 강의 후기`,
+        `${titleKeyword} 알아볼 때 본 커리큘럼과 일정 기준`,
+        `${titleKeyword} 수강 전에 비교한 체크 포인트`,
+        `${titleKeyword} 초보자가 먼저 확인한 이유`
+      ]
+    ],
+    hospital: [
+      [
+        `${reviewKeyword} 접수 흐름과 예약 기준 정리`,
+        `${titleKeyword} 처음 방문 전 살펴본 상담 후기`,
+        `${titleKeyword} 알아볼 때 본 안내와 대기 기준`,
+        `${titleKeyword} 방문 전에 비교한 체크 포인트`,
+        `${titleKeyword} 처음 진료 전 확인한 이유`
+      ]
+    ],
+    service: [
+      [
+        `${reviewKeyword} 상담 과정과 이용 기준 정리`,
+        `${titleKeyword} 처음 맡기기 전 살펴본 진행 후기`,
+        `${titleKeyword} 알아볼 때 본 비용과 일정 기준`,
+        `${titleKeyword} 신청 전에 비교한 체크 포인트`,
+        `${titleKeyword} 이용 전 먼저 확인한 이유`
+      ]
+    ],
+    travel: [
+      [
+        `${reviewKeyword} 동선과 여행 기준 정리`,
+        `${titleKeyword} 처음 가기 전 살펴본 여행 후기`,
+        `${titleKeyword} 알아볼 때 본 코스와 분위기 기준`,
+        `${titleKeyword} 떠나기 전에 비교한 체크 포인트`,
+        `${titleKeyword} 사진 보며 먼저 확인한 이유`
+      ]
+    ],
+    experience: [
+      [
+        `${reviewKeyword} 체험 흐름과 준비 기준 정리`,
+        `${titleKeyword} 처음 참여 전 살펴본 체험 후기`,
+        `${titleKeyword} 알아볼 때 본 준비물과 진행 기준`,
+        `${titleKeyword} 체험 전에 비교한 체크 포인트`,
+        `${titleKeyword} 직접 해보기 전 확인한 이유`
+      ]
+    ],
+    "kids-place": [
+      [
+        `${reviewKeyword} 아이 반응과 동선 기준 정리`,
+        `${titleKeyword} 아이랑 가기 전 살펴본 체험 후기`,
+        `${titleKeyword} 알아볼 때 본 대기 공간과 동선`,
+        `${titleKeyword} 방문 전에 비교한 가족 체크 포인트`,
+        `${titleKeyword} 주말 아이와 갈 곳으로 본 이유`
+      ]
+    ],
+    place: [
+      [
+        `${reviewKeyword} 동선과 방문 기준 정리`,
+        `${titleKeyword} 처음 가기 전 살펴본 방문 후기`,
+        `${titleKeyword} 알아볼 때 본 분위기와 편의 기준`,
+        `${titleKeyword} 방문 전에 비교한 체크 포인트`,
+        `${titleKeyword} 직접 가보기 전 확인한 이유`
+      ]
+    ]
+  };
+  const variantSets = titleVariantMap[category] || titleVariantMap.place || [];
+  const sourceTitles =
+    titleVariantIndex > 0 && variantSets.length > 0
+      ? variantSets[(titleVariantIndex - 1) % variantSets.length]
+      : titleMap[category] || titleMap.place;
+
+  return uniqueText(sourceTitles)
     .map((title) =>
       title
         .replace(/인생|무조건|대박|효과\s*보장|완전\s*추천/gu, "")
@@ -1786,6 +1920,60 @@ const createPhotoGuideItems = (imageSuggestions = [], form = {}) =>
     };
   });
 
+const PHOTO_INSERT_LABELS = {
+  product: ["제품 전체 사진", "사용 장면", "상세 정보 사진"],
+  store: ["매장 외관", "내부 분위기", "상담 공간 또는 제품 진열"],
+  restaurant: ["매장 외관", "메뉴 또는 주문 장면", "내부 분위기"],
+  education: ["강의 안내 이미지", "수업 분위기", "커리큘럼 이미지"],
+  hospital: ["외관 또는 입구", "접수 공간", "안내 정보"],
+  service: ["상담 전 확인 자료", "진행 과정", "결과 확인 장면"],
+  travel: ["여행지 첫 장면", "이동 동선", "기억에 남은 장소"],
+  experience: ["체험 장소 첫 장면", "체험 과정", "결과물 또는 기억 장면"],
+  "kids-place": ["입구 또는 전체 공간", "체험 공간", "부모 대기 공간"],
+  place: ["대표 공간", "체험 핵심 장면", "동선 또는 시설 사진"]
+};
+
+const createPhotoInsertMarkers = (category = "place") =>
+  (PHOTO_INSERT_LABELS[category] || PHOTO_INSERT_LABELS.place)
+    .slice(0, 3)
+    .map((label) => `[사진 삽입: ${label}]`);
+
+const insertPhotoMarkersIntoBody = (body = "", category = "place") => {
+  const normalized = normalizeBody(body);
+  if (!normalized || normalized.includes("[사진 삽입:")) return normalized;
+
+  const paragraphs = normalized
+    .split(/\n{2,}/u)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const markers = createPhotoInsertMarkers(category);
+
+  if (paragraphs.length <= 2) {
+    return normalizeBody([paragraphs[0], markers[0], ...paragraphs.slice(1), ...markers.slice(1)].join("\n\n"));
+  }
+
+  const positions = Array.from(
+    new Set([
+      Math.min(1, paragraphs.length - 1),
+      Math.min(Math.max(2, Math.floor(paragraphs.length / 2)), paragraphs.length - 1),
+      Math.min(Math.max(3, paragraphs.length - 2), paragraphs.length - 1)
+    ])
+  );
+  const result = [];
+  let markerIndex = 0;
+
+  paragraphs.forEach((paragraph, index) => {
+    result.push(paragraph);
+
+    if (positions.includes(index) && markers[markerIndex]) {
+      result.push(markers[markerIndex]);
+      markerIndex += 1;
+    }
+  });
+
+  return normalizeBody([...result, ...markers.slice(markerIndex)].join("\n\n"));
+};
+
 const getInfoValue = (value = "") => text(value) || "[확인 필요]";
 
 const createRestaurantInfoSummary = (form = {}) => {
@@ -2587,7 +2775,7 @@ const createPublishableReviewBody = ({
     body = normalizeBody([body, ...createNaturalReviewFinishingSections(form, category)].join("\n\n"));
   }
 
-  return body;
+  return insertPhotoMarkersIntoBody(body, category);
 };
 
 const createProductReviewContentPackage = ({
