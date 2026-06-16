@@ -40,14 +40,21 @@ const initialForm = {
   sponsorshipType: "",
   avoidWords: "무조건, 보장, 완벽, 즉시효과",
   tone: "친근한",
-  targetLength: "3000",
+  targetLengthOption: "auto",
+  targetLength: "auto",
   selectedTitle: ""
 };
 
-const emptyResult = {
+const createGenerationId = () => `naver-review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const createEmptyResult = (generationId = "") => ({
+  generationId,
   category: "",
   titles: [],
+  titleCandidates: [],
+  finalTitle: "",
   selectedTitle: "",
+  mainKeyword: "",
   body: "",
   hashtags: [],
   imageSuggestions: [],
@@ -56,8 +63,13 @@ const emptyResult = {
   searchKeywords: [],
   closingParagraph: "",
   contentPackage: null,
-  bodyLength: 0
-};
+  bodyLength: 0,
+  qualityScore: null,
+  qualityIssues: [],
+  qualityChecks: [],
+  regeneratedTitles: [],
+  titleRegenerationState: "idle"
+});
 
 const toneOptions = ["친근한", "차분한", "전문적인", "활기찬"];
 const reviewCategoryOptions = [
@@ -74,6 +86,12 @@ const reviewCategoryOptions = [
   { value: "place", label: "장소 후기" }
 ];
 const sponsorshipOptions = ["직접 구매", "제품 제공", "식사권 제공", "협찬/체험단"];
+const targetLengthOptions = [
+  { value: "auto", label: "자동 추천", description: "입력량에 맞춰 자연스럽게 작성" },
+  { value: "short", label: "짧게", description: "약 1000~1500자" },
+  { value: "medium", label: "보통", description: "약 1800~2500자" },
+  { value: "long", label: "길게", description: "약 2800~3500자" }
+];
 const MAX_REVIEW_IMAGES = 10;
 const supportedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -108,6 +126,7 @@ const infoFieldKeys = new Set(fieldLabels.map(([field]) => field));
 const stripImageMarkers = (body = "") =>
   String(body || "")
     .replace(/\n{0,2}\[여기에 이미지 \d+을 넣어주세요[^\]]*\]/gu, "")
+    .replace(/\n{0,2}\[사진 삽입:[^\]]+\]/gu, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
@@ -125,22 +144,95 @@ const formatFaqItems = (items = []) =>
 const formatChecklistItems = (items = []) =>
   items.map((item) => `- ${item.label}: ${item.detail}`).join("\n");
 
-const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
+const getCurrentPackageData = (result = {}) => {
   const packageData = result.contentPackage;
+  if (!packageData) return {};
+  if (result.generationId && packageData.generationId && result.generationId !== packageData.generationId) return {};
+  return packageData;
+};
+
+const getResultTitleCandidates = (result = {}) => {
+  const packageData = getCurrentPackageData(result);
+  return result.titleCandidates || result.titles || packageData.titleCandidates || [];
+};
+
+const getResultFinalTitle = (result = {}) => {
+  const titleCandidates = getResultTitleCandidates(result);
+  const packageData = getCurrentPackageData(result);
+  return result.finalTitle || result.selectedTitle || packageData.finalRecommendedTitle || titleCandidates[0] || "";
+};
+
+const getResultBody = (result = {}) => {
+  const packageData = getCurrentPackageData(result);
+  return result.body || packageData.blogBody || "";
+};
+
+const getResultMainKeyword = (result = {}) => {
+  const packageData = getCurrentPackageData(result);
+  return result.mainKeyword || packageData.mainKeyword || "";
+};
+
+const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = null) => {
+  const nextGenerationId = generationId || draft.generationId || draft.contentPackage?.generationId || "";
+  const packageData = draft.contentPackage || {};
+  const titleCandidates = draft.titleCandidates || draft.titles || packageData.titleCandidates || [];
+  const finalTitle = draft.finalTitle || draft.selectedTitle || packageData.finalRecommendedTitle || titleCandidates[0] || "";
+  const body = draft.body || packageData.blogBody || "";
+  const mainKeyword = draft.mainKeyword || packageData.mainKeyword || "";
+  const bodyLength = body.replace(/\s+/g, "").length;
+  const qualityScore = draft.qualityScore ?? packageData.qualityScore ?? null;
+  const qualityIssues = draft.qualityIssues || packageData.qualityIssues || [];
+  const qualityChecks = draft.qualityChecks || packageData.qualityChecks || [];
+
+  return {
+    ...draft,
+    generationId: nextGenerationId,
+    finalTitle,
+    selectedTitle: finalTitle,
+    titleCandidates,
+    titles: titleCandidates,
+    mainKeyword,
+    body,
+    bodyLength,
+    qualityScore,
+    qualityIssues,
+    qualityChecks,
+    sourcePayload: sourcePayload || draft.sourcePayload || null,
+    contentPackage: draft.contentPackage
+      ? {
+          ...draft.contentPackage,
+          generationId: nextGenerationId,
+          finalRecommendedTitle: finalTitle,
+          titleCandidates,
+          mainKeyword,
+          blogBody: body,
+          qualityScore,
+          qualityIssues,
+          qualityChecks
+        }
+      : null
+  };
+};
+
+const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
+  const packageData = getCurrentPackageData(result);
+  const finalTitle = getResultFinalTitle(result);
+  const body = getResultBody(result);
+  const hashtags = packageData.hashtags || result.hashtags || [];
 
   if (packageData) {
     return [
       "최종 추천 제목",
-      packageData.finalRecommendedTitle || result.selectedTitle,
+      finalTitle,
       "",
       "블로그 본문",
-      includeImageMarkers ? packageData.blogBody : stripImageMarkers(packageData.blogBody),
+      includeImageMarkers ? body : stripImageMarkers(body),
       "",
       "FAQ",
       formatFaqItems(packageData.faqItems || []),
       "",
       "해시태그",
-      (packageData.hashtags || result.hashtags || []).join(" ")
+      hashtags.join(" ")
     ]
       .filter((line) => line !== undefined && line !== null)
       .join("\n")
@@ -149,13 +241,13 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
 
   return [
     "최종 추천 제목",
-    result.selectedTitle,
+    finalTitle,
     "",
     "블로그 본문",
-    includeImageMarkers ? result.body : stripImageMarkers(result.body),
+    includeImageMarkers ? body : stripImageMarkers(body),
     "",
     "해시태그",
-    result.hashtags.join(" ")
+    hashtags.join(" ")
   ]
     .filter((line) => line !== undefined && line !== null)
     .join("\n")
@@ -205,7 +297,10 @@ const mergeTextBlocks = (...blocks) =>
   ).join("\n");
 
 const reviewTopicTailPattern =
-  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리)$/u;
+  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리|방법)$/u;
+
+const mainKeywordTailPattern =
+  /\s*(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|후기|리뷰|정리|추천|방법)$/u;
 
 const stripReviewTopicTail = (value = "") => {
   let current = String(value ?? "").trim();
@@ -219,18 +314,46 @@ const stripReviewTopicTail = (value = "") => {
   return current;
 };
 
-const deriveMainKeywordFromTopic = (value = "") =>
-  stripReviewTopicTail(value)
-    .replace(/\s*(?:직접\s*)?(?:써본|사용해본|다녀온|방문한|참여한)\s*$/u, "")
-    .replace(/\s+/g, " ")
+const stripMainKeywordParticle = (value = "") => {
+  const current = String(value ?? "").trim();
+  if (!current) return "";
+
+  if (/의의$/u.test(current)) return current.slice(0, -1).trim();
+  if (/\s의$/u.test(current)) return current.replace(/\s의$/u, "").trim();
+
+  return current
+    .replace(/\s*(?:에서|으로|로)$/u, "")
+    .replace(/\s*(?:은|는|이|가|을|를)$/u, "")
     .trim();
+};
+
+const normalizeMainKeywordInput = (value = "") => {
+  let current = String(value ?? "").trim().replace(/\s+/g, " ");
+
+  for (let index = 0; index < 5; index += 1) {
+    const next = stripMainKeywordParticle(current.replace(mainKeywordTailPattern, "").trim());
+    if (next === current) break;
+    current = next;
+  }
+
+  return current.replace(/\s+/g, " ").trim();
+};
+
+const deriveMainKeywordFromTopic = (value = "") =>
+  normalizeMainKeywordInput(
+    stripReviewTopicTail(value)
+      .replace(/\s*(?:직접\s*)?(?:써본|사용해본|다녀온|방문한|참여한)\s*$/u, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 
 export default function ProductReviewMaker() {
   const pasteAreaRef = useRef(null);
   const imagesRef = useRef([]);
+  const activeGenerationIdRef = useRef("");
   const [form, setForm] = useState(initialForm);
   const [images, setImages] = useState([]);
-  const [result, setResult] = useState(emptyResult);
+  const [result, setResult] = useState(() => createEmptyResult());
   const [status, setStatus] = useState("idle");
   const [ocrStatus, setOcrStatus] = useState("idle");
   const [ocrMessage, setOcrMessage] = useState("");
@@ -247,7 +370,7 @@ export default function ProductReviewMaker() {
     [form.mainKeyword, form.productName]
   );
   const resolvedMainKeyword = useMemo(
-    () => form.mainKeyword.trim() || deriveMainKeywordFromTopic(form.productName),
+    () => normalizeMainKeywordInput(form.mainKeyword) || deriveMainKeywordFromTopic(form.productName),
     [form.mainKeyword, form.productName]
   );
   const hasSeedInput = useMemo(
@@ -420,7 +543,7 @@ export default function ProductReviewMaker() {
       ocrText: item.ocrText
     }));
 
-  const createReviewPayload = (selectedTitle = "") => {
+  const createReviewPayload = ({ selectedTitle = "", generationId = result.generationId } = {}) => {
     const imageContext = getImageContext();
     const imageText = mergeTextBlocks(
       ...imageContext.map((item) =>
@@ -439,7 +562,10 @@ export default function ProductReviewMaker() {
       mainKeyword,
       keyword: mainKeyword,
       productInfoText: mergeTextBlocks(form.productInfoText, imageText),
-      selectedTitle: selectedTitle || form.selectedTitle,
+      selectedTitle: selectedTitle || "",
+      targetLengthOption: form.targetLengthOption || "auto",
+      targetLength: form.targetLengthOption || form.targetLength || "auto",
+      generationId,
       imageContext,
       imageCount: images.length
     };
@@ -511,27 +637,49 @@ export default function ProductReviewMaker() {
     }
   };
 
-  const generateReview = (selectedTitle = "") => {
+  const generateReview = () => {
     if (!isReady) return;
 
-    const payload = createReviewPayload(selectedTitle);
-    const draft = createProductReviewDraft(payload);
-
-    setResult(draft);
-    setForm((current) => ({ ...current, selectedTitle: draft.selectedTitle }));
-    setStatus("generated");
+    const generationId = createGenerationId();
+    activeGenerationIdRef.current = generationId;
+    setResult(createEmptyResult(generationId));
+    setForm((current) => ({ ...current, selectedTitle: "" }));
+    setCopied("");
+    setStatus("generating");
     setDraftId("");
     setDraftMessage("");
+
+    const payload = createReviewPayload({ selectedTitle: "", generationId });
+    window.setTimeout(() => {
+      if (activeGenerationIdRef.current !== generationId) return;
+
+      const draft = normalizeReviewResult(
+        {
+          ...createProductReviewDraft(payload),
+          generationId
+        },
+        generationId,
+        payload
+      );
+
+      setResult(draft);
+      setForm((current) => ({ ...current, selectedTitle: draft.finalTitle }));
+      setStatus("generated");
+      setDraftId("");
+      setDraftMessage("");
+    }, 0);
   };
 
   const selectTitle = (title) => {
     setForm((current) => ({ ...current, selectedTitle: title }));
     setResult((current) => ({
       ...current,
+      finalTitle: title,
       selectedTitle: title,
       contentPackage: current.contentPackage
         ? {
             ...current.contentPackage,
+            generationId: current.generationId,
             finalRecommendedTitle: title
           }
         : current.contentPackage
@@ -544,29 +692,39 @@ export default function ProductReviewMaker() {
   const regenerateTitles = () => {
     if (!hasResult) return;
 
-    const currentBlogBody = result.contentPackage?.blogBody || result.body;
+    const currentBlogBody = getResultBody(result);
     const nextTitleVariantSeed = Number(result.contentPackage?.titleVariantSeed || 0) + 1;
-    const draft = createProductReviewDraft({
-      ...createReviewPayload(""),
+    const basePayload = result.sourcePayload || createReviewPayload({ selectedTitle: "", generationId: result.generationId });
+    const draft = normalizeReviewResult(createProductReviewDraft({
+      ...basePayload,
       selectedTitle: "",
+      generationId: result.generationId,
       titleVariantSeed: nextTitleVariantSeed
-    });
-    const nextTitles = draft.contentPackage?.titleCandidates || draft.titles || [];
-    const nextFinalTitle = draft.contentPackage?.finalRecommendedTitle || draft.selectedTitle || nextTitles[0] || result.selectedTitle;
+    }), result.generationId, { ...basePayload, titleVariantSeed: nextTitleVariantSeed });
+    const nextTitles = draft.titleCandidates || [];
+    const nextFinalTitle = draft.finalTitle || nextTitles[0] || getResultFinalTitle(result);
 
     setForm((current) => ({ ...current, selectedTitle: nextFinalTitle }));
     setResult((current) => ({
       ...current,
+      finalTitle: nextFinalTitle,
       titles: nextTitles,
+      titleCandidates: nextTitles,
+      regeneratedTitles: nextTitles,
+      titleRegenerationState: "generated",
       selectedTitle: nextFinalTitle,
       body: currentBlogBody,
       bodyLength: currentBlogBody.replace(/\s+/g, "").length,
+      generationId: current.generationId,
+      sourcePayload: { ...basePayload, titleVariantSeed: nextTitleVariantSeed },
       contentPackage: current.contentPackage
         ? {
             ...current.contentPackage,
+            generationId: current.generationId,
             titleCandidates: nextTitles,
             finalRecommendedTitle: nextFinalTitle,
             blogBody: currentBlogBody,
+            mainKeyword: current.mainKeyword,
             titleVariantSeed: nextTitleVariantSeed
           }
         : current.contentPackage
@@ -582,9 +740,9 @@ export default function ProductReviewMaker() {
 
     const saved = saveDraft(
       {
-        ...createReviewPayload(result.selectedTitle),
+        ...createReviewPayload({ selectedTitle: getResultFinalTitle(result), generationId: result.generationId }),
         keyword: resolvedMainKeyword || reviewTopic,
-        targetLengthOption: form.targetLength,
+        targetLengthOption: form.targetLengthOption || "auto",
         customTargetLength: form.targetLength
       },
       {
@@ -603,27 +761,32 @@ export default function ProductReviewMaker() {
   const copyText = async (mode) => {
     if (!hasResult) return;
 
-    const packageData = result.contentPackage;
+    const currentPackageData = getCurrentPackageData(result);
+    const finalTitle = getResultFinalTitle(result);
+    const titleCandidates = getResultTitleCandidates(result);
+    const blogBody = getResultBody(result);
+    const mainKeyword = getResultMainKeyword(result) || reviewTopic;
+    const hashtags = currentPackageData.hashtags || result.hashtags || [];
     const copyValueByMode = {
-      mainKeyword: packageData?.mainKeyword || reviewTopic,
-      secondaryKeywords: linesToClipboard(packageData?.secondaryKeywords || []),
-      searchIntent: formatObjectSummary(packageData?.searchIntentAnalysis || {}),
-      homeFeed: formatObjectSummary(packageData?.homeFeedClickPoint || {}),
-      body: packageData?.blogBody || result.body,
-      titles: linesToClipboard(packageData?.titleCandidates || result.titles.slice(0, 5)),
-      finalTitle: packageData?.finalRecommendedTitle || result.selectedTitle,
-      openings: linesToClipboard(packageData?.openingSentenceCandidates || []),
-      hashtags: result.hashtags.join(" "),
+      mainKeyword,
+      secondaryKeywords: linesToClipboard(currentPackageData?.secondaryKeywords || []),
+      searchIntent: formatObjectSummary(currentPackageData?.searchIntentAnalysis || {}),
+      homeFeed: formatObjectSummary(currentPackageData?.homeFeedClickPoint || {}),
+      body: blogBody,
+      titles: linesToClipboard(titleCandidates.slice(0, 5)),
+      finalTitle,
+      openings: linesToClipboard(currentPackageData?.openingSentenceCandidates || []),
+      hashtags: hashtags.join(" "),
       thumbnail: linesToClipboard(result.thumbnailTexts),
       keywords: result.searchKeywords.join(", "),
       closing: result.closingParagraph,
-      images: packageData?.photoGuide
-        ? packageData.photoGuide.map((item, index) => `${index + 1}. ${item.marker}\n${item.guide}`).join("\n\n")
+      images: currentPackageData?.photoGuide
+        ? currentPackageData.photoGuide.map((item, index) => `${index + 1}. ${item.marker}\n${item.guide}`).join("\n\n")
         : imageKeywordsToClipboard(result.imageSuggestions),
-      info: formatKeyValueItems(packageData?.infoSummary || []),
-      recommended: linesToClipboard(packageData?.recommendedFor || []),
-      faq: formatFaqItems(packageData?.faqItems || []),
-      checklist: formatChecklistItems(packageData?.finalChecklist || []),
+      info: formatKeyValueItems(currentPackageData?.infoSummary || []),
+      recommended: linesToClipboard(currentPackageData?.recommendedFor || []),
+      faq: formatFaqItems(currentPackageData?.faqItems || []),
+      checklist: formatChecklistItems(currentPackageData?.finalChecklist || []),
       full: resultToClipboard(result, { includeImageMarkers: true })
     };
     const value = copyValueByMode[mode] || copyValueByMode.full;
@@ -813,6 +976,21 @@ export default function ProductReviewMaker() {
                 </label>
 
                 <label className="block">
+                  <FieldLabel>목표 글자수</FieldLabel>
+                  <select
+                    value={form.targetLengthOption}
+                    onChange={(event) => updateForm("targetLengthOption", event.target.value)}
+                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
+                  >
+                    {targetLengthOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label} - {option.description}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block">
                   <FieldLabel>협찬 여부</FieldLabel>
                   <select
                     value={form.sponsorshipType}
@@ -871,7 +1049,9 @@ export default function ProductReviewMaker() {
           {hasResult && (
             <div className="mt-5 space-y-5">
               <NaverResultSections
+                key={result.generationId || "empty-result"}
                 result={result}
+                images={images}
                 copied={copied}
                 copyText={copyText}
                 selectTitle={selectTitle}
@@ -883,7 +1063,7 @@ export default function ProductReviewMaker() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                   <button
                     type="button"
-                    onClick={() => generateReview(result.selectedTitle)}
+                    onClick={generateReview}
                     className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-white px-3 text-xs font-bold text-ink/55 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.06)] transition hover:text-moss"
                   >
                     <RefreshCw size={14} aria-hidden="true" />
@@ -910,22 +1090,24 @@ export default function ProductReviewMaker() {
   );
 }
 
-function NaverResultSections({ result, copied, copyText, selectTitle, regenerateTitles, setResult, setForm }) {
-  const packageData = result.contentPackage || {};
-  const titleCandidates = packageData.titleCandidates || result.titles || [];
-  const finalTitle = packageData.finalRecommendedTitle || result.selectedTitle;
-  const blogBody = packageData.blogBody || result.body;
+function NaverResultSections({ result, images = [], copied, copyText, selectTitle, regenerateTitles, setResult, setForm }) {
+  const packageData = getCurrentPackageData(result);
+  const titleCandidates = getResultTitleCandidates(result);
+  const finalTitle = getResultFinalTitle(result);
+  const blogBody = getResultBody(result);
   const hashtags = packageData.hashtags || result.hashtags || [];
-  const mainKeyword = packageData.mainKeyword || result.mainKeyword || "";
+  const mainKeyword = getResultMainKeyword(result);
   const bodyLength = blogBody.replace(/\s+/g, "").length;
 
   const updateSelectedTitle = (title) => {
     setResult((current) => ({
       ...current,
+      finalTitle: title,
       selectedTitle: title,
       contentPackage: current.contentPackage
         ? {
             ...current.contentPackage,
+            generationId: current.generationId,
             finalRecommendedTitle: title
           }
         : current.contentPackage
@@ -942,6 +1124,7 @@ function NaverResultSections({ result, copied, copyText, selectTitle, regenerate
       contentPackage: current.contentPackage
         ? {
             ...current.contentPackage,
+            generationId: current.generationId,
             blogBody: body
           }
         : current.contentPackage
@@ -1050,7 +1233,10 @@ function NaverResultSections({ result, copied, copyText, selectTitle, regenerate
             {copied === "body" ? <Check size={14} aria-hidden="true" /> : <Clipboard size={14} aria-hidden="true" />}
             {copied === "body" ? "복사됨" : "본문 복사"}
           </button>
-        </div>
+          </div>
+          {images.length > 0 && (
+            <BlogBodyPreview body={blogBody} images={images} />
+          )}
           <textarea
             value={blogBody}
             onChange={(event) => updateBody(event.target.value)}
@@ -1067,6 +1253,71 @@ function NaverResultSections({ result, copied, copyText, selectTitle, regenerate
           <KeywordChips items={hashtags} />
         </ResultDetailSection>
       </article>
+    </div>
+  );
+}
+
+const photoInsertMarkerPattern = /^\[사진 삽입:\s*(.+?)\]$/u;
+
+function BlogBodyPreview({ body = "", images = [] }) {
+  const paragraphs = String(body || "")
+    .split(/\n{2,}/u)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  let photoIndex = 0;
+
+  if (paragraphs.length === 0) return null;
+
+  return (
+    <div
+      data-testid="naver-body-preview"
+      className="mt-4 space-y-3 rounded-2xl border border-line/35 bg-[#fbfaf6] p-4"
+    >
+      <div className="flex items-center gap-2">
+        <Image size={16} className="text-moss" aria-hidden="true" />
+        <h5 className="text-sm font-bold text-ink/70">본문 미리보기</h5>
+      </div>
+      <div className="space-y-3">
+        {paragraphs.map((paragraph, index) => {
+          const markerMatch = paragraph.match(photoInsertMarkerPattern);
+
+          if (markerMatch) {
+            const image = images[photoIndex];
+            photoIndex += 1;
+
+            if (!image) return null;
+
+            return (
+              <figure
+                key={`${paragraph}-${index}`}
+                data-testid="inline-photo-preview"
+                className="overflow-hidden rounded-md border border-line bg-white shadow-[0_10px_24px_rgba(31,36,40,0.06)]"
+              >
+                <img src={image.url} alt={markerMatch[1]} className="h-52 w-full object-cover sm:h-64" />
+                <figcaption className="flex items-center justify-between gap-3 px-3 py-2 text-xs font-bold text-ink/55">
+                  <span>{markerMatch[1]}</span>
+                  <span className="shrink-0 text-moss">업로드 순서 {photoIndex}</span>
+                </figcaption>
+              </figure>
+            );
+          }
+
+          const looksLikeHeading = !/[.!?。요다]$/u.test(paragraph) && Array.from(paragraph).length <= 28;
+
+          return (
+            <p
+              key={`${paragraph}-${index}`}
+              className={`whitespace-pre-wrap text-sm leading-7 ${
+                looksLikeHeading
+                  ? "pt-2 font-bold text-moss"
+                  : "font-semibold text-ink/70"
+              }`}
+            >
+              {paragraph}
+            </p>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1140,8 +1391,8 @@ function KeywordChips({ items = [] }) {
 
   return (
     <div className="flex flex-wrap gap-2 rounded-xl bg-white/75 p-3 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.04)]">
-      {items.map((item) => (
-        <span key={item} className="rounded-md bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
+      {items.map((item, index) => (
+        <span key={`${item}-${index}`} className="rounded-md bg-moss/10 px-3 py-2 text-sm font-semibold text-moss">
           {item}
         </span>
       ))}

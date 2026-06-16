@@ -21,7 +21,10 @@ const toHashTag = (value) => {
 };
 
 const REVIEW_TOPIC_TAIL_PATTERN =
-  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리)$/u;
+  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리|방법)$/u;
+
+const MAIN_KEYWORD_TAIL_PATTERN =
+  /\s*(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|후기|리뷰|정리|추천|방법)$/u;
 
 const stripReviewSuffix = (value = "") => {
   let current = text(value);
@@ -35,11 +38,38 @@ const stripReviewSuffix = (value = "") => {
   return current;
 };
 
-const deriveMainKeywordFromTopic = (value = "") =>
-  stripReviewSuffix(value)
-    .replace(/\s*(?:직접\s*)?(?:써본|사용해본|다녀온|방문한|참여한)\s*$/u, "")
-    .replace(/\s+/g, " ")
+const stripMainKeywordParticle = (value = "") => {
+  const current = text(value);
+  if (!current) return "";
+
+  if (/의의$/u.test(current)) return current.slice(0, -1).trim();
+  if (/\s의$/u.test(current)) return current.replace(/\s의$/u, "").trim();
+
+  return current
+    .replace(/\s*(?:에서|으로|로)$/u, "")
+    .replace(/\s*(?:은|는|이|가|을|를)$/u, "")
     .trim();
+};
+
+const normalizeMainKeyword = (value = "") => {
+  let current = text(value).replace(/\s+/g, " ");
+
+  for (let index = 0; index < 5; index += 1) {
+    const next = stripMainKeywordParticle(current.replace(MAIN_KEYWORD_TAIL_PATTERN, "").trim());
+    if (next === current) break;
+    current = next;
+  }
+
+  return current.replace(/\s+/g, " ").trim();
+};
+
+const deriveMainKeywordFromTopic = (value = "") =>
+  normalizeMainKeyword(
+    stripReviewSuffix(value)
+      .replace(/\s*(?:직접\s*)?(?:써본|사용해본|다녀온|방문한|참여한)\s*$/u, "")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 
 const getReviewTitleBase = (value = "") => {
   const withoutSuffix = stripReviewSuffix(value);
@@ -157,14 +187,66 @@ const sanitizeReviewSourceText = (value = "") =>
     .replace(/\s+/g, " ")
     .trim();
 
-const normalizeTargetLength = (value) => {
+const normalizeNumericTargetLength = (value) => {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return DEFAULT_TARGET_LENGTH;
   return Math.min(Math.max(parsed, 600), 5000);
 };
 
+const normalizeTargetLengthOption = (form = {}) => {
+  const raw = text(form.targetLengthOption || form.targetLengthMode || form.bodyLengthOption || "");
+  const fromTargetLength = text(form.targetLength);
+  const value = (raw || (/^(?:auto|short|medium|normal|long|자동 추천|자동|짧게|보통|길게)$/iu.test(fromTargetLength) ? fromTargetLength : "")).toLowerCase();
+
+  if (/^(?:short|짧게)$/iu.test(value)) return "short";
+  if (/^(?:medium|normal|보통)$/iu.test(value)) return "medium";
+  if (/^(?:long|길게)$/iu.test(value)) return "long";
+  return "auto";
+};
+
+const hasExplicitNumericTargetLength = (form = {}) =>
+  Number.isFinite(Number.parseInt(form.targetLength, 10)) &&
+  !text(form.targetLengthOption || form.targetLengthMode || form.bodyLengthOption);
+
+const getTargetLengthSettings = (form = {}, category = inferReviewCategory(form)) => {
+  const memoCount = splitMemoLines(form.experienceMemo).length;
+  const imageCount = getImageCount(form);
+  const sparseInput = memoCount <= 4 && imageCount === 0;
+
+  if (hasExplicitNumericTargetLength(form)) {
+    const target = normalizeNumericTargetLength(form.targetLength);
+    return {
+      option: "custom",
+      target,
+      min: Math.max(900, target - 500),
+      max: Math.min(5000, target + 700)
+    };
+  }
+
+  const option = normalizeTargetLengthOption(form);
+
+  if (option === "short") return { option, target: 1300, min: 1000, max: 1500 };
+  if (option === "medium") return { option, target: 2200, min: 1800, max: 2500 };
+  if (option === "long") return { option, target: 3200, min: 2800, max: 3500 };
+
+  if (sparseInput && (category === "restaurant" || category === "cafe")) {
+    return { option, target: 1300, min: 1000, max: 1600 };
+  }
+
+  if (sparseInput) return { option, target: 1400, min: 1000, max: 1800 };
+
+  return {
+    option,
+    target: category === "product" ? 2200 : 2600,
+    min: 2200,
+    max: 3200
+  };
+};
+
+const normalizeTargetLength = (value) => normalizeNumericTargetLength(value);
+
 const getKeywordParts = (form = {}) =>
-  uniqueText(splitCommaList(form.mainKeyword || form.keyword, 5));
+  uniqueText(splitCommaList(form.mainKeyword || form.keyword, 5).map(normalizeMainKeyword));
 
 const getMainKeyword = (form = {}) =>
   getKeywordParts(form)[0] || deriveMainKeywordFromTopic(form.productName) || "상품 후기";
@@ -586,6 +668,7 @@ const createSituationSentence = (form = {}) => {
 const reviewCategoryValues = new Set([
   "product",
   "restaurant",
+  "cafe",
   "store",
   "education",
   "hospital",
@@ -593,8 +676,50 @@ const reviewCategoryValues = new Set([
   "travel",
   "experience",
   "kids-place",
+  "information",
+  "comparison",
   "place"
 ]);
+
+const reviewCategoryAliases = new Map([
+  ["상품 후기", "product"],
+  ["맛집 후기", "restaurant"],
+  ["카페 후기", "cafe"],
+  ["매장 방문 후기", "store"],
+  ["매장 후기", "store"],
+  ["병원/관리 후기", "hospital"],
+  ["병원/시술/관리 후기", "hospital"],
+  ["병원/시술 후기", "hospital"],
+  ["병원 후기", "hospital"],
+  ["관리 후기", "hospital"],
+  ["교육/강의 후기", "education"],
+  ["교육 후기", "education"],
+  ["강의 후기", "education"],
+  ["체험/클래스 후기", "experience"],
+  ["체험 후기", "experience"],
+  ["클래스 후기", "experience"],
+  ["아이와 갈만한 곳 후기", "kids-place"],
+  ["아이 동반 장소 후기", "kids-place"],
+  ["여행/숙소 후기", "travel"],
+  ["여행 후기", "travel"],
+  ["숙소 후기", "travel"],
+  ["서비스 이용 후기", "service"],
+  ["서비스 후기", "service"],
+  ["정보 정리형 글", "information"],
+  ["정보 정리형", "information"],
+  ["정보글", "information"],
+  ["구매 전 비교/체크리스트형 글", "comparison"],
+  ["구매 전 비교형", "comparison"],
+  ["비교형", "comparison"],
+  ["체크리스트형", "comparison"]
+]);
+
+const normalizeReviewCategoryValue = (value = "") => {
+  const normalized = text(value);
+  if (!normalized) return "";
+  if (reviewCategoryValues.has(normalized)) return normalized;
+  return reviewCategoryAliases.get(normalized) || "";
+};
 
 const getImageContextItems = (form = {}) =>
   Array.isArray(form.imageContext)
@@ -660,6 +785,12 @@ const getImageContextSummary = (form = {}, category = "place") => {
       : "사진을 함께 보니 방문 전 분위기와 메뉴 구성을 더 쉽게 떠올릴 수 있었어요";
   }
 
+  if (category === "cafe") {
+    return highlightText
+      ? `사진으로 ${highlightText}를 함께 보니 음료와 공간 분위기를 더 쉽게 떠올릴 수 있었어요`
+      : "사진을 함께 보니 좌석, 음료, 공간 분위기를 방문 전부터 더 쉽게 떠올릴 수 있었어요";
+  }
+
   if (category === "product") {
     return highlightText
       ? `사진으로 ${highlightText}를 보면서 사용 전 느낌을 조금 더 구체적으로 상상할 수 있었어요`
@@ -702,6 +833,12 @@ const getImageContextSummary = (form = {}, category = "place") => {
       : "사진을 함께 보니 아이가 머무를 공간과 보호자 동선을 미리 떠올리기 좋았어요";
   }
 
+  if (category === "information" || category === "comparison") {
+    return highlightText
+      ? `사진으로 ${highlightText}를 확인하니 기준을 정리할 때 참고하기 좋았어요`
+      : "";
+  }
+
   return highlightText
     ? `사진으로 ${highlightText}를 확인하니 방문 전 분위기가 더 잘 그려졌어요`
     : "사진을 함께 보니 처음 방문하는 사람도 분위기와 동선을 미리 떠올리기 좋았어요";
@@ -723,33 +860,71 @@ const getReviewSignalText = (form = {}) =>
     .filter(Boolean)
     .join(" ");
 
+const REVIEW_CATEGORY_SIGNAL_PATTERNS = {
+  product:
+    /제품|상품명|상품|샴푸|드라이샴푸|크림|세럼|앰플|패드|팩|보호대|수면양말|텀블러|가방|신발|패션|생활용품|착용|휴대|향|발림감|보송함|보송|효과|장점|아쉬운\s*점|떡진\s*머리|운동\s*후|사용감|제형|용량|성분/u,
+  restaurant:
+    /맛집|식당|음식점|메뉴|점심|저녁|회식|가족외식|방문\s*후기|양|맛|가격|웨이팅|직원\s*친절|중식|한식|양식|일식|파스타|피자|스테이크|고기|국밥|짬뽕|갈낙짬뽕|탕수육|어향가지/u,
+  cafe:
+    /카페|디저트|커피|음료|좌석|아이랑\s*카페|뷰\s*카페|조용한\s*카페|브런치|베이커리/u,
+  store:
+    /매장|방문|상담|사장님|응대|위치|외관|내부|금매입|금거래소|금은방|귀금속|금\s*시세|금시세|순금|돌반지|반지|목걸이|팔찌|아드님|2대째|이대째|수리|판매점|샵|주얼리|전문점|지점|공방/u,
+  hospital:
+    /병원|의원|피부관리|마사지|시술|접수|대기|설명|관리|예약|통증|회복|치과|한의원|피부과|정형외과|내과|검진|진료|의사|간호|처방|상담실/u,
+  education:
+    /강의|수업|클래스|커리큘럼|교수|강사|수강|교육|입문|초보자|교육\s*과정|수강\s*과정|강의\s*과정|실습|공개강의|학원|입찰\s*흐름/u,
+  experience:
+    /체험|원데이클래스|만들기|키즈체험|활동|참여|프로그램|준비물|전시|행사|축제|팝업|공연/u,
+  "kids-place":
+    /아이랑|아이와|가족|주말|체험관|키즈|놀이터|박물관|전시|실내|실외|부모|아이\s*반응|아이/u,
+  travel:
+    /여행|숙소|호텔|펜션|리조트|조식|체크인|객실|위치|뷰|이동|공항|항공|코스|해변|바다|산책|관광|가이드투어/u,
+  service:
+    /신청|상담|이용|예약|견적|설치|수리|청소|대행|배송|일정|비용|이사|렌탈|보험|세무|노무|컨설팅|A\/?S|에이에스|입주청소/u,
+  information:
+    /방법|기준|차이|뜻|정리|체크리스트|알아보기|비교|가이드|주의사항|처음\s*시작|시작하는\s*방법|초보자\s*기준/u,
+  comparison:
+    /비교|추천|고르는\s*법|구매\s*전|장단점|체크포인트|체크\s*포인트|선택\s*기준|구매\s*기준/u
+};
+
+const hasReviewIntent = (value = "") => /후기|방문|사용\s*후기|이용\s*후기|수강\s*후기|체험\s*후기/u.test(value);
+const hasCategorySignal = (signalText = "", category = "place") =>
+  (REVIEW_CATEGORY_SIGNAL_PATTERNS[category] || /$a/u).test(signalText);
+const STRONG_PRODUCT_REVIEW_PATTERN =
+  /수분크림|드라이샴푸|샴푸|화장품|크림|세럼|앰플|패드|팩|보호대|수면양말|텀블러|생활용품|상품명|제품명|사용감|발림감|제형|성분|용량/u;
+const STRONG_RESTAURANT_REVIEW_PATTERN =
+  /맛집|식당|음식점|메뉴|파스타|피자|스테이크|고기|국밥|짬뽕|갈낙짬뽕|탕수육|어향가지|중식|한식|양식|일식/u;
+const STRONG_STORE_REVIEW_PATTERN =
+  /금매입|금거래소|금은방|귀금속|금\s*시세|금시세|매입|사장님|아드님|2대째|이대째|주얼리|판매점|매장|샵/u;
+
 const inferReviewCategory = (form = {}) => {
-  const explicit = text(form.category);
-  if (reviewCategoryValues.has(explicit)) return explicit;
+  const explicit = normalizeReviewCategoryValue(form.category);
+  if (explicit) return explicit;
 
   const signalText = getReviewSignalText(form);
+  const topicText = [form.productName, form.mainKeyword, form.keyword].map(sanitizeReviewSourceText).filter(Boolean).join(" ");
+  const topicHasReviewIntent = hasReviewIntent(topicText);
 
-  if (/맛집|식당|중식|한식|양식|일식|카페|회식|메뉴|탕수육|어향가지|파스타|피자|스테이크|고기|디저트|커피|직원\s*친절|재방문/u.test(signalText)) {
-    return "restaurant";
+  if (hasCategorySignal(signalText, "comparison") && /구매\s*전|비교|고르는\s*법|선택\s*기준|장단점/u.test(topicText)) {
+    return "comparison";
   }
-  if (/아이|키즈|부모|체험공간|실내|놀이|육아|동반/u.test(signalText)) return "kids-place";
-  if (/학원|강의|수업|교육|클래스|강사|커리큘럼/u.test(signalText)) return "education";
-  if (/병원|의원|치과|한의원|피부과|정형외과|내과|검진|진료|접수|의사|간호|처방|상담실/u.test(signalText)) {
-    return "hospital";
+
+  if (hasCategorySignal(signalText, "information") && !topicHasReviewIntent) {
+    return "information";
   }
-  if (/여행|숙소|호텔|펜션|리조트|공항|항공|일정|코스|해변|바다|산책|관광|가이드투어/u.test(signalText)) {
-    return "travel";
-  }
-  if (/금거래소|금은방|귀금속|주얼리|금\s*시세|금시세|매입|순금|돌반지|반지|목걸이|팔찌|사장님|아드님|2대째|이대째|매장|전문점|지점|방문상담|판매점|공방/u.test(signalText)) {
-    return "store";
-  }
-  if (/서비스|상담|견적|수리|청소|이사|렌탈|보험|세무|노무|컨설팅|대행|A\/?S|에이에스|예약제/u.test(signalText)) {
-    return "service";
-  }
-  if (/체험|전시|원데이|프로그램|행사|축제|팝업|공연|클래스|공방/u.test(signalText)) return "experience";
-  if (/수분크림|크림|로션|세럼|샴푸|드라이샴푸|헤어|두피|보송|휴대|제품|상품|사용감|발림감|향|끈적|보습|성분|용량|패키지/u.test(signalText)) {
-    return "product";
-  }
+
+  if (hasCategorySignal(signalText, "cafe")) return "cafe";
+  if (hasCategorySignal(signalText, "kids-place") && /아이랑|아이와|체험관|키즈|놀이터|박물관|아이\s*반응|실내\s*체험/u.test(signalText)) return "kids-place";
+  if (STRONG_RESTAURANT_REVIEW_PATTERN.test(signalText)) return "restaurant";
+  if (STRONG_STORE_REVIEW_PATTERN.test(signalText)) return "store";
+  if (hasCategorySignal(signalText, "hospital")) return "hospital";
+  if (hasCategorySignal(signalText, "education")) return "education";
+  if (STRONG_PRODUCT_REVIEW_PATTERN.test(signalText) || hasCategorySignal(signalText, "product")) return "product";
+  if (hasCategorySignal(signalText, "restaurant")) return "restaurant";
+  if (hasCategorySignal(signalText, "travel")) return "travel";
+  if (hasCategorySignal(signalText, "service")) return "service";
+  if (hasCategorySignal(signalText, "store")) return "store";
+  if (hasCategorySignal(signalText, "experience")) return "experience";
   if (/장소|방문|주차|동선|공간/u.test(signalText)) return "place";
 
   return "experience";
@@ -758,7 +933,7 @@ const inferReviewCategory = (form = {}) => {
 const getReviewProfile = (category) => {
   const profiles = {
     restaurant: {
-      label: "맛집/카페 후기",
+      label: "맛집 후기",
       hashtagSeeds: ["맛집후기", "방문후기", "메뉴추천", "회식장소", "재방문기준"],
       imageSlots: [
         ["외관 또는 입구 사진", "방문 전 위치와 첫인상을 보여주는 사진"],
@@ -766,6 +941,17 @@ const getReviewProfile = (category) => {
         ["대표 메뉴 클로즈업", "맛과 양을 자연스럽게 설명할 수 있는 사진"],
         ["내부 분위기", "동행, 좌석, 회식 분위기를 보여주는 사진"],
         ["마무리 컷", "재방문 기준을 정리할 때 넣기 좋은 사진"]
+      ]
+    },
+    cafe: {
+      label: "카페 후기",
+      hashtagSeeds: ["카페후기", "카페방문", "디저트카페", "좌석분위기", "카페추천"],
+      imageSlots: [
+        ["카페 외관 또는 입구", "방문 전 위치와 첫인상을 보여주는 사진"],
+        ["음료 또는 디저트", "주문한 메뉴와 구성을 설명하기 좋은 사진"],
+        ["좌석과 내부 분위기", "머무는 동안의 분위기를 보여주는 사진"],
+        ["주차 또는 편의 정보", "방문 전 확인할 내용을 정리하기 좋은 사진"],
+        ["마무리 컷", "재방문 기준을 정리하기 좋은 사진"]
       ]
     },
     product: {
@@ -856,6 +1042,28 @@ const getReviewProfile = (category) => {
         ["안내 정보", "가격, 주차, 운영시간을 확인하기 좋은 사진"]
       ]
     },
+    information: {
+      label: "정보 정리형 글",
+      hashtagSeeds: ["정보정리", "초보자가이드", "방법정리", "체크리스트", "주의사항"],
+      imageSlots: [
+        ["핵심 요약 이미지", "개념과 흐름을 한눈에 보여주는 사진"],
+        ["기준 정리 이미지", "확인 기준을 정리하기 좋은 사진"],
+        ["체크리스트 이미지", "주의할 점을 보여주는 사진"],
+        ["예시 자료", "초보자가 이해하기 쉬운 참고 자료"],
+        ["마무리 요약", "핵심 기준을 다시 정리하는 사진"]
+      ]
+    },
+    comparison: {
+      label: "구매 전 비교형 글",
+      hashtagSeeds: ["구매전비교", "선택기준", "장단점정리", "체크포인트", "구매가이드"],
+      imageSlots: [
+        ["비교 대상 사진", "선택지를 한눈에 보여주는 사진"],
+        ["장점 정리 이미지", "좋았던 점을 설명하기 좋은 사진"],
+        ["아쉬운 점 확인 이미지", "구매 전 체크할 부분을 보여주는 사진"],
+        ["사용 상황 예시", "누구에게 맞는지 설명하기 좋은 사진"],
+        ["최종 기준 정리", "선택 기준을 마무리하기 좋은 사진"]
+      ]
+    },
     education: {
       label: "교육/강의 후기",
       hashtagSeeds: ["교육후기", "강의후기", "수업후기", "커리큘럼", "학습기록"],
@@ -880,6 +1088,7 @@ const getTitleVariantIndex = (form = {}) => {
 const SEO_TITLE_SUPPORT_PHRASES = {
   store: ["상담 분위기와 확인할 점", "방문 전 참고한 후기", "상담 기준 정리", "체크 포인트", "알아본 이유"],
   restaurant: ["방문 전 확인할 점", "가족 후기", "메뉴와 좌석 기준", "체크 포인트", "알아본 이유"],
+  cafe: ["공간 분위기와 확인할 점", "카페 방문 후기", "좌석과 메뉴 기준", "방문 체크", "알아본 이유"],
   product: ["사용감과 확인할 점", "직접 써본 후기", "구매 전 기준", "사용 상황 체크", "알아본 이유"],
   education: ["수업 흐름과 확인할 점", "강의 후기", "커리큘럼 기준", "준비 체크", "알아본 이유"],
   hospital: ["방문 전 확인할 점", "상담 후기", "예약 기준", "접수 체크", "궁금했던 이유"],
@@ -887,6 +1096,8 @@ const SEO_TITLE_SUPPORT_PHRASES = {
   travel: ["동선과 확인할 점", "여행 후기", "코스 기준", "방문 체크", "알아본 이유"],
   experience: ["체험 흐름과 확인할 점", "체험 후기", "준비물 기준", "참여 체크", "알아본 이유"],
   "kids-place": ["아이 반응과 확인할 점", "가족 후기", "체험 기준", "방문 체크", "알아본 이유"],
+  information: ["핵심 기준과 확인할 점", "초보자 정리", "주의사항 기준", "체크리스트", "알아본 이유"],
+  comparison: ["선택 기준과 확인할 점", "구매 전 비교", "장단점 기준", "체크 포인트", "알아본 이유"],
   place: ["방문 전 확인할 점", "직접 다녀온 후기", "이용 기준", "체크 포인트", "알아본 이유"]
 };
 
@@ -904,6 +1115,13 @@ const SEO_TITLE_EXPANSION_PHRASES = {
     "가기 전 알아두면 좋은 좌석 기준과 체크 포인트",
     "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
     "모임 장소로 알아본 이유와 방문 포인트"
+  ],
+  cafe: [
+    "방문 전 확인한 공간 분위기와 메뉴 포인트",
+    "직접 머물며 느낀 좌석과 음료 후기",
+    "가기 전 알아두면 좋은 주차와 좌석 기준",
+    "좋았던 점과 아쉬운 점을 나눠본 카페 후기",
+    "머물기 좋은 카페인지 알아본 이유와 포인트"
   ],
   product: [
     "사용 전 확인한 장점과 아쉬운 점",
@@ -954,6 +1172,20 @@ const SEO_TITLE_EXPANSION_PHRASES = {
     "좋았던 점과 아쉬운 점을 나눠본 실제 후기",
     "아이와 가볼 만한지 알아본 포인트"
   ],
+  information: [
+    "처음 시작 전 알아둘 기준과 핵심 정리",
+    "초보자 입장에서 정리한 흐름과 확인 포인트",
+    "놓치기 쉬운 기준과 주의사항 체크리스트",
+    "알아보기 전 비교하면 좋은 핵심 기준",
+    "검색 전 궁금한 내용을 한 번에 정리한 가이드"
+  ],
+  comparison: [
+    "구매 전 확인할 선택 기준과 체크 포인트",
+    "직접 비교하기 전 알아둘 장점과 아쉬운 점",
+    "고르기 전에 봐야 할 기준과 주의사항",
+    "누구에게 맞는지 나눠본 구매 전 비교",
+    "후회 줄이려고 먼저 확인한 선택 포인트"
+  ],
   place: [
     "방문 전 확인한 분위기와 동선 포인트",
     "직접 다녀오며 느낀 이용 흐름과 후기",
@@ -991,6 +1223,8 @@ const normalizeSeoTitleCandidate = (candidate = "", mainKeyword = "", category =
 
   const visibleLength = Array.from(title).length;
   const reviewTitle = withReviewTitleSuffix(keyword);
+  const nonReviewTitleCategories = new Set(["information", "comparison"]);
+  const titlePrefix = nonReviewTitleCategories.has(category) ? keyword : reviewTitle;
   const simpleReviewTitle = compact(title) === compact(reviewTitle);
 
   if (visibleLength < 28 || simpleReviewTitle) {
@@ -998,7 +1232,16 @@ const normalizeSeoTitleCandidate = (candidate = "", mainKeyword = "", category =
       (SEO_TITLE_EXPANSION_PHRASES[category] || SEO_TITLE_EXPANSION_PHRASES.place)[index] ||
       (SEO_TITLE_SUPPORT_PHRASES[category] || SEO_TITLE_SUPPORT_PHRASES.place)[index] ||
       "방문 전 확인한 기준과 포인트";
-    title = `${reviewTitle}｜${expansion}`;
+    title = nonReviewTitleCategories.has(category)
+      ? `${titlePrefix} ${expansion}`
+      : `${titlePrefix}｜${expansion}`;
+  }
+
+  if (Array.from(title).length < 28) {
+    const suffix = nonReviewTitleCategories.has(category)
+      ? "체크 포인트"
+      : "방문 전 체크 포인트까지 정리";
+    title = `${title} ${suffix}`;
   }
 
   return title.replace(/\s+/g, " ").trim();
@@ -1013,6 +1256,9 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
   const hasGoldSignal = /금값|금\s*시세|금시세|매입|금거래소/u.test(`${titleKeyword} ${memoText}`);
   const hasKidsCafeSignal = /아이|카페|좌석|음료/u.test(`${titleKeyword} ${memoText}`);
   const hasDryShampooSignal = /드라이샴푸|운동|떡진|보송|휴대/u.test(`${titleKeyword} ${memoText}`);
+  const primaryRestaurantMenu = getPrimaryRestaurantMenu(form, memoText);
+  const restaurantMenuForTitle =
+    primaryRestaurantMenu && !titleKeyword.includes(primaryRestaurantMenu) ? primaryRestaurantMenu : "";
   const titleVariantIndex = getTitleVariantIndex(form);
 
   const titleMap = {
@@ -1031,7 +1277,15 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
           `${titleKeyword} 방문 전 봐야 할 체크 포인트`,
           `${titleKeyword} 처음 가기 전 궁금했던 이유와 후기`
         ],
-    restaurant: hasKidsCafeSignal
+    restaurant: restaurantMenuForTitle
+      ? [
+          `${reviewKeyword} ${restaurantMenuForTitle} 메뉴 중심으로 정리`,
+          `${titleKeyword} ${restaurantMenuForTitle} 후기 방문 전 참고할 점`,
+          `${restaurantMenuForTitle} 유명한 ${titleKeyword} 방문 후기 정리`,
+          `${titleKeyword} ${restaurantMenuForTitle} 메뉴가 궁금했던 곳 후기`,
+          `${titleKeyword} 가족 식사 전 확인할 점`
+        ]
+      : hasKidsCafeSignal
       ? [
           `${reviewKeyword} 아이 음료와 좌석 분위기 확인`,
           `${titleKeyword} 아이랑 방문 전 참고한 가족 후기`,
@@ -1046,6 +1300,13 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
           `${titleKeyword} 방문 전 봐야 할 식사 장소 체크 포인트`,
           `${titleKeyword} 모임 장소로 알아본 이유와 후기`
         ],
+    cafe: [
+      `${reviewKeyword} 공간 분위기와 방문 전 확인할 점`,
+      `${titleKeyword} 직접 머물며 느낀 음료와 좌석 후기`,
+      `${titleKeyword} 알아볼 때 확인한 메뉴와 주차 기준`,
+      `${titleKeyword} 방문 전 봐야 할 카페 체크 포인트`,
+      `${titleKeyword} 머물기 좋은지 알아본 이유와 후기`
+    ],
     product: hasDryShampooSignal
       ? [
           `${reviewKeyword} 운동 후 사용감과 확인할 점`,
@@ -1103,6 +1364,20 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
       `${titleKeyword} 방문 전 봐야 할 가족 체크 포인트`,
       `주말 아이와 갈 곳으로 ${titleKeyword} 알아본 이유`
     ],
+    information: [
+      `${titleKeyword} 처음 시작 전 확인할 핵심 기준`,
+      `${titleKeyword} 초보자 기준으로 정리한 흐름`,
+      `${titleKeyword} 알아볼 때 놓치기 쉬운 주의사항`,
+      `${titleKeyword} 체크리스트로 보는 선택 기준`,
+      `${titleKeyword} 궁금한 점을 먼저 정리한 이유`
+    ],
+    comparison: [
+      `${titleKeyword} 구매 전 확인할 선택 기준`,
+      `${titleKeyword} 비교하며 본 장점과 아쉬운 점`,
+      `${titleKeyword} 고르기 전 봐야 할 체크 포인트`,
+      `${titleKeyword} 누구에게 맞는지 나눠본 기준`,
+      `${titleKeyword} 후회 줄이려고 알아본 비교 포인트`
+    ],
     place: [
       `${reviewKeyword} 동선과 방문 전 확인할 점`,
       `${titleKeyword} 처음 가기 전 참고한 방문 후기`,
@@ -1132,7 +1407,17 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
             `${titleKeyword} 처음 알아본 이유와 실제 느낌`
           ]
         ],
-    restaurant: hasKidsCafeSignal
+    restaurant: restaurantMenuForTitle
+      ? [
+          [
+            `${reviewKeyword} ${restaurantMenuForTitle} 메뉴 기준 정리`,
+            `${titleKeyword} 처음 가기 전 본 ${restaurantMenuForTitle} 후기`,
+            `${restaurantMenuForTitle} 유명한 ${titleKeyword} 방문 전 참고할 점`,
+            `${titleKeyword} ${restaurantMenuForTitle} 메뉴 확인 포인트`,
+            `${titleKeyword} 식사 전 살펴본 메뉴 기준`
+          ]
+        ]
+      : hasKidsCafeSignal
       ? [
           [
             `${reviewKeyword} 아이랑 가기 전 확인한 기준`,
@@ -1151,6 +1436,15 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
             `${titleKeyword} 모임 장소로 살펴본 이유`
           ]
         ],
+    cafe: [
+      [
+        `${reviewKeyword} 좌석과 분위기 기준 정리`,
+        `${titleKeyword} 직접 머물며 살펴본 카페 후기`,
+        `${titleKeyword} 알아볼 때 본 음료와 주차 기준`,
+        `${titleKeyword} 방문 전에 비교한 체크 포인트`,
+        `${titleKeyword} 오래 머물기 좋은지 본 이유`
+      ]
+    ],
     product: hasDryShampooSignal
       ? [
           [
@@ -1224,6 +1518,24 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
         `${titleKeyword} 주말 아이와 갈 곳으로 본 이유`
       ]
     ],
+    information: [
+      [
+        `${titleKeyword} 초보자 기준 핵심 흐름 정리`,
+        `${titleKeyword} 처음 알아볼 때 본 기준과 주의점`,
+        `${titleKeyword} 시작 전 확인할 체크리스트`,
+        `${titleKeyword} 헷갈리는 부분을 나눈 가이드`,
+        `${titleKeyword} 검색 전에 먼저 정리한 이유`
+      ]
+    ],
+    comparison: [
+      [
+        `${titleKeyword} 구매 전 선택 기준 정리`,
+        `${titleKeyword} 비교하며 살펴본 장점과 단점`,
+        `${titleKeyword} 고르기 전 확인할 체크리스트`,
+        `${titleKeyword} 내 상황에 맞는지 보는 기준`,
+        `${titleKeyword} 후회 줄이려고 먼저 본 포인트`
+      ]
+    ],
     place: [
       [
         `${reviewKeyword} 동선과 방문 기준 정리`,
@@ -1290,6 +1602,13 @@ const createExperienceImageSuggestions = (form = {}, category = inferReviewCateg
         "내부 분위기 사진이 있으면 회식이나 모임 자리로 괜찮을지 판단하기 좋겠더라고요",
         "마무리 컷을 함께 보면 재방문 기준을 정리할 때 글 흐름이 더 부드러워져요"
       ],
+      cafe: [
+        "카페 외관 사진이 있으면 처음 방문할 때 위치와 분위기를 잡기 쉬워요",
+        "음료나 디저트 사진이 있으면 주문 구성을 자연스럽게 설명할 수 있어요",
+        "좌석과 내부 분위기 사진이 있으면 오래 머물기 괜찮은지 판단하기 좋아요",
+        "주차나 안내 정보 사진은 방문 전 확인할 부분을 정리할 때 도움이 됩니다",
+        "마무리 컷을 넣으면 재방문 기준을 차분하게 정리할 수 있어요"
+      ],
       product: [
         "제품 전체 사진을 보니 패키지와 첫인상을 한눈에 확인할 수 있었어요",
         "사용 장면 사진이 있으면 발림감이나 질감이 어떤지 더 쉽게 떠올릴 수 있었어요",
@@ -1338,6 +1657,20 @@ const createExperienceImageSuggestions = (form = {}, category = inferReviewCateg
         "동선 사진이 있으면 처음 가는 가족도 어디부터 움직이면 좋을지 감을 잡기 쉬워요",
         "부모 대기 공간 사진이 있으면 보호자가 기다리는 동안 편할지도 함께 확인할 수 있어요",
         "안내 정보 사진은 주차나 운영시간처럼 방문 전 확인할 부분을 정리할 때 도움이 됩니다"
+      ],
+      information: [
+        "요약 이미지가 있으면 처음 보는 사람도 핵심 흐름을 더 쉽게 잡을 수 있어요",
+        "기준 정리 이미지는 확인할 항목을 나눠 설명할 때 도움이 됩니다",
+        "체크리스트 이미지는 주의할 점을 빠르게 훑어보기 좋습니다",
+        "예시 자료가 있으면 초보자도 개념을 더 현실적으로 이해할 수 있어요",
+        "마무리 요약 이미지는 마지막 정리를 깔끔하게 보여주기 좋습니다"
+      ],
+      comparison: [
+        "비교 대상 사진이 있으면 선택지를 한눈에 보여주기 좋아요",
+        "장점 정리 이미지는 어떤 기준이 맞는지 설명할 때 도움이 됩니다",
+        "아쉬운 점 확인 이미지는 구매 전 체크할 부분을 자연스럽게 보여줘요",
+        "사용 상황 예시는 누구에게 맞는지 설명할 때 글 흐름을 살려줍니다",
+        "최종 기준 이미지는 선택 포인트를 정리하는 데 잘 맞습니다"
       ],
       place: [
         "대표 공간 사진을 보니 처음 방문했을 때의 분위기를 미리 떠올리기 좋았어요",
@@ -1407,6 +1740,11 @@ const countOccurrences = (value = "", needle = "") => {
   if (!needle) return 0;
 
   return String(value).split(needle).length - 1;
+};
+
+const regexTest = (pattern, value = "") => {
+  pattern.lastIndex = 0;
+  return pattern.test(value);
 };
 
 const getMemoLineMatching = (memoLines = [], pattern) =>
@@ -1616,7 +1954,7 @@ const getReviewObjectText = (keyword = "") => {
   return mainKeyword.endsWith("후기") ? `${mainKeyword}를` : `${mainKeyword} 후기를`;
 };
 
-const getMemoText = (memoLines = []) => memoLines.map(text).filter(Boolean).join(" ");
+const getMemoText = (memoLines = []) => memoLines.map(text).filter(Boolean).join("\n");
 
 const hasMemoCue = (memoText = "", pattern) => pattern.test(memoText);
 
@@ -1625,10 +1963,54 @@ const getPartySize = (memoText = "") => {
   return match ? `${match[1]}명` : "";
 };
 
-const getRestaurantMenus = (memoText = "") =>
-  ["탕수육", "어향가지", "짜장면", "짬뽕", "볶음밥", "딤섬", "커피", "디저트"].filter((menu) =>
-    memoText.includes(menu)
-  );
+const RESTAURANT_MENU_TERMS = [
+  "갈낙짬뽕",
+  "차돌짬뽕",
+  "해물짬뽕",
+  "고기짬뽕",
+  "짬뽕",
+  "짜장면",
+  "탕수육",
+  "어향가지",
+  "볶음밥",
+  "딤섬",
+  "파스타",
+  "피자",
+  "스테이크",
+  "국밥",
+  "칼국수",
+  "냉면",
+  "라멘",
+  "우동",
+  "김밥",
+  "고기",
+  "갈비",
+  "삼겹살",
+  "커피",
+  "디저트"
+];
+
+const getRestaurantMenus = (sourceText = "") => {
+  const source = text(sourceText);
+  const matched = RESTAURANT_MENU_TERMS.filter((menu) => source.includes(menu));
+  const menus = [];
+
+  matched.forEach((menu) => {
+    if (!menus.some((existing) => existing.includes(menu))) menus.push(menu);
+  });
+
+  return uniqueText(menus);
+};
+
+const getPrimaryRestaurantMenu = (form = {}, memoText = "") =>
+  getRestaurantMenus([
+    form.experienceMemo,
+    memoText,
+    form.productName,
+    form.mainKeyword,
+    form.keyword,
+    form.productInfoText
+  ].map(text).filter(Boolean).join(" "))[0] || "";
 
 const createExperienceIntroSentence = (form = {}, category = "place", memoText = "") => {
   const mainKeyword = getMainKeyword(form);
@@ -1686,6 +2068,10 @@ const createSearchAnswerSentence = (form = {}, category = "place", memoText = ""
     return `${baseKeyword} 장소를 볼 때는 메뉴가 나눠 먹기 좋은지, 인원수에 맞는 구성이 가능한지, 가격과 주차는 미리 확인해야 하는지를 같이 보면 좋아요`;
   }
 
+  if (category === "cafe") {
+    return `${baseKeyword}를 볼 때는 음료와 디저트뿐 아니라 좌석, 소음, 주차처럼 머무는 기준을 함께 확인하면 좋아요`;
+  }
+
   if (category === "product") {
     return `${baseKeyword} 제품을 고를 때는 사용감, 향, 아침저녁 사용 부담, 끈적임처럼 매일 쓰는 순간에 느껴지는 기준을 함께 보는 게 좋아요`;
   }
@@ -1718,6 +2104,14 @@ const createSearchAnswerSentence = (form = {}, category = "place", memoText = ""
     return `${baseKeyword}를 알아볼 때는 수업 난이도, 배울 수 있는 내용, 준비물과 비용처럼 수강 전에 궁금한 부분을 먼저 확인하면 좋아요`;
   }
 
+  if (category === "information") {
+    return `${baseKeyword}를 처음 볼 때는 기본 개념, 진행 순서, 확인 기준을 나눠보면 핵심을 더 빠르게 잡을 수 있어요`;
+  }
+
+  if (category === "comparison") {
+    return `${baseKeyword}를 비교할 때는 장점, 아쉬운 점, 선택 기준, 구매 전 확인할 조건을 같이 보면 판단이 쉬워요`;
+  }
+
   return `${baseKeyword}를 방문하기 전에는 동선, 머무는 시간, 주차와 운영 정보를 함께 확인하면 실제로 움직일 때 훨씬 편해요`;
 };
 
@@ -1726,6 +2120,10 @@ const createKeywordReinforcementSentence = (form = {}, category = "place") => {
 
   if (category === "restaurant") {
     return `${mainKeyword}에서는 메뉴 구성과 동행 인원, 방문 전 확인할 정보를 함께 보면 실제로 가기 전에 도움이 돼요`;
+  }
+
+  if (category === "cafe") {
+    return `${mainKeyword}는 공간 분위기와 좌석, 음료 구성을 함께 봐야 방문 전 기대와 실제 이용 기준을 맞추기 좋아요`;
   }
 
   if (category === "product") {
@@ -1760,11 +2158,19 @@ const createKeywordReinforcementSentence = (form = {}, category = "place") => {
     return `${mainKeyword}는 수업 흐름과 준비물, 수강 전 확인할 점을 함께 봐야 내 상황에 맞는지 판단하기 좋아요`;
   }
 
+  if (category === "information") {
+    return `${mainKeyword}는 직접 경험처럼 꾸미기보다 개념, 순서, 확인 기준을 나눠야 처음 보는 사람도 이해하기 쉬워요`;
+  }
+
+  if (category === "comparison") {
+    return `${mainKeyword}는 장점과 아쉬운 점, 누구에게 맞는지를 함께 봐야 구매 전 선택 기준이 분명해져요`;
+  }
+
   return `${mainKeyword}는 실제 동선과 좋았던 점, 아쉬운 점을 같이 봐야 방문 전 분위기를 더 쉽게 떠올릴 수 있어요`;
 };
 
 const createReviewOutline = (form = {}, category = inferReviewCategory(form)) => {
-  const targetLength = normalizeTargetLength(form.targetLength);
+  const targetLength = getTargetLengthSettings(form, category).target;
   const naturalOutline = createNaturalReviewOutline(form, category);
 
   if (naturalOutline.length > 0) {
@@ -1898,6 +2304,7 @@ const createSearchKeywordSummary = (form = {}, category = inferReviewCategory(fo
   const related = getRelatedKeywords(form);
   const categoryKeywords = {
     restaurant: ["회식 장소", "메뉴 추천", "가격 확인", "주차 확인"],
+    cafe: ["카페 분위기", "음료 메뉴", "좌석 확인", "주차 확인"],
     product: ["사용감", "장점", "아쉬운 점", "추천 대상"],
     store: ["매장 후기", "상담 후기", "친절한 응대", "방문 전 확인"],
     hospital: ["병원 후기", "예약 확인", "상담 분위기", "방문 전 확인"],
@@ -1905,6 +2312,8 @@ const createSearchKeywordSummary = (form = {}, category = inferReviewCategory(fo
     travel: ["여행 후기", "여행 코스", "동선", "여행 팁"],
     experience: ["체험 후기", "체험 흐름", "준비물", "예약 확인"],
     "kids-place": ["아이랑 갈만한 곳", "실내 체험", "부모 대기 공간", "주차 확인"],
+    information: ["방법 정리", "초보자 기준", "주의사항", "체크리스트"],
+    comparison: ["구매 전 비교", "선택 기준", "장단점", "체크 포인트"],
     place: ["방문 후기", "동선", "편의시설", "주차 확인"],
     education: ["수강 후기", "수업 흐름", "준비물", "수강 전 확인"]
   };
@@ -1919,7 +2328,8 @@ const createSearchKeywordSummary = (form = {}, category = inferReviewCategory(fo
 };
 
 const REVIEW_CATEGORY_LABELS = {
-  restaurant: "맛집/카페 후기",
+  restaurant: "맛집 후기",
+  cafe: "카페 후기",
   product: "상품 후기",
   store: "매장 후기",
   education: "교육 후기",
@@ -1928,8 +2338,56 @@ const REVIEW_CATEGORY_LABELS = {
   travel: "여행 후기",
   experience: "체험 후기",
   "kids-place": "아이 동반 장소 후기",
+  information: "정보 정리형 글",
+  comparison: "구매 전 비교형 글",
   place: "장소 후기"
 };
+
+const BLOG_WRITER_PERSONAS = {
+  product: {
+    name: "생활소비 리뷰 작가",
+    perspective: "워킹맘 4인 가족의 생활 속 사용 장면과 장점, 아쉬운 점을 솔직하게 나눠 쓰는 후기체"
+  },
+  restaurant: {
+    name: "가족 외식 리뷰 작가",
+    perspective: "방문 계기, 매장 분위기, 메뉴, 맛, 양, 주차와 동행자 관점까지 함께 보는 후기체"
+  },
+  cafe: {
+    name: "공간형 카페 리뷰 작가",
+    perspective: "공간 분위기, 음료와 디저트, 좌석, 조용함, 아이 동반 가능성을 함께 보는 후기체"
+  },
+  store: {
+    name: "매장 방문 리뷰 작가",
+    perspective: "외관과 위치, 내부 분위기, 상담과 응대, 신뢰가 간 지점을 차분히 정리하는 후기체"
+  },
+  education: {
+    name: "초보자 강의 리뷰 작가",
+    perspective: "수강 전 궁금했던 점, 수업 흐름, 초보자 입장에서 이해된 부분을 중심으로 쓰는 후기체"
+  },
+  "kids-place": {
+    name: "아이 동반 장소 리뷰 작가",
+    perspective: "아이 반응과 부모 입장의 동선, 주차, 화장실, 휴식 공간을 함께 살피는 후기체"
+  },
+  service: {
+    name: "서비스 이용 리뷰 작가",
+    perspective: "필요했던 이유, 상담과 진행 흐름, 편했던 점과 확인할 점을 나눠 쓰는 후기체"
+  },
+  information: {
+    name: "정보 정리형 블로그 작가",
+    perspective: "직접 경험한 척하지 않고 검색자가 궁금해할 개념, 기준, 주의사항을 정리하는 설명체"
+  },
+  comparison: {
+    name: "구매 전 비교 작가",
+    perspective: "장점과 아쉬운 점, 선택 기준, 구매 전 확인할 조건을 과장 없이 비교하는 설명체"
+  },
+  default: {
+    name: "생활 후기 블로그 작가",
+    perspective: "실제 생활 맥락과 확인할 기준을 자연스럽게 이어 쓰는 후기체"
+  }
+};
+
+const getBlogWriterPersona = (category = "place") =>
+  BLOG_WRITER_PERSONAS[category] || BLOG_WRITER_PERSONAS.default;
 
 const getFormMemoText = (form = {}) =>
   getMemoText(splitMemoLines(form.experienceMemo).map(softenSensitiveExpression));
@@ -1951,8 +2409,23 @@ const createSecondaryKeywords = (form = {}, category = inferReviewCategory(form)
     specialKeywords.push("아이랑 카페", "가족 카페", "아이 음료", "좌석 넓은 카페", "주차 확인");
   }
 
+  if (category === "cafe") {
+    if (/아이|가족/u.test(`${mainKeyword} ${memoText}`)) {
+      specialKeywords.push("아이랑 카페", "가족 카페", "아이 음료");
+    }
+    specialKeywords.push("카페 분위기", "음료 메뉴", "좌석 확인", "카페 주차", "방문 전 확인");
+  }
+
   if (category === "product" && /드라이샴푸|운동|떡진|보송|휴대/u.test(`${mainKeyword} ${memoText}`)) {
     specialKeywords.push("드라이샴푸 후기", "운동 후 드라이샴푸", "떡진 머리", "보송함", "휴대용 드라이샴푸");
+  }
+
+  if (category === "information") {
+    specialKeywords.push("초보자 기준", "방법 정리", "주의사항", "체크리스트");
+  }
+
+  if (category === "comparison") {
+    specialKeywords.push("구매 전 비교", "선택 기준", "장단점", "체크 포인트");
   }
 
   const summaryKeywords = createSearchKeywordSummary(form, category);
@@ -2057,22 +2530,30 @@ const createPhotoGuideItems = (imageSuggestions = [], form = {}) =>
 const PHOTO_INSERT_LABELS = {
   product: ["제품 전체 사진", "사용 장면", "상세 정보 사진"],
   store: ["매장 외관", "내부 분위기", "상담 공간 또는 제품 진열"],
-  restaurant: ["매장 외관", "메뉴 또는 주문 장면", "내부 분위기"],
+  restaurant: ["메뉴 사진", "매장 분위기", "전체 상차림"],
+  cafe: ["카페 외관", "음료 또는 디저트", "좌석과 내부 분위기"],
   education: ["강의 안내 이미지", "수업 분위기", "커리큘럼 이미지"],
   hospital: ["외관 또는 입구", "접수 공간", "안내 정보"],
   service: ["상담 전 확인 자료", "진행 과정", "결과 확인 장면"],
   travel: ["여행지 첫 장면", "이동 동선", "기억에 남은 장소"],
   experience: ["체험 장소 첫 장면", "체험 과정", "결과물 또는 기억 장면"],
   "kids-place": ["입구 또는 전체 공간", "체험 공간", "부모 대기 공간"],
+  information: ["핵심 요약 이미지", "기준 정리 이미지", "체크리스트 이미지"],
+  comparison: ["비교 대상 사진", "장점 정리 이미지", "구매 전 체크 이미지"],
   place: ["대표 공간", "체험 핵심 장면", "동선 또는 시설 사진"]
 };
 
-const createPhotoInsertMarkers = (category = "place") =>
-  (PHOTO_INSERT_LABELS[category] || PHOTO_INSERT_LABELS.place)
-    .slice(0, 3)
-    .map((label) => `[사진 삽입: ${label}]`);
+const createPhotoInsertMarkers = (category = "place", imageCount = 0) => {
+  if (imageCount <= 0) return [];
 
-const insertPhotoMarkersIntoBody = (body = "", category = "place") => {
+  const markerCount = imageCount === 1 ? 1 : Math.min(imageCount, 3);
+
+  return (PHOTO_INSERT_LABELS[category] || PHOTO_INSERT_LABELS.place)
+    .slice(0, markerCount)
+    .map((label) => `[사진 삽입: ${label}]`);
+};
+
+const insertPhotoMarkersIntoBody = (body = "", category = "place", imageCount = 0) => {
   const normalized = normalizeBody(body);
   if (!normalized || normalized.includes("[사진 삽입:")) return normalized;
 
@@ -2080,7 +2561,8 @@ const insertPhotoMarkersIntoBody = (body = "", category = "place") => {
     .split(/\n{2,}/u)
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);
-  const markers = createPhotoInsertMarkers(category);
+  const markers = createPhotoInsertMarkers(category, imageCount);
+  if (markers.length === 0) return normalized;
 
   if (paragraphs.length <= 2) {
     return normalizeBody([paragraphs[0], markers[0], ...paragraphs.slice(1), ...markers.slice(1)].join("\n\n"));
@@ -2128,9 +2610,9 @@ const polishPublishableBlogBody = (body = "") => {
     "조금 더 자연스럽게 다가왔어요"
   ]);
   polished = replaceRepeatedPhrase(polished, "좋아요", [
-    "도움이 됩니다",
-    "확인해두면 마음이 놓입니다",
-    "읽기 편합니다"
+    "좋습니다",
+    "괜찮습니다",
+    "편합니다"
   ], 2);
   polished = replaceRepeatedPhrase(polished, "좋겠습니다", [
     "확인해두면 편합니다",
@@ -2141,7 +2623,14 @@ const polishPublishableBlogBody = (body = "") => {
     "방문 전 기준을 잡기 편합니다"
   ], 2);
 
-  return normalizeBody(polished);
+  return normalizeBody(
+    polished
+      .replace(/않어요/gu, "않아요")
+      .replace(/되요/gu, "돼요")
+      .replace(/남어요/gu, "남아요")
+      .replace(/맞어요/gu, "맞아요")
+      .replace(/높이에요/gu, "높여줘요")
+  );
 };
 
 const getInfoValue = (value = "") => text(value) || "[확인 필요]";
@@ -2206,6 +2695,7 @@ const createEducationInfoSummary = (form = {}) => [
 
 const createGenericInfoSummary = (form = {}, category = inferReviewCategory(form)) => {
   if (category === "restaurant") return createRestaurantInfoSummary(form);
+  if (category === "cafe") return createRestaurantInfoSummary(form);
   if (category === "product") return createProductInfoSummaryForReview(form);
   if (category === "store") return createStoreInfoSummary(form);
   if (category === "education") return createEducationInfoSummary(form);
@@ -2229,6 +2719,11 @@ const createRecommendedForItems = (form = {}, category = inferReviewCategory(for
       /좌석\s*넓/u.test(memoText) ? "좌석 여유를 중요하게 보는 분" : "가격과 주차처럼 바뀔 수 있는 정보를 발행 전 확인할 분",
       "광고보다 실제 메모 기반 후기를 먼저 보고 싶은 분"
     ],
+    cafe: [
+      "카페 분위기와 좌석 편의성을 함께 보고 싶은 분",
+      /아이|가족/u.test(memoText) ? "아이와 함께 머물기 괜찮은 카페를 찾는 분" : "음료와 공간 분위기를 같이 비교하고 싶은 분",
+      "주차나 좌석처럼 방문 전에 확인할 기준이 필요한 분"
+    ],
     product: [
       `${getReviewTitleBase(mainKeyword)}의 실제 사용 상황이 궁금한 분`,
       "장점과 아쉬운 점을 같이 보고 구매를 판단하고 싶은 분",
@@ -2243,6 +2738,16 @@ const createRecommendedForItems = (form = {}, category = inferReviewCategory(for
       "처음 배우는 내용의 난이도가 궁금한 분",
       "커리큘럼과 진행 순서를 먼저 확인하고 싶은 분",
       "수강 전 준비물과 비용을 따로 체크할 분"
+    ],
+    information: [
+      `${mainKeyword}를 처음 알아보는 분`,
+      "직접 경험담보다 기준과 순서를 먼저 알고 싶은 분",
+      "확인되지 않은 정보는 구분해서 보고 싶은 분"
+    ],
+    comparison: [
+      `${mainKeyword}를 구매하거나 선택하기 전에 기준을 잡고 싶은 분`,
+      "장점만 보지 않고 아쉬운 점까지 비교하고 싶은 분",
+      "내 상황에 맞는 선택지를 차분히 고르고 싶은 분"
     ]
   };
 
@@ -2273,6 +2778,29 @@ const createFaqItems = (form = {}, category = inferReviewCategory(form)) => {
         question: "주차 정보는 있나요?",
         answer: hasProvidedParking(memoText) && !hasParkingNeedsCheck(memoText)
           ? "사용자 메모에는 주차가 편하다고 되어 있지만, 발행 전 실제 주차 가능 여부를 다시 확인하면 좋습니다."
+          : "주차 정보는 제공되지 않아 [확인 필요]로 남겨두는 것이 좋습니다."
+      }
+    ];
+  }
+
+  if (category === "cafe") {
+    return [
+      {
+        question: `${mainKeyword}는 오래 머물기 괜찮나요?`,
+        answer: /좌석|분위기|조용/u.test(memoText)
+          ? "사용자 메모 기준으로 좌석과 분위기에서 기억에 남은 점을 중심으로 정리할 수 있습니다."
+          : "좌석 간격, 소음, 콘센트, 운영시간은 제공된 정보가 부족하면 [확인 필요]로 남기는 편이 안전합니다."
+      },
+      {
+        question: "음료나 디저트 정보는 확인됐나요?",
+        answer: /음료|커피|디저트|메뉴/u.test(memoText)
+          ? "메모에 남은 음료나 디저트 내용을 중심으로 자연스럽게 정리할 수 있습니다."
+          : "구체적인 메뉴와 가격은 제공되지 않아 [확인 필요]로 표시하는 것이 좋습니다."
+      },
+      {
+        question: "주차 정보는 있나요?",
+        answer: hasProvidedParking(memoText) && !hasParkingNeedsCheck(memoText)
+          ? "메모에는 주차가 편하다고 되어 있지만, 발행 전 실제 주차 가능 여부를 다시 확인하면 좋습니다."
           : "주차 정보는 제공되지 않아 [확인 필요]로 남겨두는 것이 좋습니다."
       }
     ];
@@ -2316,6 +2844,40 @@ const createFaqItems = (form = {}, category = inferReviewCategory(form)) => {
       {
         question: "가격이나 시세를 글에 써도 되나요?",
         answer: "구체적인 금액은 제공되지 않았으므로 임의로 쓰지 않고 [확인 필요] 또는 변동 가능 정보로 표시합니다."
+      }
+    ];
+  }
+
+  if (category === "information") {
+    return [
+      {
+        question: `${mainKeyword}를 처음 볼 때 가장 먼저 확인할 것은 무엇인가요?`,
+        answer: "기본 개념, 진행 순서, 확인 기준을 먼저 나눠보면 전체 흐름을 잡기 쉽습니다."
+      },
+      {
+        question: "직접 경험한 것처럼 써도 되나요?",
+        answer: "정보 정리형 글은 직접 다녀온 척하거나 사용한 척하지 않고, 확인한 기준과 주의사항 중심으로 쓰는 편이 안전합니다."
+      },
+      {
+        question: "확인되지 않은 정보는 어떻게 쓰나요?",
+        answer: "가격, 주소, 운영시간처럼 변동되는 정보는 단정하지 않고 [확인 필요]로 남기는 것이 좋습니다."
+      }
+    ];
+  }
+
+  if (category === "comparison") {
+    return [
+      {
+        question: `${mainKeyword}를 비교할 때 가장 중요한 기준은 무엇인가요?`,
+        answer: "사용 목적, 예산, 장점과 아쉬운 점, 구매 후 확인할 조건을 함께 보는 편이 좋습니다."
+      },
+      {
+        question: "추천처럼 보여도 괜찮나요?",
+        answer: "과장 표현보다 어떤 사람에게 맞는지 기준을 나눠 쓰면 광고처럼 보이지 않고 판단에 도움이 됩니다."
+      },
+      {
+        question: "구매 전 꼭 확인할 점은 무엇인가요?",
+        answer: "가격, 구성, 교환/환불, 실제 사용 조건처럼 바뀔 수 있는 정보는 발행 전에 다시 확인하는 것이 안전합니다."
       }
     ];
   }
@@ -2623,10 +3185,225 @@ const createChecklistItems = ({ form = {}, category = inferReviewCategory(form),
     },
     {
       label: "카테고리 금지 표현 점검",
-      passed: !getCategoryForbiddenExpressions(category, detectProductSubtype(form, getFormMemoText(form))).some((pattern) => pattern.test(body)),
+      passed: !getCategoryForbiddenExpressions(
+        category,
+        detectProductSubtype(form, getFormMemoText(form)),
+        `${getMainKeyword(form)}\n${getFormMemoText(form)}`
+      ).some((pattern) => regexTest(pattern, body)),
       detail: "점검 완료"
     }
   ];
+};
+
+const QUALITY_STOP_WORDS = new Set([
+  "후기",
+  "리뷰",
+  "유명한",
+  "곳",
+  "사용",
+  "방문",
+  "확인",
+  "필요",
+  "좋음",
+  "좋았음",
+  "편함",
+  "무난함",
+  "궁금했음",
+  "도움",
+  "됐음"
+]);
+
+const normalizeMemoQualitySignal = (value = "") =>
+  text(value)
+    .replace(/(?:이|가|은|는|을|를|와|과|도|만|라|으로|로)$/u, "")
+    .replace(/(?:했음|였음|었음|았음|함)$/u, "")
+    .trim();
+
+const HARD_FORBIDDEN_EXPRESSION_PATTERN =
+  /인생맛집|역대급|효과\s*보장|가격\s*미쳤다|협찬이지만\s*솔직히|내돈내산처럼|무조건\s*추천|완전\s*대박|100%\s*해결|즉시효과|완치/u;
+
+const getMemoQualitySignals = (form = {}) =>
+  uniqueText(
+    splitMemoLines(form.experienceMemo)
+      .join(" ")
+      .match(/[\p{Script=Hangul}A-Za-z0-9]+/gu) || []
+  )
+    .map((item) => normalizeMemoQualitySignal(item))
+    .filter((item) => Array.from(item).length >= 2)
+    .filter((item) => !QUALITY_STOP_WORDS.has(item))
+    .slice(0, 16);
+
+const countMemoSignalsInBody = (signals = [], body = "") =>
+  signals.filter((signal) => body.includes(signal)).length;
+
+const hasUnsupportedInformationClaim = (body = "", category = "place", memoText = "") => {
+  if (category === "information" || category === "comparison") {
+    return /직접\s*(?:방문|다녀|가보|사용|써보|이용|참여)|다녀왔|써봤/u.test(body);
+  }
+
+  if (category === "restaurant" || category === "cafe") {
+    const hasParkingMemo = /주차/u.test(memoText);
+    const hasWaitMemo = /웨이팅|대기/u.test(memoText);
+    const hasPriceMemo = /가격|원|비싸|저렴/u.test(memoText);
+    const parkingClaim = /주차(?:가|는)?\s*(?:편|가능|무료|넓)/u.test(body) && !hasParkingMemo;
+    const waitClaim = /웨이팅(?:이|은)?\s*(?:없|짧|길|많)/u.test(body) && !hasWaitMemo;
+    const priceClaim = /가격(?:은|이)?\s*(?:저렴|괜찮|비싸|\d[\d,]*원)/u.test(body) && !hasPriceMemo;
+
+    return parkingClaim || waitClaim || priceClaim;
+  }
+
+  return false;
+};
+
+const normalizeQualityForbiddenScanText = (value = "", category = "place") => {
+  if (category !== "product") return value;
+
+  return String(value || "")
+    .replace(/바쁜\s*일정/gu, "바쁜 하루")
+    .replace(/일정\s*사이/gu, "하루 사이")
+    .replace(/이동\s*일정/gu, "이동하는 날");
+};
+
+const createQualityCheck = (id, label, passed, weight, detail = "") => ({
+  id,
+  label,
+  passed: Boolean(passed),
+  weight,
+  detail
+});
+
+const assessBlogWriterQuality = ({
+  form = {},
+  category = inferReviewCategory(form),
+  selectedTitle = "",
+  body = "",
+  hashtags = [],
+  photoGuide = [],
+  faqItems = []
+} = {}) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const normalizedBody = normalizeBody(body);
+  const paragraphs = normalizedBody.split(/\n{2,}/u).filter(Boolean);
+  const firstParagraph = paragraphs[0] || "";
+  const firstSentence = firstParagraph.split(/(?<=[.!?。])\s+/u)[0] || firstParagraph;
+  const keywordCount = countOccurrences(normalizedBody, mainKeyword);
+  const memoSignals = getMemoQualitySignals(form);
+  const memoMatches = countMemoSignalsInBody(memoSignals, normalizedBody);
+  const forbiddenScanText = normalizeQualityForbiddenScanText(`${selectedTitle}\n${normalizedBody}`, category);
+  const categoryForbidden = getCategoryForbiddenExpressions(
+    category,
+    detectProductSubtype(form, memoText),
+    `${mainKeyword}\n${memoText}`
+  ).some((pattern) => regexTest(pattern, forbiddenScanText));
+  const imageCount = getImageCount(form);
+  const photoMarkerCount = (normalizedBody.match(/\[사진 삽입:/gu) || []).length;
+  const titleLength = Array.from(selectedTitle).length;
+  const hasHardForbidden = HARD_FORBIDDEN_EXPRESSION_PATTERN.test(`${selectedTitle}\n${normalizedBody}`);
+  const hasUnsupportedClaim = hasUnsupportedInformationClaim(normalizedBody, category, memoText);
+  const hasTone = /더라고요|있었어요|느껴졌어요|같아요|좋겠다는 생각/u.test(normalizedBody);
+  const repeatedPhrasePenalty =
+    (normalizedBody.match(/좋더라고요/gu) || []).length > 4 ||
+    (normalizedBody.match(/궁금/gu) || []).length > 12;
+
+  const checks = [
+    createQualityCheck(
+      "category-match",
+      "카테고리 일치도",
+      !categoryForbidden && !hasHardForbidden,
+      12,
+      categoryForbidden ? "카테고리와 맞지 않는 표현이 섞였습니다." : "카테고리 표현 일치"
+    ),
+    createQualityCheck(
+      "title-seo",
+      "제목 SEO 품질",
+      selectedTitle.includes(mainKeyword) && titleLength >= 24 && titleLength <= 46 && !hasHardForbidden,
+      10,
+      `${titleLength}자`
+    ),
+    createQualityCheck(
+      "keyword-placement",
+      "메인 키워드 배치",
+      firstSentence.includes(mainKeyword) && keywordCount >= 2 && keywordCount <= 8,
+      10,
+      `${keywordCount}회`
+    ),
+    createQualityCheck(
+      "first-sentence",
+      "첫 문장 품질",
+      firstSentence.includes(mainKeyword) && !/무조건|대박|보장|역대급/u.test(firstSentence) && Array.from(firstSentence).length >= 24,
+      8,
+      firstSentence
+    ),
+    createQualityCheck(
+      "memo-reflection",
+      "메모 반영도",
+      memoSignals.length === 0 || memoMatches >= Math.min(3, Math.max(1, Math.ceil(memoSignals.length * 0.45))),
+      12,
+      `${memoMatches}/${memoSignals.length}`
+    ),
+    createQualityCheck(
+      "natural-tone",
+      "문장 자연스러움",
+      hasTone && paragraphs.length >= 6,
+      8,
+      hasTone ? "아는여자 톤 반영" : "말투 확인 필요"
+    ),
+    createQualityCheck(
+      "repetition",
+      "반복 표현 여부",
+      !repeatedPhrasePenalty,
+      6,
+      repeatedPhrasePenalty ? "반복 표현 점검 필요" : "반복 과다 없음"
+    ),
+    createQualityCheck(
+      "forbidden-expression",
+      "금지 표현 포함 여부",
+      !hasHardForbidden,
+      12,
+      hasHardForbidden ? "금지 표현 포함" : "금지 표현 없음"
+    ),
+    createQualityCheck(
+      "unsupported-claim",
+      "확인되지 않은 정보 단정 여부",
+      !hasUnsupportedClaim,
+      8,
+      hasUnsupportedClaim ? "제공되지 않은 정보 단정 가능성" : "확인 필요 정보 분리"
+    ),
+    createQualityCheck(
+      "photo-placement",
+      "사진 삽입 위치 자연스러움",
+      imageCount === 0 || (photoMarkerCount >= 1 && photoMarkerCount <= Math.min(imageCount, 3) && photoGuide.length > 0),
+      6,
+      `${photoMarkerCount}/${imageCount}`
+    ),
+    createQualityCheck(
+      "faq-quality",
+      "FAQ 품질",
+      faqItems.length >= 3 && faqItems.every((item) => text(item.question).length > 0 && text(item.answer).length > 0),
+      8,
+      `${faqItems.length}개`
+    ),
+    createQualityCheck(
+      "hashtag-quality",
+      "해시태그 품질",
+      hashtags.length >= 8 && hashtags.length <= 15 && hashtags.some((tag) => compact(tag).includes(compact(mainKeyword).slice(0, 4))),
+      6,
+      `${hashtags.length}개`
+    )
+  ];
+  const rawScore = checks.reduce((score, item) => score + (item.passed ? item.weight : 0), 0);
+  const criticalFailed = categoryForbidden || hasHardForbidden;
+  const score = Math.max(0, Math.min(100, Math.round(criticalFailed ? Math.min(rawScore, 89) : rawScore)));
+  const issues = checks
+    .filter((item) => !item.passed)
+    .map((item) => `${item.label}: ${item.detail}`);
+
+  return {
+    score,
+    issues,
+    checks
+  };
 };
 
 const createChecklistBodySection = (items = []) =>
@@ -2636,6 +3413,30 @@ const createChecklistBodySection = (items = []) =>
   ].join("\n");
 
 const getBodyLength = (body = "") => String(body || "").replace(/\s+/g, "").length;
+
+const trimBodyToMaxLength = (body = "", targetSettings = {}) => {
+  const max = Number(targetSettings.max);
+  const min = Number(targetSettings.min) || 0;
+  const normalized = normalizeBody(body);
+
+  if (!Number.isFinite(max) || getBodyLength(normalized) <= max) return normalized;
+
+  const paragraphs = normalized.split(/\n{2,}/u).map((paragraph) => paragraph.trim()).filter(Boolean);
+  const kept = [];
+
+  for (const paragraph of paragraphs) {
+    const trial = normalizeBody([...kept, paragraph].join("\n\n"));
+    const current = normalizeBody(kept.join("\n\n"));
+
+    if (kept.length > 0 && getBodyLength(trial) > max && getBodyLength(current) >= min) {
+      break;
+    }
+
+    kept.push(paragraph);
+  }
+
+  return normalizeBody(kept.join("\n\n")) || normalized;
+};
 
 const createNaturalReviewExpansionSections = (form = {}, category = inferReviewCategory(form)) => {
   const mainKeyword = getMainKeyword(form);
@@ -2777,53 +3578,107 @@ const createNaturalReviewExpansionSections = (form = {}, category = inferReviewC
   }
 
   if (category === "restaurant") {
+    const hasFamilyCue = /가족|외식|아이|아이랑/u.test(memoText);
+    const hasChildCue = /아이|아이랑|아이\s*음료/u.test(memoText);
+    const primaryMenu = getPrimaryRestaurantMenu(form, memoText);
+
     return [
       createSectionBlock("왜 찾게 됐는지", [
         [
-          `${withObjectParticle(mainKeyword)} 알아본 건 아이와 함께 움직일 때 편하게 머물 수 있는 공간인지 궁금했기 때문입니다`,
-          "가족이 함께 가는 카페나 식사 장소는 맛이나 분위기만큼 아이가 마실 메뉴가 있는지, 좌석이 답답하지 않은지도 중요하게 느껴집니다",
-          "주말에 움직이면 작은 불편함도 크게 느껴질 때가 있어서 방문 전 기준을 조금 더 꼼꼼하게 보게 됐습니다"
+          primaryMenu
+            ? `${withObjectParticle(mainKeyword)} 찾아본 건 ${withSubjectParticle(primaryMenu)} 대표적으로 언급되는 메뉴라서 먼저 확인해보고 싶었기 때문입니다`
+            : hasFamilyCue
+            ? `${withObjectParticle(mainKeyword)} 알아본 건 가족이 함께 식사해도 분위기와 메뉴 구성이 괜찮을지 궁금했기 때문입니다`
+            : `${withObjectParticle(mainKeyword)} 알아본 건 메뉴만큼 분위기와 양, 응대까지 같이 보고 싶었기 때문입니다`,
+          primaryMenu && /짬뽕/u.test(primaryMenu)
+            ? `${withTopicParticle(primaryMenu)} 국물 맛과 재료 구성이 중요해서 메뉴 사진, 양, 맵기 정도를 함께 보면 방문 전 판단하기가 좋습니다`
+            : /파스타/u.test(`${mainKeyword} ${memoText}`)
+            ? "파스타를 먹으러 갈 때는 맛도 중요하지만 양이 넉넉한지, 대화하기 편한 분위기인지도 함께 보게 됩니다"
+            : "식사 장소는 음식 맛만으로 정하기보다 같이 간 사람이 편하게 머물 수 있는지도 보게 됩니다",
+          /주차/u.test(memoText)
+            ? "차를 가지고 움직이는 날에는 주차가 편한지도 만족도에 꽤 크게 남습니다"
+            : "방문 전에는 대기나 예약, 이동 동선처럼 식사 외적인 부분도 같이 확인하면 더 편합니다"
         ]
       ], tone),
-      createSectionBlock("직접 방문하며 느낀 점", [
+      createSectionBlock(primaryMenu ? "대표 메뉴를 보며 확인할 점" : "직접 방문하며 느낀 점", [
         [
-          `${withObjectParticle(mainKeyword)} 떠올리면 음식 맛뿐 아니라 같이 간 사람이 편하게 머물 수 있었는지가 함께 생각납니다`,
-          /아이\s*음료/u.test(memoText)
-            ? "아이 음료가 있다는 점은 가족이 함께 움직일 때 작은 것 같아도 꽤 반가운 요소였습니다"
-            : "함께 방문하는 자리라면 메뉴 구성, 좌석 간격, 대화하기 좋은 분위기가 모두 만족도에 영향을 줍니다",
-          /좌석\s*넓/u.test(memoText)
-            ? "좌석이 넓게 느껴졌다는 점도 아이와 함께 가거나 여러 명이 움직일 때 편한 기준이 됐습니다"
-            : "가격이나 주차처럼 바뀔 수 있는 정보는 방문 전에 한 번 더 확인하면 더 편하게 다녀올 수 있습니다",
-          "아이와 같이 있으면 오래 앉아 있는 시간보다 움직임이 불편하지 않은지가 더 크게 남을 때가 많습니다"
+          primaryMenu
+            ? `${withObjectParticle(primaryMenu)} 중심으로 보면 맛집 글의 초점이 훨씬 분명해집니다`
+            : `${withObjectParticle(mainKeyword)} 떠올리면 음식 맛뿐 아니라 같이 간 사람이 편하게 머물 수 있었는지가 함께 생각납니다`,
+          /양/u.test(memoText)
+            ? "양이 많게 느껴졌다는 점은 여럿이 먹거나 가족 외식으로 볼 때 특히 좋게 남았습니다"
+            : primaryMenu
+              ? "양 정보가 없다면 사진과 실제 주문 구성을 보고 1인 기준인지, 나눠 먹기 좋은지 보완하면 좋습니다"
+              : "함께 방문하는 자리라면 메뉴 구성, 좌석 간격, 대화하기 좋은 분위기가 모두 만족도에 영향을 줍니다",
+          /직원|친절/u.test(memoText)
+            ? "직원 응대가 친절하면 주문하거나 필요한 내용을 물어볼 때 전체 식사 흐름이 훨씬 편해집니다"
+            : "응대 분위기는 작은 부분 같아도 처음 방문한 자리에서는 꽤 큰 기준이 됩니다",
+          hasChildCue
+            ? "아이와 함께라면 아이 메뉴나 화장실 동선도 추가로 확인하면 더 편하게 다녀올 수 있습니다"
+            : "가격이나 주차처럼 바뀔 수 있는 정보는 방문 전에 한 번 더 확인하면 더 편하게 다녀올 수 있습니다"
         ]
       ], tone),
       createSectionBlock("좋았던 점과 아쉬운 점", [
         [
-          "좋았던 점은 방문 목적이 비교적 분명하게 맞아떨어졌다는 부분입니다",
+          /분위기/u.test(memoText)
+            ? "좋았던 점은 분위기가 편하게 느껴져 식사하는 동안 부담이 크지 않았다는 부분입니다"
+            : "좋았던 점은 방문 목적이 비교적 분명하게 맞아떨어졌다는 부분입니다",
           "다만 시간대에 따라 분위기나 대기 상황은 달라질 수 있으니, 중요한 약속이라면 예약 가능 여부를 같이 보는 편이 좋겠습니다",
-          `${withConditionalParticle(mainKeyword)} 분위기와 편의성을 함께 보는 분이라면 후보로 두기 괜찮아 보였습니다`,
-          "아이 음료와 좌석처럼 가족 방문에서 체감되는 요소가 기억에 남아서, 단순히 예쁜 공간보다 실제로 머물기 괜찮은지가 더 중요하게 느껴졌습니다"
+          `${withObjectParticle(mainKeyword)} 고를 때 분위기와 편의성을 함께 보는 분이라면 후보로 두기 괜찮아 보였습니다`,
+          hasFamilyCue
+            ? "가족 외식처럼 같이 움직이는 자리라면 양, 주차, 응대가 함께 맞아야 만족도가 더 오래 남습니다"
+            : "맛만 길게 쓰기보다 메뉴, 양, 응대, 이동 편의성을 같이 남겨야 실제 방문 전 참고하기 좋습니다"
         ]
       ], tone),
-      createSectionBlock("아이와 함께 갈 때 본 기준", [
+      createSectionBlock(hasFamilyCue ? "가족 외식 기준으로 본 부분" : "다시 간다면 확인할 부분", [
         [
-          "아이와 함께 가는 카페는 메뉴가 다양하다는 말보다 아이가 마실 수 있는 선택지가 있는지가 먼저 눈에 들어옵니다",
-          "좌석이 넓으면 짐을 두거나 아이가 잠깐 움직일 때도 덜 불편해서 보호자 입장에서도 훨씬 여유가 생깁니다",
-          "공간이 너무 복잡하지 않고 머무는 동안 시선이 편안하면 짧게 들러도 만족도가 더 좋게 남습니다"
+          hasFamilyCue
+            ? "가족 외식에서는 메뉴가 모두에게 무난한지, 양이 부족하지 않은지, 식사 중 대화하기 편한지가 중요합니다"
+            : "다시 간다면 대표 메뉴와 방문 시간대, 대기 여부를 먼저 확인할 것 같습니다",
+          /주차/u.test(memoText)
+            ? "주차가 편했던 점은 다시 방문할 때도 중요한 기준으로 남았습니다"
+            : "주차 정보가 없다면 방문 전 한 번 더 확인하는 편이 마음이 편합니다",
+          "가격과 운영시간은 바뀔 수 있으니 글을 발행하기 전에는 최신 정보를 확인해두는 편이 안전합니다"
         ]
       ], tone),
       createSectionBlock("이런 분께 추천해요", [
         [
-          "아이와 함께 갈 카페를 찾는 가족에게 가장 먼저 참고가 될 것 같습니다",
-          "좌석 여유와 아이 음료처럼 현장에서 바로 체감되는 요소를 중요하게 보는 분에게도 잘 맞아 보입니다",
-          "주말에 가족과 가볍게 머물 공간을 찾는다면 분위기와 편의성을 함께 비교해보는 후보로 두기 좋겠습니다"
+          hasFamilyCue
+            ? "가족 외식으로 분위기, 양, 주차를 함께 보는 분께 참고가 될 것 같습니다"
+            : "분위기와 양, 직원 응대까지 같이 보고 식사 장소를 고르는 분께 참고가 될 것 같습니다",
+          "맛집을 고를 때 메뉴 사진만 보는 것보다 실제로 머물기 편한지도 함께 보는 분에게 잘 맞습니다",
+          "다만 중요한 약속이라면 예약 가능 여부와 대표 메뉴 가격은 방문 전에 다시 확인하는 편이 좋겠습니다"
         ]
       ], tone),
       createSectionBlock("마무리", [
         [
-          `${withTopicParticle(mainKeyword)} 처음 알아볼 때 기대했던 건 아이와 함께 가도 부담이 덜한 공간인지였습니다`,
-          "직접 떠올려보니 아이 음료, 넓은 좌석, 가족 방문 분위기가 가장 기억에 남았습니다",
-          "가격이나 주차처럼 바뀔 수 있는 정보는 방문 전에 한 번 더 확인하고, 가족 일정에 맞는 시간대로 다녀오면 더 편하게 즐길 수 있을 것 같습니다"
+          `${withTopicParticle(mainKeyword)} 메뉴와 분위기, 양, 응대가 함께 기억에 남는 식사 자리였습니다`,
+          hasFamilyCue
+            ? "가족과 함께 움직이는 날에는 작은 편의성도 크게 느껴져서 주차와 좌석 분위기를 같이 보는 편이 좋았습니다"
+            : "혼자보다 함께 가는 식사라면 맛뿐 아니라 머무는 분위기와 주문 흐름도 함께 보는 편이 좋았습니다",
+          "방문 전 확인할 정보만 한 번 더 챙긴다면 더 편하게 다녀올 수 있을 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "cafe") {
+    return [
+      createSectionBlock("아이와 함께라면 더 보게 되는 부분", [
+        [
+          /아이|가족/u.test(memoText)
+            ? "아이와 함께 카페에 가면 음료가 있는지뿐 아니라 앉아 있는 동안 아이가 답답해하지 않는지도 함께 보게 됩니다"
+            : "카페는 혼자 가는지, 함께 가는지에 따라 좋은 좌석의 기준이 달라집니다",
+          "좌석이 넓거나 동선이 복잡하지 않으면 짐을 두고 주문하고 다시 자리로 돌아오는 과정도 훨씬 편하게 느껴집니다",
+          "이런 부분은 사진 한 장보다 실제로 머물렀을 때 더 크게 남아서, 카페 후기를 쓸 때 공간 기준으로 정리해두면 읽는 사람도 판단하기 쉽습니다"
+        ]
+      ], tone),
+      createSectionBlock("방문 전 확인하면 좋은 기준", [
+        [
+          "방문 전에는 운영시간, 주차 가능 여부, 사람이 몰리는 시간대를 한 번 더 확인하는 편이 좋습니다",
+          "아이와 함께라면 아이 음료, 화장실 동선, 유아 의자처럼 현장에서 바로 필요한 정보도 같이 보면 더 편합니다",
+          "특히 주말 방문이라면 잠깐 쉬어갈 수 있는 자리인지, 주문 후 기다리는 시간이 부담스럽지 않은지도 함께 보면 좋습니다",
+          `${withTopicParticle(mainKeyword)} 분위기만 보고 고르기보다 실제로 머물기 편한 기준까지 함께 보면 만족도가 더 분명해질 것 같습니다`
         ]
       ], tone)
     ];
@@ -2842,10 +3697,83 @@ const createNaturalReviewExpansionSections = (form = {}, category = inferReviewC
             : "수강 전에는 시간, 준비물, 난이도처럼 실제 참여에 영향을 주는 부분도 함께 보게 됩니다"
         ]
       ], tone),
+      createSectionBlock("초보자 입장에서 이해된 부분", [
+        [
+          /초보자|이해/u.test(memoText)
+            ? "초보자도 이해하기 쉬웠다는 메모는 단순히 쉬운 강의라는 뜻보다, 낯선 용어를 전체 흐름 안에서 받아들일 수 있었다는 의미로 풀어볼 수 있습니다"
+            : "처음 배우는 내용은 용어 하나하나보다 전체 흐름이 먼저 잡혀야 부담이 줄어듭니다",
+          /입찰/u.test(memoText)
+            ? "입찰 흐름처럼 단계가 있는 내용은 공고 확인부터 다음 절차까지 순서가 보여야 실제로 이해하기 쉽습니다"
+            : "수업을 듣기 전에는 내가 어디까지 알고 있는지, 어떤 부분을 더 확인해야 하는지 나눠보는 것이 좋습니다",
+          /커리큘럼/u.test(memoText)
+            ? "커리큘럼을 확인했다는 점은 수강 전 기대치를 맞추는 데 도움이 됩니다"
+            : "커리큘럼이나 준비물은 발행 전에 한 번 더 확인해두면 글을 읽는 사람도 판단하기 편합니다"
+        ]
+      ], tone),
+      createSectionBlock("수강 전 확인하면 좋은 기준", [
+        [
+          "강의 시간, 수강료, 준비물처럼 바뀔 수 있는 정보는 단정하지 않고 확인 항목으로 남기는 편이 안전합니다",
+          "무료공개강의라면 전체 흐름을 먼저 들어보고 내 목적과 맞는지 판단하는 방식이 부담이 적습니다",
+          "후기에서는 결과를 과하게 약속하기보다 수업 흐름, 이해도, 다음에 확인할 점을 나눠 쓰는 편이 더 자연스럽습니다"
+        ]
+      ], tone),
       createSectionBlock("마무리", [
         [
           "전체적으로 처음 접하는 사람에게 큰 흐름을 잡아주는 수업인지가 가장 기억에 남았습니다",
           "바로 결정하기보다 내 목적과 난이도에 맞는지 차분히 보고 선택하면 더 편하게 시작할 수 있을 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "information") {
+    return [
+      createSectionBlock("초보자가 먼저 나눠볼 기준", [
+        [
+          `${withObjectParticle(mainKeyword)} 처음 볼 때는 용어를 한 번에 외우기보다 공고문, 절차, 확인 기준을 나눠보는 편이 훨씬 편합니다`,
+          /공고문/u.test(memoText)
+            ? "공고문은 조건과 제한 사항이 같이 담기는 경우가 많아서, 제목만 보고 넘기기보다 세부 내용을 천천히 확인해야 합니다"
+            : "자료를 볼 때는 출처와 기준일을 먼저 확인하고, 바뀔 수 있는 정보는 따로 표시해두는 편이 안전합니다",
+          /리스크|위험|주의/u.test(memoText)
+            ? "리스크가 있는 항목은 장점보다 먼저 확인해두면 나중에 판단이 흔들리지 않습니다"
+            : "주의할 점은 마지막에 몰아서 보기보다 단계마다 같이 확인하는 편이 좋습니다"
+        ]
+      ], tone),
+      createSectionBlock("확인 기준을 나눠두면 좋은 이유", [
+        [
+          /입찰/u.test(memoText)
+            ? "입찰 흐름은 한 번에 이해하려고 하면 복잡해 보이지만, 공고 확인, 조건 검토, 참여 여부 판단처럼 단계로 나누면 훨씬 현실적으로 보입니다"
+            : "처음 시작하는 방법은 큰 개념과 세부 기준을 나눠야 읽는 사람이 바로 따라가기 쉽습니다",
+          /초보자|기준/u.test(memoText)
+            ? "초보자 기준에서는 내가 모르는 용어를 전부 해결하려고 하기보다, 지금 꼭 확인해야 할 기준부터 잡는 편이 좋습니다"
+            : "처음 보는 정보일수록 출처와 기준일, 바뀔 수 있는 조건을 따로 표시해두면 신뢰가 높아집니다",
+          /리스크|위험|주의/u.test(memoText)
+            ? "리스크는 장점 뒤에 덧붙이는 내용이 아니라 선택 전에 먼저 확인해야 할 기준으로 두는 편이 안전합니다"
+            : "주의사항은 마지막 요약에만 넣기보다 각 단계에서 함께 확인하면 놓치는 부분이 줄어듭니다"
+        ]
+      ], tone),
+      createSectionBlock("요약해서 보면", [
+        [
+          "정보 정리형 글은 경험담처럼 꾸미기보다 검색자가 바로 확인할 수 있는 기준을 차분히 나눠주는 쪽이 더 신뢰가 갑니다",
+          `${withTopicParticle(mainKeyword)} 처음이라면 기본 개념, 확인 순서, 주의사항을 먼저 잡고 세부 사례를 추가하는 방식이 가장 안전합니다`,
+          "각 단계마다 확인한 날짜나 출처를 따로 적어두면 나중에 다시 볼 때도 기준이 흐려지지 않습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "comparison") {
+    return [
+      createSectionBlock("비교할 때 먼저 볼 기준", [
+        [
+          `${withObjectParticle(mainKeyword)} 고를 때는 장점만 모아보기보다 내가 실제로 쓸 상황과 맞는지부터 보는 편이 좋습니다`,
+          "가격이나 구성처럼 바뀔 수 있는 정보는 마지막에 다시 확인하고, 선택 기준은 사용 목적과 아쉬운 점까지 함께 놓고 비교하면 판단이 쉬워집니다"
+        ]
+      ], tone),
+      createSectionBlock("최종 판단 기준", [
+        [
+          "누구에게나 맞는 선택지는 없어서, 내 상황에서 덜 불편하고 오래 쓸 수 있는 쪽을 고르는 게 현실적입니다",
+          "그래서 비교형 글에서는 추천보다 기준을 분명히 보여주는 것이 더 도움이 됩니다"
         ]
       ], tone)
     ];
@@ -2891,26 +3819,78 @@ const createNaturalReviewFinishingSections = (form = {}, category = inferReviewC
   }
 
   if (category === "restaurant") {
+    const hasFamilyCue = /가족|외식|아이|아이랑/u.test(memoText);
+
     return [
       createSectionBlock("다시 간다면 보고 싶은 점", [
         [
-          "다시 간다면 방문 시간대에 따라 좌석 여유가 어떤지 먼저 볼 것 같습니다",
-          /아이\s*음료/u.test(memoText)
-            ? "아이 음료가 있다는 점은 좋았지만, 아이가 오래 머물기 편한 분위기인지도 함께 보면 더 좋겠습니다"
-            : "아이와 함께 간다면 아이 메뉴나 음료, 화장실 동선처럼 실제로 필요한 부분을 같이 확인하게 됩니다",
-          /좌석\s*넓/u.test(memoText)
-            ? "좌석이 넓게 느껴졌던 점은 다시 방문할 때도 중요한 기준으로 남았습니다"
-            : "좌석 간격과 대기 여부는 시간대에 따라 달라질 수 있어 한 번 더 보는 편이 좋겠습니다",
-          "아이와 함께 움직이는 날에는 작은 동선 하나도 크게 느껴져서, 들어가고 앉고 주문하는 흐름이 복잡하지 않은지도 다시 보고 싶습니다"
+          "다시 간다면 방문 시간대에 따라 좌석 여유와 대기 여부가 어떤지 먼저 볼 것 같습니다",
+          /주차/u.test(memoText)
+            ? "주차가 편했던 점은 다시 방문할 때도 중요하게 볼 기준으로 남았습니다"
+            : "주차나 예약 가능 여부는 시간대에 따라 달라질 수 있어 한 번 더 확인하는 편이 좋겠습니다",
+          /양/u.test(memoText)
+            ? "양이 넉넉하게 느껴졌다면 인원수에 맞춰 메뉴를 나누기에도 부담이 덜합니다"
+            : "대표 메뉴와 사이드 구성을 미리 보면 주문할 때 훨씬 덜 고민하게 됩니다",
+          hasFamilyCue
+            ? "가족 외식이라면 모두가 먹기 편한 메뉴와 직원 응대, 이동 편의성을 같이 보는 편이 좋겠습니다"
+            : "함께 식사하는 자리라면 메뉴 맛과 분위기, 응대가 같이 맞아야 만족도가 더 오래 남습니다"
         ]
       ], tone),
       createSectionBlock("전체적으로 남은 느낌", [
         [
-          `${withTopicParticle(mainKeyword)} 가족이 함께 움직일 때 필요한 기준을 떠올리기 좋은 곳으로 남았습니다`,
-          "아이와 함께 가는 장소는 예쁜 사진보다 실제로 앉아 있기 편한지, 주문과 이동이 복잡하지 않은지가 더 크게 느껴집니다",
-          "가볍게 들를 카페를 찾는 분이라면 아이 음료와 좌석 분위기를 중심으로 비교해보면 선택이 조금 쉬워질 것 같습니다",
-          "주말처럼 사람이 몰릴 수 있는 날에는 방문 시간대와 주차 가능 여부까지 함께 보면 더 편안하게 다녀올 수 있습니다",
-          "결국 가족 카페는 아이가 편하고 보호자도 지치지 않는지가 오래 남는 기준이라, 그런 부분을 중심으로 보면 만족도가 더 분명해질 것 같습니다"
+          `${withTopicParticle(mainKeyword)} 메뉴와 분위기만 따로 보는 것보다 실제 식사 흐름을 함께 떠올리기 좋은 후기로 남았습니다`,
+          "맛집은 사진 속 음식이 맛있어 보이는지도 중요하지만, 실제로 앉아서 주문하고 먹는 동안 편했는지도 크게 남습니다",
+          /직원|친절/u.test(memoText)
+            ? "직원 응대가 친절했던 기억은 다시 방문할 때도 꽤 긍정적인 기준이 됩니다"
+            : "응대와 주문 흐름은 직접 가보기 전 놓치기 쉬운 부분이라 후기에 함께 남겨두면 좋습니다",
+          "주말이나 저녁처럼 사람이 몰릴 수 있는 시간대에는 방문 시간과 주차 가능 여부까지 함께 보면 더 편안하게 다녀올 수 있습니다",
+          "결국 다시 가고 싶은 맛집은 맛, 양, 분위기, 이동 편의성이 내 상황과 함께 맞을 때 더 분명해지는 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "education") {
+    return [
+      createSectionBlock("수강 전 다시 확인할 점", [
+        [
+          "수강 전에는 강의 시간, 준비물, 비용처럼 실제 참여에 영향을 주는 정보를 한 번 더 확인하는 편이 좋겠습니다",
+          /커리큘럼/u.test(memoText)
+            ? "커리큘럼을 먼저 확인해두면 내가 기대하는 내용과 실제 수업 흐름이 맞는지 비교하기가 쉬워집니다"
+            : "커리큘럼 정보가 부족하다면 수업에서 다루는 범위부터 다시 확인하는 편이 안전합니다",
+          /입찰/u.test(memoText)
+            ? "입찰 흐름처럼 단계가 있는 내용은 강의에서 어느 부분까지 다루는지 미리 알아두면 좋습니다"
+            : "초보자라면 난이도와 질문 가능 여부도 같이 확인해두면 마음이 편합니다"
+        ]
+      ], tone),
+      createSectionBlock("전체적으로 남은 느낌", [
+        [
+          `${withTopicParticle(mainKeyword)} 처음 듣는 사람에게 전체 흐름을 잡아주는지가 가장 중요한 기준으로 남았습니다`,
+          "강의 후기는 좋다는 말보다 어떤 부분이 이해됐고, 무엇을 더 확인해야 하는지가 보여야 실제로 도움이 됩니다",
+          "바로 결정하기보다 내 목적과 난이도에 맞는지 차분히 보고 선택하면 더 편하게 시작할 수 있을 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "information") {
+    return [
+      createSectionBlock("마지막으로 정리하면", [
+        [
+          `${withTopicParticle(mainKeyword)} 처음 시작할 때는 전체를 한 번에 이해하려고 하기보다 공고문, 입찰 흐름, 확인 기준을 차례대로 보는 편이 좋습니다`,
+          "확인되지 않은 가격이나 일정은 단정하지 않고, 바뀔 수 있는 정보는 최종 작성 전에 다시 확인하는 기준으로 남겨두면 글의 신뢰도가 올라갑니다",
+          "초보자 기준에서는 무엇을 모르는지부터 나누는 것이 첫 단계라, 핵심 용어와 주의사항을 함께 정리해두면 다음 행동을 정하기 쉬워집니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "comparison") {
+    return [
+      createSectionBlock("마지막으로 비교할 기준", [
+        [
+          `${withTopicParticle(mainKeyword)} 구매 전 비교할 때는 장점보다 내 상황에 맞는지, 아쉬운 점을 감당할 수 있는지를 먼저 보는 편이 좋습니다`,
+          "가격과 구성은 바뀔 수 있으니 마지막에 다시 확인하고, 선택 기준은 사용 목적과 우선순위 중심으로 남겨두면 판단이 훨씬 편해집니다"
         ]
       ], tone)
     ];
@@ -2930,11 +3910,34 @@ const createNaturalReviewFinishingSections = (form = {}, category = inferReviewC
 const createPublishableReviewBody = ({
   baseBody = "",
   form = {},
-  category = inferReviewCategory(form)
+  category = inferReviewCategory(form),
+  infoSummary = [],
+  recommendedFor = []
 } = {}) => {
-  const targetLength = normalizeTargetLength(form.targetLength);
+  const targetSettings = getTargetLengthSettings(form, category);
+  const targetMin = targetSettings.min;
   const memoCount = splitMemoLines(form.experienceMemo).length;
-  const desiredMin = targetLength >= 2600 ? (memoCount >= 6 || getImageCount(form) > 0 ? 2500 : 1800) : 0;
+  const imageCount = getImageCount(form);
+  const sparseInput = memoCount <= 4 && imageCount === 0;
+  const categoryMinLength =
+    targetSettings.option === "short"
+      ? 1000
+      : targetSettings.option === "medium"
+        ? 1800
+        : targetSettings.option === "long"
+          ? 2800
+          : category === "product"
+            ? 0
+      : category === "information"
+        ? 900
+        : category === "comparison"
+          ? 1000
+          : sparseInput
+            ? 1000
+            : memoCount >= 6 || imageCount > 0
+              ? 2200
+              : 1600;
+  const desiredMin = Math.max(targetMin, categoryMinLength);
   let body = normalizeBody(baseBody);
 
   if (desiredMin > 0 && getBodyLength(body) < desiredMin) {
@@ -2945,9 +3948,38 @@ const createPublishableReviewBody = ({
     body = normalizeBody([body, ...createNaturalReviewFinishingSections(form, category)].join("\n\n"));
   }
 
+  if (targetSettings.option === "long" && getBodyLength(body) < desiredMin) {
+    body = normalizeBody([
+      body,
+      ...createDepthSupportSections({
+        form,
+        category,
+        infoSummary,
+        recommendedFor
+      })
+    ].join("\n\n"));
+  }
+
   body = polishPublishableBlogBody(body);
 
-  return insertPhotoMarkersIntoBody(body, category);
+  if (
+    (targetSettings.option === "medium" || targetSettings.option === "long") &&
+    getBodyLength(body) < desiredMin
+  ) {
+    body = polishPublishableBlogBody(normalizeBody([
+      body,
+      ...createDepthSupportSections({
+        form,
+        category,
+        infoSummary,
+        recommendedFor
+      })
+    ].join("\n\n")));
+  }
+
+  body = trimBodyToMaxLength(body, targetSettings);
+
+  return insertPhotoMarkersIntoBody(body, category, getImageCount(form));
 };
 
 const createProductReviewContentPackage = ({
@@ -2963,12 +3995,24 @@ const createProductReviewContentPackage = ({
   infoSummary = [],
   recommendedFor = [],
   faqItems = [],
-  finalChecklist = []
+  finalChecklist = [],
+  qualityScore = null,
+  qualityIssues = [],
+  qualityChecks = [],
+  generationId = ""
 } = {}) => {
   const mainKeyword = getMainKeyword(form);
+  const targetSettings = getTargetLengthSettings(form, category);
 
   return {
+    generationId,
     mainKeyword,
+    targetLengthOption: targetSettings.option,
+    targetLengthRange: {
+      min: targetSettings.min,
+      max: targetSettings.max,
+      target: targetSettings.target
+    },
     secondaryKeywords: createSecondaryKeywords(form, category),
     searchIntentAnalysis: createSearchIntentAnalysis(form, category),
     homeFeedClickPoint: createHomeFeedClickPoint(form, selectedTitle, imageSuggestions, category),
@@ -2982,6 +4026,9 @@ const createProductReviewContentPackage = ({
     faqItems,
     hashtags,
     finalChecklist,
+    qualityScore,
+    qualityIssues,
+    qualityChecks,
     searchKeywords,
     sponsorshipCheck: text(form.sponsorshipType) || "[협찬 여부 확인 필요]"
   };
@@ -2998,6 +4045,23 @@ const extractClosingParagraph = (body = "") =>
 const createRestaurantMenuSentences = (memoText = "") => {
   const sentences = [];
   const menus = getRestaurantMenus(memoText);
+  const primaryMenu = menus[0] || "";
+
+  if (primaryMenu) {
+    sentences.push(
+      `${withTopicParticle(primaryMenu)} 이번 글에서 가장 중심에 둬야 할 메뉴로 보였습니다`
+    );
+
+    if (/짬뽕/u.test(primaryMenu)) {
+      sentences.push(
+        `${primaryMenu}은 국물 맛, 재료 구성, 양, 매운 정도가 궁금해지는 메뉴라 사진이나 실제 맛 메모가 추가되면 글이 훨씬 구체적으로 완성될 수 있어요`
+      );
+    } else {
+      sentences.push(
+        `${withTopicParticle(primaryMenu)} 맛과 양, 구성, 가격 정보를 함께 보면 방문 전 판단하기가 더 쉬워요`
+      );
+    }
+  }
 
   if (hasMemoCue(memoText, /탕수육|바삭/u)) {
     sentences.push("탕수육은 눅눅한 느낌보다 바삭한 식감이 먼저 느껴져서 여러 명이 나눠 먹기 괜찮았어요");
@@ -3034,7 +4098,8 @@ const createRestaurantCheckSentences = (memoText = "") => {
   }
 
   if (sentences.length === 0) {
-    sentences.push("가격, 주차, 예약처럼 바뀔 수 있는 정보는 방문 전에 한 번 더 확인해두면 좋아요");
+    sentences.push("맛이나 양, 가격 정보는 실제 방문 후 사진과 함께 보완하면 글이 더 구체적으로 완성될 수 있어요");
+    sentences.push("주차나 웨이팅 여부는 방문 시간대에 따라 달라질 수 있으니 방문 전 한 번 더 확인하면 좋겠습니다");
   }
 
   return sentences;
@@ -3191,7 +4256,22 @@ const createCategoryMemoSentences = (memoText = "", fallback = "") => {
 
   if (snippets.length === 0) return [fallback].filter(Boolean);
 
-  return snippets.map((snippet) => `${snippet} 부분이 기억에 남아서 실제 후기를 쓸 때도 이 내용을 중심으로 풀어보게 됐어요`);
+  return snippets.map((snippet) => {
+    const normalized = snippet
+      .replace(/좋음$/u, "좋게 느껴졌습니다")
+      .replace(/편함$/u, "편하게 느껴졌습니다")
+      .replace(/괜찮음$/u, "괜찮게 느껴졌습니다")
+      .replace(/많음$/u, "넉넉하게 느껴졌습니다")
+      .replace(/궁금$/u, "궁금했습니다")
+      .replace(/확인$/u, "확인할 수 있었습니다")
+      .replace(/필요$/u, "필요했습니다")
+      .trim();
+
+    if (/[.?!。]$/u.test(normalized)) return normalized;
+    if (/(?:습니다|어요|입니다|였습니다|됐습니다)$/u.test(normalized)) return `${normalized}.`;
+
+    return `${normalized} 부분이 기억에 남았습니다`;
+  });
 };
 
 const BEAUTY_OR_CARE_PRODUCT_PATTERN =
@@ -3239,12 +4319,13 @@ const createReviewAnalysis = (form = {}, category = inferReviewCategory(form), c
     topic: mainKeyword,
     baseKeyword: getReviewTitleBase(mainKeyword),
     category,
+    writerPersona: getBlogWriterPersona(category),
     purpose: inferReviewPurpose(form, category, memoText),
     importantPoints: inferImportantReviewPoints(category, memoText),
     photoElements,
     photoSentences: createPhotoInsightSentences(category, photoElements),
     requiredMemo: getMemoEvidenceSnippets(memoText, 5),
-    forbiddenExpressions: getCategoryForbiddenExpressions(category, productSubtype),
+    forbiddenExpressions: getCategoryForbiddenExpressions(category, productSubtype, `${mainKeyword}\n${memoText}`),
     recommendedReader: inferRecommendedReader(form, category, memoText),
     emotionTone: inferReviewEmotionTone(category, memoText),
     memoText,
@@ -3293,10 +4374,13 @@ const inferReviewPurpose = (form = {}, category = "place", memoText = "") => {
     return "식사 자리로 분위기와 메뉴 구성이 괜찮은지 확인하고 싶었던 방문";
   }
 
+  if (category === "cafe") return "카페에서 머무는 동안 공간, 음료, 좌석이 내 상황에 맞는지 확인하고 싶었던 방문";
   if (category === "hospital") return "처음 방문 전 예약과 상담 흐름이 막막하지 않은지 확인하고 싶었던 상황";
   if (category === "service") return "서비스를 신청하기 전 상담부터 진행까지 믿고 맡길 수 있는지 확인하고 싶었던 상황";
   if (category === "travel") return "직접 가기 전 동선과 분위기가 내 일정에 맞을지 확인하고 싶었던 여행";
   if (category === "experience" || category === "kids-place") return "처음 참여해도 흐름을 따라가기 쉬운지 확인하고 싶었던 체험";
+  if (category === "information") return `${topic}를 처음 알아보는 사람이 기본 흐름과 확인 기준을 잡고 싶었던 상황`;
+  if (category === "comparison") return `${topic}를 선택하기 전에 장점과 아쉬운 점, 선택 기준을 비교하고 싶었던 상황`;
 
   return `${topic}을 직접 확인해보고 싶었던 상황`;
 };
@@ -3315,6 +4399,7 @@ const inferImportantReviewPoints = (category = "place", memoText = "") => {
   if (/휴대/u.test(memoText)) points.push("휴대성");
   if (/향/u.test(memoText)) points.push("향의 부담감");
   if (/분위기/u.test(memoText)) points.push("분위기");
+  if (/음료|커피|디저트/u.test(memoText)) points.push("음료와 디저트");
   if (/양/u.test(memoText)) points.push("양");
   if (/주차/u.test(memoText)) points.push("주차 편의성");
   if (/직원/u.test(memoText)) points.push("직원 응대");
@@ -3326,11 +4411,14 @@ const inferImportantReviewPoints = (category = "place", memoText = "") => {
     store: ["상담 분위기", "방문 전 확인할 점"],
     education: ["수업 흐름", "초보자 관점"],
     restaurant: ["메뉴와 분위기", "응대와 편의성"],
+    cafe: ["공간 분위기", "음료와 좌석"],
     hospital: ["예약과 상담 흐름", "방문 전 확인할 점"],
     service: ["상담 과정", "진행 흐름"],
     travel: ["동선과 분위기", "다시 간다면 볼 점"],
     experience: ["진행 과정", "추천 대상"],
-    "kids-place": ["아이 반응", "보호자 편의성"]
+    "kids-place": ["아이 반응", "보호자 편의성"],
+    information: ["핵심 개념", "확인 기준"],
+    comparison: ["선택 기준", "장점과 아쉬운 점"]
   };
 
   return fallback[category] || ["직접 확인한 점", "방문 전 확인할 점"];
@@ -3343,10 +4431,13 @@ const inferRecommendedReader = (form = {}, category = "place", memoText = "") =>
   if (category === "education") return "낯선 내용을 바로 시작하기 전 전체 흐름과 난이도를 먼저 확인하고 싶은 분";
   if (category === "product") return "실제 생활에서 바로 쓰기 편한지와 아쉬운 점까지 같이 보고 싶은 분";
   if (category === "restaurant") return "분위기, 양, 주차, 응대까지 한 번에 보고 식사 장소를 고르고 싶은 분";
+  if (category === "cafe") return "카페 분위기와 좌석, 음료 구성을 방문 전 확인하고 싶은 분";
   if (category === "hospital") return "예약과 상담 흐름을 먼저 알고 방문 부담을 줄이고 싶은 분";
   if (category === "service") return "신청 전 상담 방식과 진행 과정을 미리 알고 싶은 분";
   if (category === "travel") return "사진으로 본 분위기와 실제 동선을 함께 확인하고 싶은 분";
   if (category === "experience" || category === "kids-place") return "처음 체험하기 전 진행 흐름과 준비할 점이 궁금한 분";
+  if (category === "information") return "처음 알아보는 주제를 기준과 순서대로 정리해보고 싶은 분";
+  if (category === "comparison") return "구매나 선택 전 장단점과 기준을 차분히 비교하고 싶은 분";
 
   return `${withObjectParticle(topic)} 처음 알아보는 분`;
 };
@@ -3359,15 +4450,111 @@ const inferReviewEmotionTone = (category = "place", memoText = "") => {
   return "솔직하고 편안함";
 };
 
-const getCategoryForbiddenExpressions = (category = "place", productSubtype = "general") => {
+const hasRemovalInstructionForExpression = (sourceText = "", label = "") => {
+  const source = text(sourceText);
+  if (!source || !label || !source.includes(label)) return false;
+
+  const escaped = escapeRegExp(label);
+  const removalPattern = new RegExp(
+    `${escaped}.{0,48}(?:빼|제외|금지|안\\s*넣|넣지\\s*말|들어가면\\s*안|삭제)|(?:빼|제외|금지|안\\s*넣|넣지\\s*말|들어가면\\s*안|삭제).{0,48}${escaped}`,
+    "u"
+  );
+
+  return removalPattern.test(source);
+};
+
+const shouldKeepSourceExpression = (sourceText = "", labels = []) =>
+  labels.some((label) => {
+    const source = text(sourceText);
+    return source.includes(label) && !hasRemovalInstructionForExpression(source, label);
+  });
+
+const productForbiddenPattern = (pattern, labels = []) => ({ pattern, labels });
+
+const getCategoryForbiddenExpressions = (category = "place", productSubtype = "general", sourceText = "") => {
   if (category === "product") {
+    const productForbidden = [
+      productForbiddenPattern(/처음\s*신청하는\s*서비스/gu, ["처음 신청하는 서비스"]),
+      productForbiddenPattern(/신청하는\s*서비스/gu, ["신청하는 서비스"]),
+      productForbiddenPattern(/혼자\s*해결하기보다\s*상담/gu, ["혼자 해결하기보다 상담"]),
+      productForbiddenPattern(/상담\s*과정/gu, ["상담 과정"]),
+      productForbiddenPattern(/상담\s*방식/gu, ["상담 방식"]),
+      productForbiddenPattern(/상담\s*분위기/gu, ["상담 분위기"]),
+      productForbiddenPattern(/결과\s*확인\s*장면/gu, ["결과 확인 장면"]),
+      productForbiddenPattern(/진행\s*과정/gu, ["진행 과정"]),
+      productForbiddenPattern(/비용\s*,?\s*일정\s*,?\s*추가\s*조건/gu, ["비용 일정 추가 조건", "비용", "일정", "추가 조건"]),
+      productForbiddenPattern(/서비스\s*이용/gu, ["서비스 이용"]),
+      productForbiddenPattern(/이용\s*전/gu, ["이용 전"]),
+      productForbiddenPattern(/견적/gu, ["견적"]),
+      productForbiddenPattern(/예약\s*과정/gu, ["예약 과정"]),
+      productForbiddenPattern(/추가\s*조건/gu, ["추가 조건"]),
+      productForbiddenPattern(/상담/gu, ["상담"]),
+      productForbiddenPattern(/서비스/gu, ["서비스"]),
+      productForbiddenPattern(/신청\s*전/gu, ["신청 전"]),
+      productForbiddenPattern(/신청/gu, ["신청"]),
+      productForbiddenPattern(/비용/gu, ["비용"]),
+      productForbiddenPattern(/일정/gu, ["일정"])
+    ];
+
+    const sourceAwareProductForbidden = productForbidden
+      .filter((item) => !shouldKeepSourceExpression(sourceText, item.labels))
+      .map((item) => item.pattern);
+
     return productSubtype === "care"
       ? [/매장\s*방문/gu, /상담\s*분위기/gu]
-      : [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN, /매장\s*방문/gu, /상담\s*분위기/gu];
+          .concat(sourceAwareProductForbidden)
+      : [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN, /매장\s*방문/gu, /상담\s*분위기/gu].concat(sourceAwareProductForbidden);
   }
 
-  if (category === "education") return [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN, /제품\s*후기/gu, /의학적\s*효과/gu];
-  if (category === "hospital") return [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN, /치료\s*효과\s*보장/gu, /완치/gu];
+  if (category === "store") {
+    return [
+      /발림감/gu,
+      /제형/gu,
+      /보송함/gu,
+      /아침저녁\s*사용/gu,
+      /피부\s*흡수/gu,
+      /착용감/gu,
+      PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN
+    ];
+  }
+
+  if (category === "education") return [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN, /제품\s*후기/gu, /의학적\s*효과/gu, /배송/gu, /패키지/gu, /웨이팅/gu, /객실/gu, /체크인/gu];
+  if (category === "restaurant" || category === "cafe") {
+    const restaurantForbidden = [
+      productForbiddenPattern(/서비스\s*신청/gu, ["서비스 신청"]),
+      productForbiddenPattern(/신청\s*과정/gu, ["신청 과정"]),
+      productForbiddenPattern(/진행\s*과정/gu, ["진행 과정"]),
+      productForbiddenPattern(/체험\s*흐름/gu, ["체험 흐름"]),
+      productForbiddenPattern(/비용\s*일정/gu, ["비용 일정"]),
+      productForbiddenPattern(/결과\s*확인/gu, ["결과 확인"]),
+      productForbiddenPattern(/제품\s*패키지/gu, ["제품 패키지"]),
+      productForbiddenPattern(/수강\s*흐름/gu, ["수강 흐름"]),
+      productForbiddenPattern(/커리큘럼/gu, ["커리큘럼"]),
+      productForbiddenPattern(/발림감/gu, ["발림감"]),
+      productForbiddenPattern(/사용감/gu, ["사용감"]),
+      productForbiddenPattern(/제형/gu, ["제형"]),
+      productForbiddenPattern(/견적/gu, ["견적"]),
+      productForbiddenPattern(/상담/gu, ["상담"])
+    ];
+
+    return restaurantForbidden
+      .filter((item) => !shouldKeepSourceExpression(sourceText, item.labels))
+      .map((item) => item.pattern)
+      .concat([/시술\s*효과/gu]);
+  }
+  if (category === "hospital") return [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN, /치료\s*효과\s*보장/gu, /완치/gu, /즉시\s*효과/gu, /의학적\s*단정/gu, /무조건\s*추천/gu];
+  if (category === "travel") return [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN, /제품\s*사용감/gu, /커리큘럼/gu, /상담\s*과정/gu];
+  if (category === "information") {
+    return [
+      /직접\s*(?:방문|다녀|가보|사용|써보|이용|참여)[^.\n]*(?:[.。]|$)/gu,
+      /방문하게\s*된\s*이유/gu,
+      /직접\s*써본\s*느낌/gu,
+      /직접\s*다녀온\s*후기/gu,
+      /가격은\s*\d[\d,]*/gu,
+      /주소는\s*[^.\n]+/gu,
+      /영업시간은\s*[^.\n]+/gu
+    ];
+  }
 
   return [PRODUCT_REVIEW_TERMS_WITH_SCENT_PATTERN];
 };
@@ -3477,24 +4664,39 @@ const createNaturalReviewOutlineFromContext = ({ form = {}, category = "place", 
   if (category === "product") {
     if (/드라이샴푸|운동|떡진|보송/u.test(`${topic} ${memoText}`)) {
       return [
-        "운동 후 머리가 신경 쓰일 때 꺼내본 이유",
-        "쓰기 전에는 보송함이 제일 궁금했어요",
-        "직접 써보니 편했던 부분",
-        "아쉬운 점도 같이 보면",
-        "이런 분께 잘 맞을 것 같아요"
+        "사용하게 된 상황",
+        "사용 전 궁금했던 점",
+        "직접 써본 느낌",
+        "좋았던 점",
+        "아쉬웠던 점",
+        "어떤 사람에게 맞는지",
+        "마무리"
       ];
     }
 
     return [
-      `${withObjectParticle(base)} 써보게 된 계기`,
-      productSubtype === "care" ? "쓰기 전 기대와 걱정이 있었던 부분" : "사용 전 기대했던 부분",
-      "직접 써보며 느낀 점",
-      "좋았던 점과 아쉬웠던 점",
-      "다시 쓸지 고민해본 기준"
+      "사용하게 된 상황",
+      "사용 전 궁금했던 점",
+      "직접 써본 느낌",
+      "좋았던 점",
+      "아쉬웠던 점",
+      "어떤 사람에게 맞는지",
+      "마무리"
     ];
   }
 
   if (category === "restaurant") {
+    const primaryMenu = getPrimaryRestaurantMenu(form, memoText);
+    if (primaryMenu) {
+      return [
+        `${withSubjectParticle(primaryMenu)} 궁금해서 보게 된 곳`,
+        `${primaryMenu} 메뉴를 중심으로 본 부분`,
+        "매장 분위기와 주차 등 방문 전 참고할 점",
+        "맛과 가격은 확인이 필요한 부분",
+        "이런 식사 상황에 추천하고 싶어요"
+      ];
+    }
+
     return [
       /파스타/u.test(`${topic} ${memoText}`)
         ? "파스타 먹을 곳을 찾다가 눈에 들어온 곳"
@@ -3503,6 +4705,16 @@ const createNaturalReviewOutlineFromContext = ({ form = {}, category = "place", 
       "양과 응대에서 기억에 남은 부분",
       "주차까지 생각하면 편했던 점",
       "이런 상황에 추천하고 싶어요"
+    ];
+  }
+
+  if (category === "cafe") {
+    return [
+      `${withObjectParticle(base)} 방문 전 궁금했던 이유`,
+      "공간 분위기와 좌석이 먼저 보였어요",
+      "음료와 디저트에서 기억에 남은 점",
+      "주차와 아이 동반 여부처럼 확인할 부분",
+      "다시 간다면 참고하고 싶은 기준"
     ];
   }
 
@@ -3540,6 +4752,26 @@ const createNaturalReviewOutlineFromContext = ({ form = {}, category = "place", 
       "부모 대기 공간에서 느낀 편안함",
       "주차까지 생각하면 다시 볼 기준",
       "이런 가족에게 추천하고 싶어요"
+    ];
+  }
+
+  if (category === "information") {
+    return [
+      "처음 알아볼 때 가장 궁금한 질문",
+      "기본 개념과 전체 흐름",
+      "확인해야 할 기준",
+      "주의할 점",
+      "선택 기준과 요약 정리"
+    ];
+  }
+
+  if (category === "comparison") {
+    return [
+      "비교가 필요한 이유",
+      "선택 기준",
+      "장점과 아쉬운 점",
+      "어떤 사람에게 맞는지",
+      "구매 전 확인할 점과 최종 판단 기준"
     ];
   }
 
@@ -3618,11 +4850,27 @@ const createHumanIntroParagraph = (analysis) => {
       /운동|떡진|보송/u.test(memoText)
         ? `${withTopicParticle(topic)} 바로 감거나 손질하기 애매한 순간에 얼마나 보송하게 정리되는지가 제일 궁금하더라고요`
         : `${withTopicParticle(topic)} 쓰기 전에는 장점만큼이나 불편한 점은 없는지 같이 확인해보고 싶더라고요`,
+      /운동|떡진|보송/u.test(memoText)
+        ? "바쁜 날에는 머리 상태 하나만 어색해도 계속 신경이 쓰여서, 이런 제품은 실제 생활에서 얼마나 빠르게 쓸 수 있는지가 중요했습니다"
+        : "좋다는 말보다 언제 손이 가고 언제 애매한지가 보여야 실제로 고를 때 도움이 됐습니다",
       analysis.photoSentences[0] || ""
     ], tone);
   }
 
   if (category === "restaurant") {
+    const primaryMenu = getPrimaryRestaurantMenu({ productName: topic }, memoText);
+
+    if (primaryMenu) {
+      return createHumanParagraph([
+        `${withObjectParticle(topic)} 알아보게 된 건 ${withSubjectParticle(primaryMenu)} 유명하다는 이야기가 먼저 눈에 들어왔기 때문이에요`,
+        /짬뽕/u.test(primaryMenu)
+          ? `${primaryMenu}처럼 국물 메뉴는 국물 맛, 재료 구성, 양, 매운 정도에 따라 만족도가 달라져서 방문 전부터 메뉴가 가장 궁금했습니다`
+          : `${withTopicParticle(primaryMenu)} 취향을 많이 타는 메뉴라 맛, 양, 구성, 가격을 함께 확인해보고 싶었습니다`,
+        `${withTopicParticle(topic)} ${withObjectParticle(primaryMenu)} 중심으로 보면 어떤 점을 확인해야 할지도 더 분명해집니다`,
+        analysis.photoSentences[0] || ""
+      ], tone);
+    }
+
     return createHumanParagraph([
       `${withObjectParticle(topic)} 남겨두고 싶었던 건 실제로 식사할 때 분위기와 양, 응대가 같이 기억에 남았기 때문이에요`,
       /주차/u.test(memoText)
@@ -3632,10 +4880,36 @@ const createHumanIntroParagraph = (analysis) => {
     ], tone);
   }
 
+  if (category === "cafe") {
+    return createHumanParagraph([
+      `${withObjectParticle(topic)} 정리해두고 싶었던 건 음료나 디저트만큼 공간 분위기와 좌석 편의성도 중요하게 느껴졌기 때문이에요`,
+      /아이|가족/u.test(memoText)
+        ? "아이와 함께 움직이는 날에는 메뉴보다 머무는 동안 불편하지 않은지가 더 크게 느껴질 때가 있습니다"
+        : "카페는 잠깐 들르는 곳이라도 좌석, 소음, 주차처럼 머무는 기준이 맞아야 만족도가 더 오래 남습니다",
+      analysis.photoSentences[0] || ""
+    ], tone);
+  }
+
   if (category === "hospital") {
     return createHumanParagraph([
       `${withObjectParticle(topic)} 알아볼 때는 진료 내용만큼이나 예약, 대기, 접수 흐름이 궁금했어요`,
       "처음 방문하는 곳은 작은 안내 하나도 부담을 줄여주기 때문에 실제 분위기를 먼저 보게 됩니다",
+      analysis.photoSentences[0] || ""
+    ], tone);
+  }
+
+  if (category === "information") {
+    return createHumanParagraph([
+      `${withObjectParticle(topic)} 처음 알아볼 때는 어디서부터 확인해야 할지 헷갈릴 수 있어요`,
+      "그래서 경험담처럼 꾸미기보다 기본 개념, 진행 흐름, 확인 기준을 차례대로 나눠보는 방식이 더 안전하고 읽기 쉽습니다",
+      analysis.photoSentences[0] || ""
+    ], tone);
+  }
+
+  if (category === "comparison") {
+    return createHumanParagraph([
+      `${withObjectParticle(topic)} 고를 때는 장점만 보는 것보다 내 상황에 맞는 기준을 먼저 정해두는 편이 좋아요`,
+      "구매 전에는 가격이나 구성처럼 바뀔 수 있는 정보보다 선택 기준, 아쉬운 점, 확인할 조건을 나눠보는 것이 판단에 더 도움이 됩니다",
       analysis.photoSentences[0] || ""
     ], tone);
   }
@@ -3692,11 +4966,15 @@ const createProductHumanExperienceSentences = (analysis) => {
   }
 
   if (/떡진|보송/u.test(memoText)) {
-    sentences.push("떡져 보이던 부분이 보송하게 정리되는 느낌이 있어 급하게 머리를 정돈해야 할 때 도움이 됐습니다");
+    sentences.push("앞머리와 정수리 쪽이 떡져 보일 때 보송하게 정리되는 느낌이 있어 급하게 머리를 정돈해야 할 때 도움이 됐습니다");
   }
 
-  if (/휴대/u.test(memoText)) {
+  if (/휴대|가방|넣고\s*다니|들고\s*다니/u.test(memoText)) {
     sentences.push("휴대가 편하다는 점도 꽤 현실적인 장점이었어요. 가방에 넣어두고 필요할 때 꺼내 쓰기 좋겠다는 생각이 들었습니다");
+  }
+
+  if (/급할\s*때|급하게|바로\s*약속|외출\s*전/u.test(memoText)) {
+    sentences.push("급하게 정리해야 하는 날에는 완벽한 스타일링보다 신경 쓰이는 부분을 빨리 가라앉히는지가 더 현실적인 기준이었습니다");
   }
 
   if (/향/u.test(memoText) && productSubtype === "care") {
@@ -3837,48 +5115,97 @@ const createHumanReviewSections = (analysis) => {
   if (category === "product") {
     const experienceSentences = createProductHumanExperienceSentences(analysis);
     const isDryShampoo = /드라이샴푸|운동|떡진|보송/u.test(`${topic} ${memoText}`);
+    const productName = topic || "제품";
+    const heading = (index, fallback) => outline[index] || fallback;
 
     return [
-      createSectionBlock(outline[0], [
+      createSectionBlock(heading(0, "사용하게 된 상황"), [
         [
-          /운동|떡진|보송/u.test(memoText)
-            ? "운동하고 난 뒤에는 머리를 다시 감기 애매한 순간이 있는데, 그럴 때 바로 쓸 수 있는지가 가장 현실적인 기준이었어요"
-            : "처음 써보기 전에는 장점만큼이나 내 생활에 실제로 맞을지가 더 궁금했습니다",
-          "막상 써보니 편했던 순간과 조금 아쉬웠던 부분이 같이 남아서 더 현실적으로 느껴졌습니다"
+          isDryShampoo
+            ? `운동이 끝난 뒤 바로 약속이나 이동이 있으면 머리를 다시 감기 애매할 때가 있어요`
+            : `${withObjectParticle(productName)} 써보게 된 건 일상에서 실제로 손이 자주 갈지 궁금했기 때문이에요`,
+          isDryShampoo
+            ? "특히 앞머리와 정수리 쪽이 눌리거나 떡져 보이면 작은 차이도 신경 쓰이는데, 그런 순간에 빠르게 정리할 수 있는지가 가장 현실적으로 느껴졌습니다"
+            : "상품 후기는 장점만 적는 것보다 내가 어떤 상황에서 필요했는지부터 적어야 실제 사용 흐름이 자연스럽게 보입니다",
+          isDryShampoo
+            ? "특히 운동복을 갈아입고 바로 이동해야 하는 날에는 샴푸나 드라이까지 다시 하기 어려워서, 짧은 시간 안에 티 나는 부분만 정리할 수 있는지가 중요했습니다"
+            : "생활용품이나 뷰티 제품은 한 번 썼을 때의 느낌보다 반복해서 쓸 때 부담이 없는지가 더 오래 남습니다"
         ]
       ], tone),
-      createSectionBlock(outline[1], [
-        experienceSentences.slice(0, 2),
+      createSectionBlock(heading(1, "사용 전 궁금했던 점"), [
+        [
+          isDryShampoo
+            ? `${withTopicParticle(productName)} 정말 보송하게 정리되는지, 향이 부담스럽지는 않은지, 가방에 넣고 다니기 편한지가 먼저 궁금했습니다`
+            : "사용 전에는 설명에 적힌 장점보다 내 생활 패턴과 맞는지, 불편한 부분은 없는지가 먼저 궁금했습니다",
+          "기대치를 너무 크게 잡기보다 실제로 불편했던 순간을 줄여주는지 보는 편이 만족도를 판단하기 쉬웠습니다"
+          ,
+          isDryShampoo
+            ? "완전히 새로 감은 머리처럼 만들기보다, 약속 전에 보이는 부분을 자연스럽게 정돈하는 정도를 기대하고 보는 게 맞겠다고 생각했습니다"
+            : "그래서 사용 전에는 내 루틴에 들어왔을 때 번거롭지 않은지부터 먼저 보게 됐습니다"
+        ],
         photoDetail[0] ? [photoDetail[0]] : []
       ], tone),
-      createSectionBlock(outline[2], [
-        experienceSentences.slice(2),
+      createSectionBlock(heading(2, "직접 써본 느낌"), [
+        experienceSentences.slice(0, 5),
         [
-          importantPoints.length > 0
-            ? `${importantPoints.join(", ")} 같은 부분이 실제로 기억에 남았습니다`
-            : "직접 써본 느낌을 기준으로 보면 장점과 아쉬운 점이 비교적 분명하게 나뉩니다"
+          isDryShampoo
+            ? "머리를 완전히 감은 듯한 개운함과는 다르지만, 급하게 정돈해야 할 때 앞머리와 정수리 쪽을 빠르게 손보는 용도로는 역할이 분명했습니다"
+            : importantPoints.length > 0
+              ? `${importantPoints.join(", ")} 같은 부분이 실제로 기억에 남았습니다`
+              : "직접 써본 느낌을 기준으로 보면 장점과 아쉬운 점이 비교적 분명하게 나뉩니다",
+          isDryShampoo
+            ? "사용 후 머리를 만졌을 때 보송하게 정리된 느낌은 있었지만, 두피까지 씻긴 듯한 개운함과는 구분해서 보는 편이 좋았습니다"
+            : "이런 부분은 개인차가 있을 수 있어서 내가 자주 쓰는 상황과 맞춰보는 게 가장 현실적입니다"
         ]
       ], tone),
-      createSectionBlock(outline[3], [
-        isDryShampoo
-          ? [
-              "아쉬운 점은 사용 상황에 따라 만족도가 달라질 수 있다는 부분이에요",
-              "급하게 정돈해야 할 때는 편하지만, 완전히 새로 감은 듯한 느낌을 기대한다면 차이가 있을 수 있습니다"
-            ]
-          : [
-              analysis.productSubtype === "care"
-                ? "아쉬운 점은 피부 타입이나 취향에 따라 만족도가 달라질 수 있다는 부분이에요"
-                : "아쉬운 점은 쓰는 상황과 기대한 기능에 따라 만족도가 달라질 수 있다는 부분이에요",
-              analysis.productSubtype === "care"
-                ? "향이나 마무리감처럼 개인차가 있는 부분은 직접 쓰는 루틴과 맞는지 함께 보는 편이 좋습니다"
-                : "구매 전에는 크기, 구성, 가격처럼 실제 사용에 영향을 주는 정보를 같이 확인하는 편이 좋습니다"
-            ],
+      createSectionBlock(heading(3, "좋았던 점"), [
+        [
+          isDryShampoo
+            ? "좋았던 점은 운동 후처럼 시간이 애매한 순간에 머리 상태를 빠르게 정리할 수 있다는 점이었습니다"
+            : "좋았던 점은 사용 상황이 분명할 때 장점도 더 쉽게 느껴진다는 부분이었습니다",
+          /휴대|가방|넣고\s*다니|들고\s*다니/u.test(memoText)
+            ? "휴대가 편해서 가방에 넣고 다니기 좋다는 점도 현실적인 장점으로 남았습니다"
+            : "사용 방법이 복잡하지 않으면 필요한 순간에 다시 꺼내 쓰기 쉬워집니다",
+          /향/u.test(memoText)
+            ? "향은 강하게 튀는 느낌보다 무난하게 지나가는 쪽이라 부담이 적었습니다"
+            : "향이나 마무리감은 취향 차이가 있을 수 있어 직접 느낀 범위 안에서만 정리하는 편이 좋습니다",
+          isDryShampoo
+            ? "준비 시간이 부족한 날에 머리 때문에 전체 인상이 흐트러져 보이는 걸 줄여준다는 점에서 활용도가 있었습니다"
+            : "크게 마음먹고 쓰는 제품보다 필요한 순간에 자연스럽게 손이 가는 제품인지가 장점으로 느껴졌습니다"
+        ]
+      ], tone),
+      createSectionBlock(heading(4, "아쉬웠던 점"), [
+        [
+          isDryShampoo
+            ? "아쉬운 점은 완전히 샴푸한 느낌을 기대하면 차이가 있다는 부분입니다"
+            : analysis.productSubtype === "care"
+              ? "아쉬운 점은 피부 타입이나 취향에 따라 만족도가 달라질 수 있다는 부분입니다"
+              : "아쉬운 점은 쓰는 상황과 기대한 기능에 따라 만족도가 달라질 수 있다는 부분입니다",
+          isDryShampoo
+            ? "급할 때 쓰기 좋은 보조 제품으로 생각하면 만족도가 맞지만, 두피까지 개운하게 씻긴 느낌을 대신한다고 보기는 어렵습니다"
+            : "구매 전에는 크기, 구성, 가격처럼 실제 사용에 영향을 주는 정보를 같이 확인하는 편이 좋습니다",
+          "그래서 장점을 볼 때도 기대치를 너무 크게 잡기보다, 내가 불편했던 순간을 얼마나 줄여주는지 기준으로 보는 편이 좋았습니다"
+        ],
         productInfoSentences
       ], tone),
-      createSectionBlock(outline[4], [
+      createSectionBlock(heading(5, "어떤 사람에게 맞는지"), [
         [
-          `${withConditionalParticle(recommendedReader)} 참고하기 좋아요`,
-          "구매 전에는 가격, 용량, 구매처처럼 바뀔 수 있는 정보만 한 번 더 비교해보면 좋겠습니다"
+          isDryShampoo
+            ? "운동 후 바로 약속이 있거나 외출 전에 머리 상태가 신경 쓰이는 분께 잘 맞을 것 같습니다"
+            : `${withConditionalParticle(recommendedReader)} 참고하기 좋아요`,
+          "다만 기대하는 역할을 분명히 잡고, 가격과 용량, 구매처처럼 바뀔 수 있는 정보는 구매 전에 한 번 더 확인하는 편이 좋습니다",
+          isDryShampoo
+            ? "머리를 바로 감기 어려운 상황이 자주 있거나 운동 가방에 가볍게 넣어둘 제품을 찾는 분이라면 더 현실적으로 맞을 수 있습니다"
+            : "내 생활 패턴에서 자주 쓰는 장면이 떠오르는 분이라면 비교해볼 만합니다"
+        ]
+      ], tone),
+      createSectionBlock(heading(6, "마무리"), [
+        [
+          `${withTopicParticle(productName)} 필요한 순간이 분명할수록 장점이 잘 보이는 제품이었습니다`,
+          isDryShampoo
+            ? "저는 운동 후 머리가 눌리거나 떡져 보일 때 빠르게 정리하는 용도로 생각하면 가장 자연스럽게 맞았습니다"
+            : "좋았던 점과 아쉬운 점을 같이 보면 내 생활에 맞는 제품인지 더 차분하게 판단할 수 있습니다",
+          "막연히 좋다고 말하기보다는 내가 쓰려는 상황과 기대하는 역할이 맞는지 확인하면 실패 확률을 줄일 수 있을 것 같습니다"
         ]
       ], tone)
     ];
@@ -3886,48 +5213,203 @@ const createHumanReviewSections = (analysis) => {
 
   if (category === "restaurant") {
     const partySize = getPartySize(memoText);
+    const primaryMenu = getPrimaryRestaurantMenu({ productName: topic }, memoText);
+    const hasFamilyCue = /가족|외식|아이|아이랑|여행/u.test(memoText);
+    const hasTasteCue = /맛|국물|매콤|칼칼|시원|진하|불맛|담백|맛있/u.test(memoText);
+    const hasAmountCue = /양|많|넉넉/u.test(memoText);
 
     return [
       createSectionBlock(outline[0], [
         [
-          /분위기/u.test(memoText)
-            ? "처음 눈에 들어온 건 매장 분위기였어요. 너무 시끄럽거나 불편한 자리보다 편하게 식사할 수 있는지가 중요했습니다"
-            : "식사할 곳을 고를 때는 메뉴만큼이나 함께 간 사람이 편하게 머물 수 있는지가 중요하더라고요",
-          /회식|직장인/u.test(memoText)
-            ? "직장인 회식 자리로 볼 때는 맛뿐 아니라 대화하기 편한 분위기와 주문 구성이 같이 맞아야 만족도가 올라갑니다"
+          primaryMenu
+            ? `${withSubjectParticle(primaryMenu)} 유명하다는 점은 이 맛집을 볼 때 가장 분명한 출발점이었어요`
+            : `${withObjectParticle(topic)} 보게 된 건 대표 메뉴와 식사 분위기를 함께 확인하고 싶었기 때문이에요`,
+          primaryMenu && /짬뽕/u.test(primaryMenu)
+            ? "짬뽕 메뉴는 사진만으로도 국물 색과 재료를 어느 정도 볼 수 있지만, 실제 맛과 맵기, 양은 방문 후 메모로 보완하면 좋아요"
+            : primaryMenu
+              ? `${withTopicParticle(primaryMenu)} 맛과 양, 구성, 가격을 함께 보면 방문 전 판단하기 좋은 메뉴입니다`
+              : "맛집 후기는 분위기보다 먼저 어떤 메뉴를 먹으러 가는 곳인지가 보여야 글의 중심이 분명해집니다",
+          /본점|강화도/u.test(`${topic} ${memoText}`)
+            ? "본점이나 지역명이 함께 들어간 맛집은 처음 가는 사람도 위치와 대표 메뉴를 같이 확인하고 싶어 합니다"
             : "",
-          partySize ? `${partySize}이 함께 먹는 자리라면 메뉴를 여러 개 나눠 먹기 편한지도 자연스럽게 보게 됩니다` : "",
-          /양/u.test(memoText) ? "양이 넉넉하다는 점도 식사 만족도를 올려주는 부분으로 남았습니다" : ""
+          /회식|직장인/u.test(memoText)
+            ? "직장인 회식 자리로 본다면 메뉴가 나눠 먹기 좋은지와 대화하기 편한 분위기인지도 함께 보게 됩니다"
+            : "",
+          partySize ? `${partySize}이 함께 먹는 자리라면 메뉴를 여러 개 나눠 먹기 편한지도 자연스럽게 보게 됩니다` : ""
         ],
         photoDetail[0] ? [photoDetail[0]] : []
       ], tone),
       createSectionBlock(outline[1], [
         [
-          /파스타/u.test(`${topic} ${memoText}`)
-            ? "파스타는 분위기만큼 맛과 양이 같이 맞아야 만족도가 높아지는데, 메모에 남긴 것처럼 양이 넉넉한 편이라는 점이 좋았습니다"
-            : "주문한 메뉴는 같이 먹기 편한 구성인지, 양이 부족하지 않은지를 중심으로 보게 됐어요",
-          ...createRestaurantMenuSentences(memoText),
-          /직원|친절/u.test(memoText) ? "직원 응대가 친절했던 점도 식사 흐름을 편하게 만들어줬습니다" : ""
+          ...createRestaurantMenuSentences(`${topic}\n${memoText}`),
+          hasTasteCue
+            ? "메모에 맛과 관련된 단서가 있다면 국물, 소스, 재료, 맵기처럼 구체적인 기준으로 풀어주면 음식 후기가 더 살아납니다"
+            : "아직 실제 맛 메모가 적다면 맛을 단정하기보다 어떤 부분을 확인하면 좋을지 남겨두는 편이 자연스럽습니다",
+          hasAmountCue
+            ? "양이 생각보다 많았다는 메모는 가족 외식이나 여러 명이 나눠 먹는 자리에서 중요한 장점으로 풀기 좋습니다"
+            : "양 정보가 없다면 사진이나 메뉴판을 보고 1인분 기준, 나눠 먹기 좋은 구성을 나중에 보완하면 좋겠습니다"
         ]
       ], tone),
       createSectionBlock(outline[2], [
         [
+          /분위기/u.test(memoText)
+            ? "분위기가 좋았다는 메모는 가족 외식이나 여행 중 식사 장소를 고를 때 특히 읽기 좋은 포인트입니다"
+            : "매장 분위기와 좌석, 주문 동선은 사진이나 추가 메모가 있으면 더 구체적으로 보완하기 좋습니다",
+          /직원|친절/u.test(memoText)
+            ? "직원 응대가 친절했다는 점은 처음 방문한 맛집에서 주문 흐름을 편하게 만들어주는 기준이 됩니다"
+            : "응대나 주문 흐름은 제공된 내용이 없으면 단정하지 않고 확인할 부분으로 남겨두는 편이 좋습니다",
           /주차/u.test(memoText)
-            ? "주차가 편하면 식사 전후로 신경 쓸 일이 줄어들어서 전체 만족도가 확실히 올라갑니다"
-            : "방문 전에는 대기, 예약, 이동 동선처럼 식사 외적인 부분도 함께 확인하면 좋아요",
-          "맛집 후기는 맛만 쓰는 것보다 분위기와 응대, 이동 편의성을 같이 적을 때 실제 방문에 더 도움이 됩니다"
+            ? "주차가 편했다는 점은 차로 이동하는 가족 외식이나 여행 동선에서 꽤 중요한 장점으로 남습니다"
+            : "주차 정보가 없다면 방문 전 한 번 더 확인해야 할 항목으로 따로 빼두는 편이 안전합니다"
         ]
       ], tone),
       createSectionBlock(outline[3], [
         [
-          "아쉬운 점은 방문 시간대에 따라 분위기나 대기 상황이 달라질 수 있다는 점이에요",
+          "아쉬운 점은 아직 확인되지 않은 정보를 억지로 채우면 글이 오히려 어색해진다는 점이에요",
           ...createRestaurantCheckSentences(memoText)
         ]
       ], tone),
       createSectionBlock(outline[4], [
         [
-          `${recommendedReader}께 잘 맞을 것 같아요`,
-          "편하게 식사하면서 분위기까지 챙기고 싶은 날이라면 후보로 두기 좋겠습니다"
+          hasFamilyCue
+            ? "가족 외식이나 강화도 여행 중 식사 장소를 찾는 분이라면 대표 메뉴와 주차, 대기 여부를 함께 확인해보면 좋겠습니다"
+            : `${recommendedReader}께 참고가 될 것 같아요`,
+          primaryMenu
+            ? `${withTopicParticle(primaryMenu)} 궁금한 분이라면 메뉴 사진, 가격, 웨이팅 정보를 추가로 확인한 뒤 방문 계획을 잡는 방식이 좋겠습니다`
+            : "대표 메뉴와 방문 시간대, 주차 가능 여부를 같이 보면 실제로 움직일 때 더 편합니다",
+          "마무리는 무조건 가보라는 식보다 어떤 메뉴가 궁금했고 어떤 정보는 더 확인하면 좋은지 정리하는 쪽이 맛집 후기답게 읽힙니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "cafe") {
+    return [
+      createSectionBlock(outline[0], [
+        [
+          /아이|가족/u.test(memoText)
+            ? "아이와 함께 카페를 갈 때는 음료나 디저트보다 머무는 동안 편한지가 먼저 보입니다"
+            : "카페를 고를 때는 메뉴만큼이나 공간 분위기와 좌석이 내 목적에 맞는지가 중요했습니다",
+          /가족/u.test(memoText)
+            ? "주말에 가족이 함께 방문하는 상황이라면 모두가 편하게 앉을 수 있는지도 중요한 기준이 됩니다"
+            : "",
+          /주차/u.test(memoText)
+            ? "주차가 편하다는 점은 방문 전후의 부담을 줄여주는 요소로 남았습니다"
+            : "방문 전에는 좌석 간격, 소음, 운영시간처럼 실제로 머무는 데 영향을 주는 부분도 함께 보게 됩니다"
+        ],
+        photoDetail[0] ? [photoDetail[0]] : []
+      ], tone),
+      createSectionBlock(outline[1], [
+        [
+          /분위기/u.test(memoText)
+            ? "분위기가 좋게 느껴지면 짧게 머물러도 만족도가 오래 남습니다"
+            : "공간은 사진보다 실제로 앉았을 때 편한지, 대화하기 괜찮은지가 더 크게 느껴집니다",
+          /좌석/u.test(memoText)
+            ? "좌석이 편하거나 여유롭게 느껴졌다면 아이와 함께 가거나 오래 머무를 때도 기준이 됩니다"
+            : "좌석 정보가 부족하다면 발행 전 콘센트, 테이블 간격, 혼잡 시간대를 한 번 더 확인하면 좋겠습니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[2], [
+        [
+          /음료|커피|디저트|메뉴/u.test(memoText)
+            ? "음료나 디저트는 메모에 남은 느낌을 중심으로 정리하면 과장 없이 자연스럽습니다"
+            : "메뉴와 가격은 제공된 정보가 부족하면 임의로 만들지 않고 [확인 필요]로 남기는 편이 안전합니다",
+          "카페 후기는 맛 표현만 길게 쓰기보다 공간, 좌석, 주문 흐름을 함께 적을 때 실제 방문에 더 도움이 됩니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[3], [
+        [
+          /아이/u.test(memoText)
+            ? "아이와 함께 간다면 아이 음료, 유아 의자, 화장실 동선처럼 작은 부분이 체감 만족도에 영향을 줍니다"
+            : "주차, 운영시간, 대기 여부는 방문 시간대에 따라 달라질 수 있어 한 번 더 확인하는 편이 좋습니다",
+          "아쉬운 점도 함께 적어두면 글이 광고처럼 보이지 않고 실제 방문 기준으로 읽힙니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[4], [
+        [
+          `${withConditionalParticle(recommendedReader)} 참고하기 좋겠습니다`,
+          "다시 간다면 사람이 몰리는 시간대와 주차 가능 여부, 내가 원하는 좌석 분위기가 맞는지를 먼저 볼 것 같습니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "information") {
+    const memoSentences = [
+      /공고문/u.test(memoText) ? "공고문은 조건과 제한 사항을 확인하는 출발점이라 처음부터 따로 표시해두는 편이 좋습니다" : "",
+      /입찰/u.test(memoText) ? "입찰 흐름은 공고 확인부터 결과 확인까지 순서가 이어지므로 단계별로 보는 편이 이해하기 쉽습니다" : "",
+      /초보자|기준/u.test(memoText) ? "초보자 기준에서는 어려운 용어보다 지금 확인해야 할 기준을 먼저 잡는 것이 현실적입니다" : "",
+      /리스크|위험|주의/u.test(memoText) ? "리스크는 마지막에 보는 항목이 아니라 시작 전에 먼저 확인해야 할 기준으로 두는 편이 안전합니다" : ""
+    ].filter(Boolean);
+
+    return [
+      createSectionBlock(outline[0], [
+        [
+          `${withObjectParticle(topic)} 처음 알아볼 때 가장 헷갈리는 건 용어보다 전체 흐름입니다`,
+          "먼저 무엇을 확인해야 하는지 정리하면 다음 단계에서 찾아볼 정보도 훨씬 분명해집니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[1], [
+        [
+          /세관공매/u.test(topic)
+            ? "세관공매는 공고문 확인, 입찰 흐름, 결과 확인처럼 단계가 나뉘어 있어서 순서대로 보는 편이 좋습니다"
+            : "처음 시작하는 방법을 볼 때는 개념, 준비 단계, 확인 기준을 나눠두면 부담이 줄어듭니다",
+          ...(memoSentences.length > 0 ? memoSentences.slice(0, 2) : ["처음 보는 주제라면 핵심 용어와 진행 순서를 먼저 나눠보는 편이 이해하기 쉽습니다"])
+        ]
+      ], tone),
+      createSectionBlock(outline[2], [
+        [
+          /공고문/u.test(memoText) ? "공고문은 조건과 일정을 확인하는 기준이 되므로 먼저 읽는 습관을 들이는 편이 좋습니다" : "",
+          /입찰/u.test(memoText) ? "입찰 흐름은 신청부터 결과 확인까지 어떤 순서로 이어지는지 먼저 잡아두면 덜 막막합니다" : "",
+          /초보자|기준/u.test(memoText) ? "초보자 기준에서는 어려운 용어를 한 번에 외우기보다 반복해서 나오는 기준부터 확인하는 것이 현실적입니다" : ""
+        ]
+      ], tone),
+      createSectionBlock(outline[3], [
+        [
+          "확인되지 않은 가격, 주소, 운영시간은 단정하지 않는 편이 안전합니다",
+          "정보 정리형 글에서는 확인한 기준과 주의할 점을 구분해두는 것이 신뢰를 높입니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[4], [
+        [
+          `${withTopicParticle(topic)} 처음이라면 기본 개념, 진행 순서, 확인 기준을 먼저 잡고 세부 정보를 더해가는 방식이 좋습니다`,
+          "마지막에는 내가 지금 바로 확인할 것과 나중에 다시 찾아볼 것을 나눠두면 글을 읽는 사람도 행동하기 쉬워집니다"
+        ]
+      ], tone)
+    ];
+  }
+
+  if (category === "comparison") {
+    return [
+      createSectionBlock(outline[0], [
+        [
+          `${withObjectParticle(topic)} 바로 고르기보다 비교 기준을 먼저 잡아두면 선택이 훨씬 편해집니다`,
+          "구매 전에는 장점만 눈에 들어오기 쉬워서 아쉬운 점과 확인할 조건을 같이 보는 편이 좋습니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[1], [
+        [
+          "선택 기준은 가격, 구성, 사용 목적, 유지 관리처럼 실제 만족도에 영향을 주는 항목부터 나누면 좋습니다",
+          ...createCategoryMemoSentences(memoText, "메모에 남은 기준을 중심으로 비교하면 과장 없이 판단하기 쉽습니다").slice(0, 2)
+        ],
+        photoDetail[0] ? [photoDetail[0]] : []
+      ], tone),
+      createSectionBlock(outline[2], [
+        [
+          "장점은 내가 자주 쓰는 상황과 맞을 때 의미가 있고, 아쉬운 점은 구매 후 불편으로 이어질 수 있는지 확인해야 합니다",
+          "단순 추천보다 어떤 사람에게 맞고 어떤 사람에게는 애매할 수 있는지 나눠두면 글이 더 설득력 있게 읽힙니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[3], [
+        [
+          `${withConditionalParticle(recommendedReader)} 기준을 잡는 데 도움이 됩니다`,
+          "내 상황과 맞지 않는 장점은 크게 의미가 없기 때문에 사용 목적을 먼저 정해두는 편이 좋습니다"
+        ]
+      ], tone),
+      createSectionBlock(outline[4], [
+        [
+          "구매 전에는 가격, 구성, 교환/환불, 실제 사용 조건처럼 바뀔 수 있는 정보를 한 번 더 확인해야 합니다",
+          "최종 판단은 가장 많은 장점이 아니라 내 목적에 가장 덜 불편한 선택지인지로 보는 편이 현실적입니다"
         ]
       ], tone)
     ];
@@ -4010,7 +5492,7 @@ const createHumanReviewSections = (analysis) => {
 const applyCategoryGuardrails = (body = "", analysis = {}) => {
   const category = analysis.category || "place";
   const productSubtype = analysis.productSubtype || "general";
-  const patterns = getCategoryForbiddenExpressions(category, productSubtype);
+  const patterns = getCategoryForbiddenExpressions(category, productSubtype, `${analysis.topic || ""}\n${analysis.memoText || ""}`);
   let guarded = body;
 
   patterns.forEach((pattern) => {
@@ -4043,7 +5525,7 @@ const createExperienceReviewBody = (form = {}, selectedTitle = "", category = in
   const memoLines = splitMemoLines(form.experienceMemo).map(softenSensitiveExpression);
   const emphasis = splitCommaList(form.emphasisPoints, 5);
   const emphasisText = emphasis.length > 0 ? emphasis.join(", ") : "직접 느낀 점";
-  const targetLength = normalizeTargetLength(form.targetLength);
+  const targetLength = getTargetLengthSettings(form, category).target;
   const imageSuggestions = createImageSuggestions(form);
   const imageSummary = getImageContextSummary(form, category);
   const disclosure = getDisclosureSentence(form);
@@ -4397,10 +5879,34 @@ const createBody = (form = {}, selectedTitle = "") => {
   return createExperienceReviewBody(form, selectedTitle, reviewCategory);
 };
 
+const isSelectedTitleUsableForCurrentDraft = (candidateTitle = "", form = {}, category = inferReviewCategory(form)) => {
+  const title = text(candidateTitle);
+  if (!title) return false;
+
+  const mainKeyword = getMainKeyword(form);
+  if (mainKeyword && !title.includes(mainKeyword)) return false;
+
+  const memoText = getFormMemoText(form);
+  const productSubtype = detectProductSubtype(form, memoText);
+  const sourceText = `${mainKeyword}\n${text(form.productName)}\n${memoText}`;
+  const forbiddenPatterns = getCategoryForbiddenExpressions(category, productSubtype, sourceText);
+  if (forbiddenPatterns.some((pattern) => regexTest(pattern, title))) return false;
+
+  if (category === "product") {
+    return !getCategoryForbiddenExpressions(category, productSubtype, sourceText).some((pattern) => regexTest(pattern, title));
+  }
+
+  return true;
+};
+
 export function createProductReviewDraft(form = {}) {
   const category = inferReviewCategory(form);
   const titles = createTitleCandidates(form);
-  const selectedTitle = text(form.selectedTitle) || titles[0] || "";
+  const requestedTitle = text(form.selectedTitle);
+  const selectedTitle = isSelectedTitleUsableForCurrentDraft(requestedTitle, form, category)
+    ? requestedTitle
+    : titles[0] || "";
+  const generationId = text(form.generationId) || `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const hashtags = createHashtags(form);
   const imageSuggestions = createImageSuggestions(form);
   const outline = createReviewOutline(form, category);
@@ -4411,7 +5917,7 @@ export function createProductReviewDraft(form = {}) {
   const recommendedFor = createRecommendedForItems(form, category);
   const faqItems = createFaqItems(form, category);
   const baseBody = createBody(form, selectedTitle);
-  const bodyWithoutChecklist = createPublishableReviewBody({
+  let bodyWithoutChecklist = createPublishableReviewBody({
     baseBody,
     form,
     category,
@@ -4420,7 +5926,7 @@ export function createProductReviewDraft(form = {}) {
     recommendedFor,
     faqItems
   });
-  const finalChecklist = createChecklistItems({
+  let finalChecklist = createChecklistItems({
     form,
     category,
     selectedTitle,
@@ -4429,7 +5935,46 @@ export function createProductReviewDraft(form = {}) {
     photoGuide,
     infoSummary
   });
-  const body = normalizeBody(bodyWithoutChecklist);
+  let body = normalizeBody(bodyWithoutChecklist);
+  let quality = assessBlogWriterQuality({
+    form,
+    category,
+    selectedTitle,
+    body,
+    hashtags,
+    photoGuide,
+    faqItems
+  });
+
+  if (quality.score < 90) {
+    const targetSettings = getTargetLengthSettings(form, category);
+    bodyWithoutChecklist = trimBodyToMaxLength(
+      polishPublishableBlogBody(
+        normalizeBody([body, ...createNaturalReviewFinishingSections(form, category)].join("\n\n"))
+      ),
+      targetSettings
+    );
+    finalChecklist = createChecklistItems({
+      form,
+      category,
+      selectedTitle,
+      body: bodyWithoutChecklist,
+      hashtags,
+      photoGuide,
+      infoSummary
+    });
+    body = normalizeBody(bodyWithoutChecklist);
+    quality = assessBlogWriterQuality({
+      form,
+      category,
+      selectedTitle,
+      body,
+      hashtags,
+      photoGuide,
+      faqItems
+    });
+  }
+
   const closingParagraph = extractClosingParagraph(baseBody);
   const contentPackage = createProductReviewContentPackage({
     form,
@@ -4444,13 +5989,23 @@ export function createProductReviewDraft(form = {}) {
     infoSummary,
     recommendedFor,
     faqItems,
-    finalChecklist
+    finalChecklist,
+    qualityScore: quality.score,
+    qualityIssues: quality.issues,
+    qualityChecks: quality.checks,
+    generationId
   });
+  const titleCandidates = contentPackage.titleCandidates || titles.slice(0, 5);
+  const finalTitle = contentPackage.finalRecommendedTitle || selectedTitle || titleCandidates[0] || "";
 
   return {
+    generationId,
     category,
-    titles,
-    selectedTitle,
+    titles: titleCandidates,
+    titleCandidates,
+    finalTitle,
+    selectedTitle: finalTitle,
+    mainKeyword: contentPackage.mainKeyword,
     body,
     hashtags,
     imageSuggestions,
@@ -4459,6 +6014,9 @@ export function createProductReviewDraft(form = {}) {
     searchKeywords,
     closingParagraph,
     contentPackage,
+    qualityScore: quality.score,
+    qualityIssues: quality.issues,
+    qualityChecks: quality.checks,
     bodyLength: body.replace(/\s+/g, "").length
   };
 }
