@@ -177,10 +177,25 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
   const qualityIssues = draft.qualityIssues || packageData.qualityIssues || [];
   const qualityChecks = draft.qualityChecks || packageData.qualityChecks || [];
   const blogWriterQuality = draft.blogWriterQuality || packageData.blogWriterQuality || null;
+  const engine = draft.engine || packageData.engine || (draft.generationRoute === "llm" ? "llm" : "fallback");
+  const summary = {
+    ...(packageData.summary || {}),
+    ...(draft.summary || {}),
+    engine,
+    bodyLength,
+    targetCharCount:
+      draft.summary?.targetCharCount ||
+      packageData.summary?.targetCharCount ||
+      packageData.targetLengthRange?.target ||
+      packageData.targetCharCount ||
+      null
+  };
 
   return {
     ...draft,
     generationId: nextGenerationId,
+    engine,
+    summary,
     finalTitle,
     selectedTitle: finalTitle,
     titleCandidates,
@@ -201,6 +216,9 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
           titleCandidates,
           mainKeyword,
           blogBody: body,
+          engine,
+          actualBodyLength: bodyLength,
+          summary,
           qualityScore,
           qualityIssues,
           qualityChecks,
@@ -633,12 +651,19 @@ export default function ProductReviewMaker() {
     };
   };
 
-  const createLocalFallbackDraft = (payload, generationId) =>
-    normalizeReviewResult(
+  const createLocalFallbackDraft = (payload, generationId) => {
+    const fallbackDraft = createProductReviewDraft(payload);
+
+    return normalizeReviewResult(
       {
-        ...createProductReviewDraft(payload),
+        ...fallbackDraft,
         generationId,
         generationRoute: "local-fallback",
+        engine: "fallback",
+        summary: {
+          ...(fallbackDraft.summary || {}),
+          engine: "fallback"
+        },
         llm: {
           used: false,
           reason: "local-fallback"
@@ -647,6 +672,7 @@ export default function ProductReviewMaker() {
       generationId,
       payload
     );
+  };
 
   const requestBlogDraft = async (payload, generationId) => {
     try {

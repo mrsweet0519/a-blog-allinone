@@ -63,9 +63,26 @@ const getRestaurantTitleIntentCount = (titles = []) => {
     /갈낙짬뽕|짬뽕|탕수육|파스타|대표 메뉴|메뉴/u,
     /강화도맛집|초지대교|강화도|지역|근처|맛집/u,
     /방문 전|체크|참고|가기 전/u,
-    /가족여행|가족 식사|가족|회식|모임|식사 후보|여행/u,
+    /가족여행|가족 식사|가족|회식|모임|여행/u,
     /정보|요약|위치|정리/u
   ].filter((pattern) => pattern.test(joinedTitles)).length;
+};
+
+const RESTAURANT_GENERIC_EXPLANATION_PATTERN =
+  /식사 장소를 고를 때는 이런 기준|위치와 대표 메뉴를 나눠 보면|식사 후보로 보기|판단 기준|정보가 흩어져 있으면 판단|기준이 됩니다|후보를 고를 때|기준에서 위치와 메뉴|방문 전 확인할 항목/u;
+
+const countRestaurantRoleOverlaps = (paragraphs = []) => {
+  const rolePatterns = [
+    /식사\s*후보/u,
+    /이동\s*동선/u,
+    /대표\s*메뉴/u,
+    /방문\s*전\s*확인/u
+  ];
+
+  return rolePatterns.reduce((total, pattern) => {
+    const paragraphHits = paragraphs.filter((paragraph) => pattern.test(paragraph)).length;
+    return total + Math.max(0, paragraphHits - 1);
+  }, 0);
 };
 
 export const evaluateBlogWriterQuality = ({
@@ -115,6 +132,27 @@ export const evaluateBlogWriterQuality = ({
   const uniqueHashtags = new Set(hashtags.map((tag) => compact(tag))).size;
   const menuTitleCount = primaryMenu ? titles.filter((title) => title.includes(primaryMenu)).length : 0;
   const regionTitleCount = titles.filter((title) => /강화도맛집|초지대교|강화도|맛집|근처/u.test(title)).length;
+  const criterionWordCount = (normalizedBody.match(/기준|후보|확인/gu) || []).length;
+  const genericExplanationCount = (normalizedBody.match(RESTAURANT_GENERIC_EXPLANATION_PATTERN) || []).length;
+  const restaurantRoleOverlapCount = category === "restaurant" ? countRestaurantRoleOverlaps(paragraphs) : 0;
+  const firstParagraphAwkward =
+    category === "restaurant" &&
+    /흐름의\s*식당|자연스럽게\s*살펴보게\s*되는|식사\s*후보|판단\s*기준/u.test(firstParagraph);
+  const photoContextBland =
+    category === "restaurant" &&
+    imageCount > 0 &&
+    !/붉은\s*국물|해산물|채소|색감|그릇|재료|토핑|튀김\s*색|담긴\s*구성/u.test(normalizedBody);
+  const awkwardTitle =
+    category === "restaurant" &&
+    (titles.some((title) => /식사\s*후보|기준\s*정리|확인할\s*점/u.test(title)) || getRestaurantTitleIntentCount(titles) < 5);
+  const weakExperienceFlow =
+    category === "restaurant" &&
+    !/(가족여행|가족 식사|회식|다녀온 뒤|알게 된 이유|궁금했던 이유|사진으로 보니)/u.test(normalizedBody);
+  const forcedLengthExpansion =
+    category === "restaurant" &&
+    Number(targetCharCount) >= 2400 &&
+    normalizedBody.length >= 2500 &&
+    (criterionWordCount >= 14 || genericExplanationCount > 0 || restaurantRoleOverlapCount >= 2);
 
   const checks = [
     {
@@ -203,6 +241,38 @@ export const evaluateBlogWriterQuality = ({
       penalty: 12,
       critical: repeatedCheckInfo,
       detail: "확인 필요 반복"
+    },
+    {
+      id: "restaurant-natural-flow",
+      passed:
+        category !== "restaurant" ||
+        (!firstParagraphAwkward &&
+          !weakExperienceFlow &&
+          criterionWordCount <= 11 &&
+          genericExplanationCount === 0 &&
+          restaurantRoleOverlapCount <= 1),
+      penalty: 16,
+      critical: firstParagraphAwkward || genericExplanationCount > 0 || restaurantRoleOverlapCount >= 3,
+      detail: "맛집 후기 자연스러움"
+    },
+    {
+      id: "restaurant-photo-specificity",
+      passed: category !== "restaurant" || !photoContextBland,
+      penalty: 8,
+      detail: "사진 시각 정보 구체성"
+    },
+    {
+      id: "restaurant-title-click",
+      passed: category !== "restaurant" || !awkwardTitle,
+      penalty: 8,
+      detail: "제목 후보 클릭감"
+    },
+    {
+      id: "restaurant-forced-length",
+      passed: !forcedLengthExpansion,
+      penalty: 20,
+      critical: forcedLengthExpansion,
+      detail: "무리한 분량 확장"
     }
   ];
 

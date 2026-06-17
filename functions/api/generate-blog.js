@@ -76,9 +76,17 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   const body = String(llmDraft.body || llmDraft.blogBody || fallbackDraft.body || "").trim();
   const hashtags = normalizeList(llmDraft.hashtags, fallbackDraft.hashtags || fallbackPackage.hashtags || []);
   const faqItems = normalizeFaqItems(llmDraft.faqItems || llmDraft.faq, fallbackPackage.faqItems || []);
-  const mainKeyword = String(llmDraft.mainKeyword || fallbackDraft.mainKeyword || fallbackPackage.mainKeyword || "").trim();
-  const subKeywords = normalizeList(llmDraft.subKeywords, fallbackPackage.subKeywords || []);
-  const targetCharCount = form.targetCharCount || form.targetLength || fallbackPackage.targetLengthRange?.target || 2500;
+  const fallbackMainKeyword = String(fallbackDraft.mainKeyword || fallbackPackage.mainKeyword || "").trim();
+  const llmMainKeyword = String(llmDraft.mainKeyword || "").trim();
+  const mainKeyword = compact(llmMainKeyword) === compact(fallbackMainKeyword) ? llmMainKeyword : fallbackMainKeyword;
+  const subKeywords = normalizeList(
+    [...normalizeList(llmDraft.subKeywords), ...(fallbackPackage.subKeywords || [])],
+    fallbackPackage.subKeywords || []
+  );
+  const targetCharCount = fallbackPackage.informationLimited
+    ? fallbackPackage.targetLengthRange?.target || fallbackPackage.targetCharCount || 1700
+    : form.targetCharCount || form.targetLength || fallbackPackage.targetLengthRange?.target || 2500;
+  const bodyLength = body.replace(/\s+/g, "").length;
   const blogWriterQuality = evaluateBlogWriterQuality({
     form,
     category: fallbackDraft.category,
@@ -105,6 +113,13 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     mainKeyword,
     subKeywords,
     blogBody: body,
+    engine: "llm",
+    actualBodyLength: bodyLength,
+    summary: {
+      engine: "llm",
+      bodyLength,
+      targetCharCount
+    },
     faqItems,
     hashtags,
     qualityScore,
@@ -121,9 +136,15 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     titleCandidates,
     titles: titleCandidates,
     body,
-    bodyLength: body.replace(/\s+/g, "").length,
+    bodyLength,
     mainKeyword,
     hashtags,
+    engine: "llm",
+    summary: {
+      engine: "llm",
+      bodyLength,
+      targetCharCount
+    },
     contentPackage,
     qualityScore,
     qualityIssues,
@@ -135,6 +156,26 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
 const withFallbackRoute = (fallbackDraft = {}, llm = {}) => ({
   ...fallbackDraft,
   generationRoute: "static-fallback",
+  engine: "fallback",
+  summary: {
+    ...(fallbackDraft.summary || {}),
+    engine: "fallback",
+    bodyLength: fallbackDraft.bodyLength || String(fallbackDraft.body || "").replace(/\s+/g, "").length,
+    targetCharCount: fallbackDraft.contentPackage?.targetLengthRange?.target || fallbackDraft.contentPackage?.targetCharCount || null
+  },
+  contentPackage: fallbackDraft.contentPackage
+    ? {
+        ...fallbackDraft.contentPackage,
+        engine: "fallback",
+        actualBodyLength: fallbackDraft.bodyLength || String(fallbackDraft.body || "").replace(/\s+/g, "").length,
+        summary: {
+          ...(fallbackDraft.contentPackage.summary || {}),
+          engine: "fallback",
+          bodyLength: fallbackDraft.bodyLength || String(fallbackDraft.body || "").replace(/\s+/g, "").length,
+          targetCharCount: fallbackDraft.contentPackage.targetLengthRange?.target || fallbackDraft.contentPackage.targetCharCount || null
+        }
+      }
+    : fallbackDraft.contentPackage,
   llm: {
     used: false,
     ...llm
@@ -195,20 +236,10 @@ export async function onRequestPost(context) {
       llmDraft
     });
 
-    if (
-      acceptedDraft.blogWriterQuality?.criticalFailed ||
-      Number(acceptedDraft.qualityScore || 0) < 90 ||
-      compact(acceptedDraft.mainKeyword) !== compact(fallbackDraft.mainKeyword)
-    ) {
-      return jsonResponse(withFallbackRoute(fallbackDraft, {
-        attempted: true,
-        reason: "llm-quality-fallback"
-      }));
-    }
-
     return jsonResponse({
       ...acceptedDraft,
       generationRoute: "llm",
+      engine: "llm",
       llm: {
         used: true,
         accepted: true,

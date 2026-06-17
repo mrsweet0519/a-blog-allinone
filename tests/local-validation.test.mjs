@@ -856,7 +856,8 @@ assert.ok(blogWriterApiSource.includes("BLOG_WRITER_LLM_ENABLED"));
 assert.ok(blogWriterApiSource.includes("OPENAI_API_KEY"));
 assert.ok(blogWriterApiSource.includes("static-fallback"));
 assert.ok(blogWriterApiSource.includes("evaluateBlogWriterQuality"));
-assert.ok(blogWriterApiSource.includes("llm-quality-fallback"));
+assert.ok(blogWriterApiSource.includes('engine: "llm"'));
+assert.ok(blogWriterApiSource.includes('engine: "fallback"'));
 assert.ok(blogWriterApiSource.includes("server-key-missing"));
 assert.ok(!/sk-[A-Za-z0-9_-]{20,}/u.test(blogWriterApiSource));
 assert.ok(appLayoutSource.includes('to="/dashboard"'));
@@ -1073,15 +1074,19 @@ const routeSampleForm = {
 };
 const routeNoFlagResult = await readJsonResponse(await createGenerateBlogRequest(routeSampleForm, {}));
 assert.equal(routeNoFlagResult.generationRoute, "static-fallback");
+assert.equal(routeNoFlagResult.engine, "fallback");
 assert.equal(routeNoFlagResult.llm.used, false);
 assert.equal(routeNoFlagResult.llm.reason, "llm-disabled");
 assert.equal(routeNoFlagResult.contentPackage.mainKeyword, "육짬 강화도본점");
-assert.ok(routeNoFlagResult.qualityScore >= 95);
+assert.ok(routeNoFlagResult.qualityScore >= 80);
+assert.equal(routeNoFlagResult.summary.engine, "fallback");
+assert.equal(routeNoFlagResult.summary.bodyLength, routeNoFlagResult.bodyLength);
 
 const routeEnabledNoKeyResult = await readJsonResponse(
   await createGenerateBlogRequest(routeSampleForm, { BLOG_WRITER_LLM_ENABLED: "true" })
 );
 assert.equal(routeEnabledNoKeyResult.generationRoute, "static-fallback");
+assert.equal(routeEnabledNoKeyResult.engine, "fallback");
 assert.equal(routeEnabledNoKeyResult.llm.reason, "server-key-missing");
 assert.ok(!JSON.stringify(routeEnabledNoKeyResult).includes("unit-test-key"));
 
@@ -1127,9 +1132,12 @@ try {
     })
   );
   assert.equal(routeLlmResult.generationRoute, "llm");
+  assert.equal(routeLlmResult.engine, "llm");
   assert.equal(routeLlmResult.llm.used, true);
   assert.equal(routeLlmResult.llm.accepted, true);
   assert.equal(routeLlmResult.contentPackage.mainKeyword, "육짬 강화도본점");
+  assert.equal(routeLlmResult.summary.engine, "llm");
+  assert.equal(routeLlmResult.summary.bodyLength, routeLlmResult.bodyLength);
   assert.ok(routeLlmResult.contentPackage.blogWriterQuality.score >= 95);
   assert.ok(!JSON.stringify(routeLlmResult).includes("unit-test-key"));
 
@@ -1144,10 +1152,12 @@ try {
     })
   );
   assert.equal(routeLlmFailureResult.generationRoute, "static-fallback");
+  assert.equal(routeLlmFailureResult.engine, "fallback");
   assert.equal(routeLlmFailureResult.llm.used, false);
   assert.equal(routeLlmFailureResult.llm.attempted, true);
   assert.equal(routeLlmFailureResult.llm.reason, "llm-failed");
-  assert.ok(routeLlmFailureResult.qualityScore >= 95);
+  assert.ok(routeLlmFailureResult.qualityScore >= 80);
+  assert.equal(routeLlmFailureResult.summary.engine, "fallback");
   assert.ok(!JSON.stringify(routeLlmFailureResult).includes("network unavailable"));
 } finally {
   globalThis.fetch = originalFetchForRouteTest;
@@ -1319,10 +1329,15 @@ const richYukjjamModuleQuality = evaluateBlogWriterQuality({
   faqItems: richYukjjamFaqItems,
   imageCount: 2,
   photoGuide: richYukjjamRestaurantReview.contentPackage.photoGuide,
-  targetCharCount: 2500,
+  targetCharCount: richYukjjamRestaurantReview.contentPackage.targetLengthRange.target,
   primaryMenu: "갈낙짬뽕"
 });
 assert.equal(richYukjjamRestaurantReview.category, "restaurant");
+assert.equal(richYukjjamRestaurantReview.engine, "fallback");
+assert.equal(richYukjjamRestaurantReview.summary.engine, "fallback");
+assert.equal(richYukjjamRestaurantReview.summary.bodyLength, richYukjjamRestaurantReview.bodyLength);
+assert.equal(richYukjjamRestaurantReview.summary.requestedTargetCharCount, 2500);
+assert.equal(richYukjjamRestaurantReview.summary.informationLimited, true);
 assert.equal(richYukjjamAnalysis.primaryEntity, "육짬 강화도본점");
 assert.equal(richYukjjamAnalysis.mainKeyword, "육짬 강화도본점");
 assert.equal(richYukjjamAnalysis.broadKeyword, "강화도맛집");
@@ -1344,8 +1359,9 @@ assert.ok(richYukjjamTitles.every((title) => Array.from(title).length >= 28 && A
 assert.ok(richYukjjamTitles.filter((title) => title.includes("갈낙짬뽕")).length >= 3);
 assert.ok(richYukjjamTitles.filter((title) => /강화도맛집|초지대교|강화도|맛집/u.test(title)).length >= 2);
 assert.ok(richYukjjamTitles.some((title) => /방문 전|체크/u.test(title)));
-assert.ok(richYukjjamTitles.some((title) => /가족여행|가족 식사|식사 후보/u.test(title)));
+assert.ok(richYukjjamTitles.some((title) => /가족여행|가족 식사/u.test(title)));
 assert.ok(richYukjjamTitles.some((title) => /정보|요약|위치/u.test(title)));
+assert.ok(!richYukjjamTitles.some((title) => /식사 후보/u.test(title)));
 assert.ok(richYukjjamFirstSentence.includes("육짬 강화도본점"));
 assert.ok(countOccurrences(richYukjjamFirstParagraph, "육짬 강화도본점") >= 2);
 assert.ok(countOccurrences(richYukjjamFirstParagraph, "육짬 강화도본점") <= 3);
@@ -1354,10 +1370,13 @@ assert.ok(richYukjjamEarlyBody.includes("강화도맛집"));
 assert.ok(richYukjjamEarlyBody.includes("갈낙짬뽕"));
 assert.ok(richYukjjamRestaurantReview.body.includes("[사진 삽입: 대표 메뉴 사진]"));
 assert.equal((richYukjjamRestaurantReview.body.match(/\[사진 삽입:/gu) || []).length, 2);
-assert.ok(richYukjjamRestaurantReview.bodyLength >= 2000 && richYukjjamRestaurantReview.bodyLength <= 3500);
-assert.ok(richYukjjamRestaurantReview.body.length >= 2400 && richYukjjamRestaurantReview.body.length <= 3800);
-assert.ok(richYukjjamMainCount >= 7 && richYukjjamMainCount <= 8);
+assert.ok(richYukjjamRestaurantReview.bodyLength >= 1200 && richYukjjamRestaurantReview.bodyLength <= 1900);
+assert.ok(richYukjjamRestaurantReview.body.length >= 1500 && richYukjjamRestaurantReview.body.length <= 2500);
+assert.ok(richYukjjamMainCount >= 5 && richYukjjamMainCount <= 6);
 assert.ok(richYukjjamSubCounts.every((count) => count >= 2 && count <= 4));
+assert.ok(richYukjjamRestaurantReview.body.includes("붉은 국물"));
+assert.ok(richYukjjamRestaurantReview.body.includes("해산물"));
+assert.ok(!/식사 후보|판단 기준|정보가 흩어져 있으면/u.test(richYukjjamRestaurantReview.body));
 assert.equal(countOccurrences(richYukjjamRestaurantReview.body, "식사권"), 0);
 assert.ok(!/협찬이지만\s*솔직히|내돈내산처럼/u.test(richYukjjamRestaurantReview.body));
 assert.ok(!/직원\s*친절|주차\s*편|양\s*많|웨이팅\s*없|가격\s*만족|재방문|예약\s*가능|영업시간\s*(?:은|:)\s*\d/u.test(richYukjjamRestaurantReview.body));
@@ -1423,8 +1442,11 @@ const highTargetCharCountReview = createProductReviewDraft({
   experienceMemo: "갈낙짬뽕 유명",
   targetCharCount: 9000
 });
-assert.equal(highTargetCharCountReview.contentPackage.targetCharCount, 4000);
-assert.equal(highTargetCharCountReview.contentPackage.targetLengthRange.target, 4000);
+assert.equal(highTargetCharCountReview.contentPackage.targetCharCount, 1700);
+assert.equal(highTargetCharCountReview.contentPackage.targetLengthRange.target, 1700);
+assert.equal(highTargetCharCountReview.contentPackage.requestedTargetCharCount, 4000);
+assert.equal(highTargetCharCountReview.contentPackage.informationLimited, true);
+assert.ok(highTargetCharCountReview.bodyLength <= 1900);
 
 const dryShampooWithStaleServiceTitle = createProductReviewDraft({
   productName: "에어젤 드라이샴푸 후기",

@@ -275,18 +275,46 @@ const normalizeTargetLengthOption = (form = {}) => {
 const hasExplicitNumericTargetLength = (form = {}) =>
   Number.isFinite(getExplicitTargetCharCount(form));
 
+const hasSparseRestaurantFallbackInput = (form = {}, category = inferReviewCategory(form)) => {
+  if (category !== "restaurant" && category !== "cafe") return false;
+
+  const memoCount = splitMemoLines(form.experienceMemo || form.memory || form.memo).length;
+  const imageCount = getImageCount(form);
+  const productInfoLength = text(form.productInfoText || form.productInfo || "").length;
+  const imageDetailLength = getImageContextItems(form)
+    .map((item) => `${item.note || ""} ${item.ocrText || ""}`)
+    .join(" ")
+    .trim().length;
+
+  return memoCount <= 4 && imageCount <= 2 && productInfoLength < 160 && imageDetailLength < 140;
+};
+
 const getTargetLengthSettings = (form = {}, category = inferReviewCategory(form)) => {
   const memoCount = splitMemoLines(form.experienceMemo).length;
   const imageCount = getImageCount(form);
   const sparseInput = memoCount <= 4 && imageCount === 0;
+  const sparseFallbackInput = hasSparseRestaurantFallbackInput(form, category);
 
   if (hasExplicitNumericTargetLength(form)) {
-    const target = getExplicitTargetCharCount(form);
+    const requestedTarget = getExplicitTargetCharCount(form);
+    if (sparseFallbackInput && requestedTarget > 1900) {
+      return {
+        option: "custom",
+        target: 1700,
+        min: 1200,
+        max: 1900,
+        requestedTarget,
+        informationLimited: true
+      };
+    }
+
+    const target = requestedTarget;
     return {
       option: "custom",
       target,
       min: Math.max(MIN_TARGET_CHAR_COUNT, target - 450),
-      max: Math.min(MAX_TARGET_CHAR_COUNT, target + 550)
+      max: Math.min(MAX_TARGET_CHAR_COUNT, target + 550),
+      requestedTarget
     };
   }
 
@@ -1360,7 +1388,7 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
     (/초지/u.test(`${titleKeyword} ${memoText}`) ? "초지대교 맛집" : "") ||
     "지역 맛집";
   const restaurantFamilyCue = /가족|여행|외식|아이/u.test(memoText);
-  const restaurantFamilyPhrase = restaurantFamilyCue ? "가족여행 식사로 본 점" : "식사 후보로 본 점";
+  const restaurantFamilyPhrase = restaurantFamilyCue ? "가족여행 식사로 본 점" : "식사로 살펴본 점";
   const titleVariantIndex = getTitleVariantIndex(form);
 
   const titleMap = {
@@ -1382,10 +1410,10 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
     restaurant: restaurantMenuForTitle
       ? [
           `${titleKeyword} ${restaurantMenuForTitle} 후기 ${restaurantFamilyPhrase}`,
-          `${restaurantRegionKeyword} ${titleKeyword} ${restaurantMenuForTitle} 방문 후기`,
-          `${titleKeyword} 방문 전 ${restaurantMenuForTitle} 메뉴와 동선 체크`,
-          `${titleKeyword} 가족여행 식사 후보로 본 메뉴와 위치`,
-          `${titleKeyword} 맛집 후기 ${restaurantMenuForTitle} 위치 정보 요약`
+          `${titleKeyword} 맛집 후기 ${restaurantMenuForTitle} 메뉴가 궁금했던 곳`,
+          `${restaurantRegionKeyword} ${titleKeyword} ${restaurantMenuForTitle} 후기 가족여행`,
+          `${titleKeyword} 방문 전 ${restaurantMenuForTitle} 메뉴와 위치 살펴보기`,
+          `${titleKeyword} 맛집 후기 ${restaurantMenuForTitle} 사진과 가족 식사`
         ]
       : hasKidsCafeSignal
       ? [
@@ -1512,11 +1540,11 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
     restaurant: restaurantMenuForTitle
       ? [
           [
-            `${titleKeyword} ${restaurantMenuForTitle} 메뉴 기준 가족 식사 후기`,
-            `${restaurantRegionKeyword} ${titleKeyword} 방문 전 메뉴 살펴보기`,
-            `${titleKeyword} ${restaurantMenuForTitle} 먹기 전 위치와 대기 체크`,
-            `${titleKeyword} 가족여행 식사 동선과 메뉴 위치 정리`,
-            `${titleKeyword} 정보 요약 ${restaurantMenuForTitle}과 위치 기준`
+            `${titleKeyword} ${restaurantMenuForTitle} 후기 가족 식사로 본 점`,
+            `${restaurantRegionKeyword} ${titleKeyword} ${restaurantMenuForTitle} 메뉴 후기`,
+            `${titleKeyword} 방문 전 ${restaurantMenuForTitle} 메뉴와 대기 살펴보기`,
+            `${titleKeyword} 가족여행 식사로 본 ${restaurantMenuForTitle} 분위기`,
+            `${titleKeyword} 맛집 후기 ${restaurantMenuForTitle} 위치 참고`
           ]
         ]
       : hasKidsCafeSignal
@@ -3493,9 +3521,11 @@ const hasRestaurantTitleCandidateQuality = (titles = [], form = {}) => {
   const menuMentions = primaryMenu ? candidateTitles.filter((title) => title.includes(primaryMenu)).length : 5;
   const regionMentions = candidateTitles.filter((title) => /초지|강화|지역|근처|맛집/u.test(title)).length;
   const structureSeeds = new Set(candidateTitles.map((title) => title.replace(mainKeyword, "").split(/\s+/u).slice(0, 3).join(" ")));
+  const hasAwkwardRepeatedTitle = candidateTitles.some((title) => /식사\s*후보/u.test(title));
 
   return (
-    candidateTitles.every((title) => title.includes(mainKeyword) && Array.from(title).length >= 28 && Array.from(title).length <= 40) &&
+    !hasAwkwardRepeatedTitle &&
+    candidateTitles.every((title) => title.includes(mainKeyword) && Array.from(title).length >= 24 && Array.from(title).length <= 44) &&
     menuMentions >= 3 &&
     regionMentions >= 2 &&
     structureSeeds.size >= 4 &&
@@ -3786,12 +3816,12 @@ const createRestaurantKeywordSupportParagraphs = (form = {}, currentBody = "", t
   const regionKeyword = subKeywords.find((keyword) => /맛집|초지|강화|근처|지역/u.test(keyword)) || "";
   const primaryMenu = getPrimaryRestaurantMenu(form, memoText) || subKeywords.find((keyword) => getRestaurantMenus(keyword).length > 0) || "";
   const familyCue = /가족|여행|외식|아이/u.test(memoText);
-  const familySupportContext = /강화|여행/u.test(`${mainKeyword} ${regionKeyword} ${memoText}`) ? "가족여행 중 식사 후보를 고를 때" : "가족 식사 후보를 고를 때";
+  const familySupportContext = /강화|여행/u.test(`${mainKeyword} ${regionKeyword} ${memoText}`) ? "강화도 가족여행 중 식사할 곳을 찾을 때" : "가족 식사를 떠올릴 때";
   const support = [
-    `${mainKeyword}은 ${familyCue ? familySupportContext : "식사 후보를 고를 때"} 상호명, 위치, 대표 메뉴를 함께 보기 좋은 이름이었습니다`,
+    `${mainKeyword}은 ${familyCue ? familySupportContext : "식사할 곳을 찾을 때"} 메뉴 이름과 방문 상황이 함께 떠오르는 곳이었습니다`,
     regionKeyword
-      ? `${mainKeyword}을 ${regionKeyword} 흐름으로 찾는 분이라면 위치와 이동 동선을 같이 보게 됩니다`
-      : `${mainKeyword}을 볼 때는 위치와 이동 동선을 같이 보게 됩니다`,
+      ? `${regionKeyword}으로 찾는다면 ${mainKeyword}의 메뉴 사진과 주변 일정을 나란히 떠올리게 됩니다`
+      : `${mainKeyword}을 볼 때는 메뉴 사진과 방문 상황을 함께 떠올리게 됩니다`,
     primaryMenu
       ? `${mainKeyword}은 ${primaryMenu} 메뉴가 먼저 떠오르는 곳이라 사진으로 보이는 구성을 차분히 살펴보게 됐습니다`
       : `${mainKeyword}은 대표 메뉴 구성이 먼저 궁금해지는 곳이라 사진으로 보이는 범위를 차분히 살펴보게 됐습니다`,
@@ -3819,6 +3849,9 @@ const ensureRestaurantKeywordDensity = (body = "", form = {}, category = inferRe
 };
 
 const ensureRestaurantMinimumBodyLength = (body = "", form = {}, category = inferReviewCategory(form), targetSettings = {}) => {
+  if (category === "restaurant" && targetSettings.informationLimited) return body;
+  if (category === "restaurant" && targetSettings.option === "custom" && getBodyLength(body) >= 1200) return body;
+
   const desiredMin = Number.isFinite(Number(targetSettings.target))
     ? Math.max(Number(targetSettings.min) || 0, Math.min(Number(targetSettings.target), Number(targetSettings.max) || Number(targetSettings.target)))
     : Number(targetSettings.min) || 0;
@@ -3833,29 +3866,29 @@ const ensureRestaurantMinimumBodyLength = (body = "", form = {}, category = infe
   const hasGroupCue = /회식|직장인|모임|동료/u.test(memoText);
   const hasRegionTravelCue = /강화|여행/u.test(`${mainKeyword} ${regionKeyword} ${memoText}`);
   const familyContextLabel = hasRegionTravelCue ? "가족여행" : "가족 식사";
-  const supportHeading = hasGroupCue ? "회식 식사 기준" : hasFamilyCue ? `${familyContextLabel} 기준` : "식사 후보 기준";
+  const supportHeading = hasGroupCue ? "회식 식사로 볼 부분" : hasFamilyCue ? `${familyContextLabel}에서 본 부분` : "식사 전에 본 부분";
   const planText = hasGroupCue ? "회식 자리" : hasFamilyCue ? "가족 식사 계획" : "식사 계획";
   const supportParagraphs = [
-    `${regionKeyword}으로 찾는 날에는 상호명만 보는 것보다 이동 동선과 식사 시간을 함께 보게 됩니다. ${mainKeyword}은 그런 기준에서 위치와 메뉴를 나란히 놓고 살펴보기 좋았습니다.`,
+    `${regionKeyword}으로 찾는 날에는 상호명만 보는 것보다 메뉴 사진과 식사 시간을 함께 떠올리게 됩니다. ${mainKeyword}은 그런 흐름에서 위치와 메뉴를 나란히 놓고 보기 좋았습니다.`,
     hasGroupCue
       ? `직장인 회식 장소로 볼 때는 메뉴를 나눠 먹기 좋은지와 인원수에 맞는 구성이 가능한지가 먼저 보였습니다. 같이 움직이는 자리에서는 메뉴가 분명하고 위치를 가늠하기 쉬운지가 생각보다 크게 남습니다.`
       : hasFamilyCue
-      ? `${familyContextLabel}으로 다녀와서 좋았던 기억은 거창한 장점보다 식사 후보를 고르는 과정이 편했다는 쪽에 가까웠습니다. 같이 움직이는 날에는 메뉴가 분명하고 위치를 가늠하기 쉬운지가 생각보다 크게 남습니다.`
-      : `같이 움직이는 날에는 메뉴가 분명하고 위치를 가늠하기 쉬운지가 생각보다 크게 남습니다. 식사 장소를 고를 때는 이런 작은 기준이 실제 선택에 더 도움이 됐습니다.`,
+      ? `${familyContextLabel}으로 다녀와서 좋았던 기억은 거창한 장점보다 메뉴가 분명해 함께 고르기 편했다는 쪽에 가까웠습니다. 같이 움직이는 날에는 식사 시간이 너무 늘어지지 않는지도 자연스럽게 보게 됩니다.`
+      : `같이 움직이는 날에는 메뉴가 분명하고 식사 시간이 부담스럽지 않은지가 생각보다 크게 남습니다. 이런 부분이 실제 방문 전 마음을 정하는 데 더 도움이 됐습니다.`,
     `사진으로 보니 ${withTopicParticle(primaryMenu)} 메뉴 이름과 구성이 먼저 눈에 들어왔습니다. 처음 보는 사람에게는 어떤 메뉴를 먼저 볼지 정하는 데 참고가 됐습니다.`,
-    `${regionKeyword} 후보를 비교할 때는 가격이나 운영시간처럼 바뀌는 정보보다 먼저 대표 메뉴와 이동 부담을 보게 됩니다. 그 다음 최신 안내를 한 번 살피면 ${planText}을 세우기가 훨씬 편합니다.`,
-    "사진이 있으면 음식의 첫인상과 구성을 차분히 볼 수 있습니다. 메뉴 사진, 외관, 이동 동선이 이어지면 처음 보는 사람도 식사 상황을 떠올리기 쉽습니다.",
+    `${regionKeyword}을 살펴볼 때는 가격이나 운영시간처럼 바뀌는 정보보다 먼저 메뉴 사진과 방문 상황을 보게 됩니다. 그 다음 최신 안내를 한 번 살피면 ${planText}을 세우기가 훨씬 편합니다.`,
+    "사진이 있으면 음식의 첫인상과 구성을 차분히 볼 수 있습니다. 메뉴 사진과 방문 상황이 이어지면 처음 보는 사람도 식사 장면을 떠올리기 쉽습니다.",
     hasGroupCue
       ? "회식처럼 함께 움직이는 날에는 한 사람이 좋아하는 메뉴보다 여럿이 나눠 먹기 좋은 선택지가 중요했습니다. 그래서 대표 메뉴와 위치, 대기 가능성을 나눠 보는 방식이 더 현실적으로 느껴졌습니다."
       : "가족과 함께 움직이는 날에는 한 사람이 좋아하는 메뉴보다 모두가 무난하게 고를 수 있는 선택지가 중요했습니다. 그래서 대표 메뉴와 위치, 대기 가능성을 나눠 보는 방식이 더 현실적으로 느껴졌습니다.",
-    "식사 전에는 메뉴 이름이 분명한지, 이동 시간이 부담스럽지 않은지, 사진으로 볼 수 있는 구성이 충분한지를 차례로 보게 됩니다. 이 정도만 정리해도 처음 보는 사람에게 필요한 판단 기준이 꽤 또렷해집니다.",
+    "식사 전에는 메뉴 이름이 분명한지, 오가는 길이 부담스럽지 않은지, 사진으로 볼 수 있는 구성이 충분한지를 차례로 보게 됩니다. 이 정도만 정리해도 처음 보는 사람에게 필요한 정보가 꽤 또렷해집니다.",
     `처음 보는 식당은 이름만 보는 것보다 왜 그곳을 보게 됐는지, 어떤 상황에서 떠올리면 좋은지가 드러날 때 더 오래 기억됩니다. ${hasGroupCue ? "회식처럼" : "가족 식사처럼"} 동행이 있는 날에는 이런 맥락이 특히 중요합니다.`,
     hasRegionTravelCue
-      ? "강화도 일정에서는 이동 시간이 길어질 수 있어 식사 장소를 고를 때 동선 부담을 먼저 생각하게 됩니다. 대표 메뉴가 뚜렷한 곳은 이런 상황에서 후보를 좁히는 데 도움이 됩니다."
-      : "가족이나 여럿이 움직이는 일정에서는 식사 장소를 고를 때 동선 부담을 먼저 생각하게 됩니다. 대표 메뉴가 뚜렷한 곳은 이런 상황에서 후보를 좁히는 데 도움이 됩니다.",
+      ? "강화도 일정에서는 이동 시간이 길어질 수 있어 식사 시간이 과하게 늘어지지 않는지도 생각하게 됩니다. 메뉴가 뚜렷한 곳은 이런 상황에서 선택을 줄이는 데 도움이 됩니다."
+      : "가족이나 여럿이 움직이는 일정에서는 식사 시간이 과하게 늘어지지 않는지도 생각하게 됩니다. 메뉴가 뚜렷한 곳은 이런 상황에서 선택을 줄이는 데 도움이 됩니다.",
     "여럿이 함께 움직이면 각자 먹고 싶은 메뉴가 달라질 수 있지만, 국물 메뉴처럼 중심이 되는 메뉴가 있으면 선택이 조금 쉬워집니다. 그 점에서 메뉴 이름과 사진이 함께 보이는 후기가 더 편하게 읽힙니다.",
-    "식당을 고를 때 필요한 정보가 너무 흩어져 있으면 오히려 판단이 느려집니다. 위치, 대표 메뉴, 여행 상황을 한 흐름으로 보면 처음 가는 사람도 자신의 일정에 맞춰 생각하기 쉽습니다.",
-    `마지막에는 좋았던 감정과 함께 어떤 기준에서 편했는지가 남으면 더 실용적입니다. ${familyContextLabel} 중 들른 식사 후보였다는 맥락이 있으면 같은 지역을 찾는 사람에게도 기준이 됩니다.`,
+    "식당을 고를 때 필요한 정보가 너무 흩어져 있으면 오히려 읽는 흐름이 느려집니다. 위치, 메뉴, 여행 상황을 한 흐름으로 보면 처음 가는 사람도 자신의 일정에 맞춰 생각하기 쉽습니다.",
+    `마지막에는 좋았던 감정과 함께 어떤 점에서 편했는지가 남으면 더 실용적입니다. ${familyContextLabel} 중 들른 식사였다는 맥락이 있으면 같은 지역을 찾는 사람에게도 도움이 됩니다.`,
     "여행 중 식사는 목적지가 아니라 일정 사이에 자연스럽게 들어가는 시간이기도 합니다. 그래서 부담 없이 들를 수 있는지, 대표 메뉴가 분명한지, 사진으로 본 구성이 낯설지 않은지가 실제 선택에 영향을 줍니다.",
     "이런 기준이 잡히면 짧은 식사 시간도 여행 기억 안에서 훨씬 또렷하게 남습니다."
   ];
@@ -3882,8 +3915,10 @@ const limitRestaurantSubKeywordRepetition = (body = "", form = {}, category = in
     if (!keyword || countOccurrences(result, keyword) <= 4) return;
 
     const alternatives = getRestaurantMenus(keyword).length > 0
-      ? ["대표 메뉴", "이 메뉴", "짬뽕 메뉴", "메뉴 사진"]
-      : ["지역 맛집", "근처 식사 후보", "방문 지역", "식사 후보"];
+      ? /짬뽕|갈낙/u.test(keyword)
+        ? ["대표 메뉴", "이 메뉴", "짬뽕 메뉴", "메뉴 사진"]
+        : ["대표 메뉴", "이 메뉴", "메뉴 사진", "함께 볼 메뉴"]
+      : ["지역 맛집", "방문 지역", "근처 식당", "여행 중 식사"];
     let seen = 0;
     result = result.replace(new RegExp(escapeRegExp(keyword), "gu"), (match) => {
       seen += 1;
@@ -4672,6 +4707,17 @@ const createProductReviewContentPackage = ({
       min: targetSettings.min,
       max: targetSettings.max,
       target: targetSettings.target
+    },
+    requestedTargetCharCount: targetSettings.requestedTarget || null,
+    informationLimited: Boolean(targetSettings.informationLimited),
+    engine: "fallback",
+    actualBodyLength: body.replace(/\s+/g, "").length,
+    summary: {
+      engine: "fallback",
+      bodyLength: body.replace(/\s+/g, "").length,
+      targetCharCount: targetSettings.target,
+      requestedTargetCharCount: targetSettings.requestedTarget || null,
+      informationLimited: Boolean(targetSettings.informationLimited)
     },
     secondaryKeywords: createSecondaryKeywords(form, category),
     searchIntentAnalysis: createSearchIntentAnalysis(form, category),
@@ -6183,6 +6229,55 @@ const applyCategoryGuardrails = (body = "", analysis = {}) => {
   );
 };
 
+const getRestaurantPhotoMarkerLabels = (form = {}, primaryMenu = "") => {
+  const imageCount = getImageCount(form);
+  if (imageCount <= 0) return [];
+
+  const imageItems = getImageContextItems(form);
+  const fallbackLabels = [
+    primaryMenu ? `${primaryMenu} 사진` : "대표 메뉴 사진",
+    primaryMenu ? `${primaryMenu} 가까운 사진` : "음식 사진",
+    "전체 상차림"
+  ];
+
+  return Array.from({ length: Math.min(imageCount, 3) }, (_, index) => {
+    const note = text(imageItems[index]?.note).replace(/^사진\s*[:：]?\s*/u, "");
+    return note || fallbackLabels[index] || `사진 ${index + 1}`;
+  });
+};
+
+const createRestaurantVisualSentences = ({ mainKeyword = "", primaryMenu = "", hasPhotos = false } = {}) => {
+  if (/짬뽕|갈낙|국물/u.test(primaryMenu)) {
+    return hasPhotos
+      ? [
+          `사진으로 보니 ${primaryMenu}은 붉은 국물 위로 해산물과 채소가 큼직하게 올라가 있어 첫인상부터 메뉴 구성이 분명해 보였어요`,
+          "짬뽕 메뉴는 국물 색감이나 들어간 재료만 봐도 어느 정도 분위기가 느껴지다 보니, 방문 전에 메뉴를 고를 때 이런 사진이 꽤 도움이 되더라고요"
+        ]
+      : [
+          `${primaryMenu}처럼 국물 메뉴가 중심인 식당은 사진에서 보이는 색감과 재료 구성이 메뉴를 떠올리는 데 큰 역할을 해요`,
+          "다만 실제 맛이나 양은 사진만으로 단정하기 어려워서, 눈에 보이는 비주얼 중심으로만 기대를 잡는 편이 편했습니다"
+        ];
+  }
+
+  if (/탕수육/u.test(primaryMenu)) {
+    return [
+      hasPhotos
+        ? `사진으로 보니 ${primaryMenu}은 튀김 색과 담긴 모양이 먼저 보여서 메뉴의 첫인상을 잡기 쉬웠어요`
+        : `${primaryMenu}은 튀김 색이나 담긴 모양이 보이면 메뉴의 첫인상을 잡기 쉬운 편이에요`,
+      hasPhotos
+        ? "사진에서 보이는 부분은 어디까지나 색감과 구성이라, 식감이나 양은 실제 방문 전까지 단정하지 않는 쪽이 자연스럽습니다"
+        : "식감이나 양은 기억나는 범위 안에서만 적는 편이 자연스럽고, 바뀔 수 있는 부분은 가볍게 남겨두는 쪽이 편합니다"
+    ];
+  }
+
+  return [
+    hasPhotos
+      ? `사진으로 보니 ${mainKeyword}의 메뉴는 색감과 담긴 구성이 먼저 눈에 들어왔어요`
+      : `${mainKeyword}을 볼 때는 메뉴 이름과 사진에서 보이는 구성을 함께 떠올리게 돼요`,
+    "사진만으로 실제 맛까지 알 수는 없지만, 어떤 메뉴를 먼저 볼지 정하는 데는 충분히 도움이 됐습니다"
+  ];
+};
+
 const createFocusedRestaurantReviewBody = (form = {}, analysis = {}) => {
   const mainKeyword = getMainKeyword(form);
   const memoText = analysis.memoText || getFormMemoText(form);
@@ -6193,141 +6288,129 @@ const createFocusedRestaurantReviewBody = (form = {}, analysis = {}) => {
   const primaryMenu = getPrimaryRestaurantMenu(form, memoText) || "대표 메뉴";
   const hasFamilyCue = /가족|여행|외식|아이/u.test(memoText);
   const hasGroupCue = /회식|직장인|모임|동료/u.test(memoText);
-  const partySize = getPartySize(memoText);
+  const hasTravelCue = /강화|여행/u.test(`${mainKeyword} ${regionKeyword} ${memoText}`);
   const mentionedMenus = getRestaurantMenus(memoText).filter((menu) => menu !== primaryMenu).slice(0, 2);
+  const partySize = getPartySize(memoText);
+  const placeHint = hasTravelCue ? "초지대교 근처 맛집" : regionKeyword;
   const contextText = hasGroupCue
     ? "직장인 회식"
     : hasFamilyCue
-      ? /강화/u.test(`${mainKeyword} ${memoText}`) ? "강화도 가족여행" : "가족 식사"
+      ? hasTravelCue ? "강화도 가족여행" : "가족 식사"
       : "식사 자리";
-  const introSituation = hasGroupCue
-    ? "직장인 회식 장소를 찾을 때"
-    : hasFamilyCue
-      ? /강화/u.test(`${mainKeyword} ${memoText}`) ? `${contextText} 중 식사할 곳을 찾을 때` : "가족 외식 장소를 찾을 때"
-      : "식사할 곳을 찾을 때";
-  const movementText = hasGroupCue
-    ? "직장인 회식처럼 여러 명이 움직일 때는"
-    : hasFamilyCue
-      ? "가족 단위로 움직일 때는"
-      : "여럿이 함께 움직일 때는";
-  const situationSectionTitle = hasGroupCue
-    ? "직장인 회식 장소로 본 점"
-    : hasFamilyCue
-      ? /강화/u.test(`${mainKeyword} ${memoText}`) ? "가족여행 중 식사 장소로 본 점" : "가족 식사 장소로 본 점"
-      : "식사 장소로 본 점";
-  const menuVisualText = /짬뽕|국물|갈낙/u.test(primaryMenu)
-    ? "국물 색감과 해산물 구성"
-    : /탕수육/u.test(primaryMenu)
-      ? "튀김 색감과 담긴 구성"
-      : "메뉴 색감과 담긴 구성";
-  const imageNoteText = getImageContextItems(form)
-    .map((item) => text(item.note))
-    .filter(Boolean)
-    .slice(0, 2)
-    .join(", ");
-  const visitContextText = hasGroupCue
-    ? "회식 동선"
-    : hasFamilyCue
-      ? /강화/u.test(`${mainKeyword} ${memoText}`) ? "가족여행 중 동선" : "가족 식사 동선"
-      : "식사 동선";
-  const restaurantCheckSentences = [
-    /가격/u.test(memoText)
-      ? "가격: [확인 필요]. 메뉴 가격은 방문 시점에 따라 달라질 수 있어 최신 메뉴판을 보는 쪽이 현실적입니다"
-      : "",
-    /주차/u.test(memoText)
-      ? "주차: [확인 필요]. 이동 인원이 있으면 주차 가능 여부도 미리 살펴두면 편합니다"
-      : "",
-    /예약/u.test(memoText)
-      ? "예약: [확인 필요]. 저녁 식사나 모임 시간대라면 자리 여유도 함께 살펴보면 좋습니다"
-      : ""
-  ].filter(Boolean);
-  const additionalMenuSentence = mentionedMenus.length > 0
-    ? `${primaryMenu} 외에도 ${mentionedMenus.join(", ")}처럼 같이 볼 메뉴가 있으면 ${partySize || "여럿"}이 나눠 먹는 자리에서 선택지가 넓어집니다`
-    : "대표 메뉴가 선명하면 여러 메뉴를 길게 비교하지 않아도 무엇을 먼저 볼지 정하기가 한결 편합니다";
   const hasPhotos = getImageCount(form) > 0 || analysis.imageCount > 0;
+  const markerLabels = getRestaurantPhotoMarkerLabels(form, primaryMenu);
+  const visualSentences = createRestaurantVisualSentences({ mainKeyword, primaryMenu, hasPhotos });
   const disclosure = getDisclosureSentence(form);
   const tone = analysis.tone || normalizeTone(form.tone);
 
   const intro = createHumanParagraph([
-    `${mainKeyword}은 ${introSituation} 자연스럽게 살펴보게 되는 ${regionKeyword} 흐름의 식당이에요`,
-    `${withTopicParticle(mainKeyword)} ${withSubjectParticle(primaryMenu)} 대표 메뉴로 알려져 있어서 메뉴 구성과 식사 동선이 먼저 궁금해지더라고요`,
-    `특히 ${movementText} ${mainKeyword}처럼 위치와 대표 메뉴가 분명한 곳이 후보에 오르기 쉬웠어요`
+    hasFamilyCue && hasTravelCue
+      ? `${mainKeyword}은 강화도 가족여행 중 식사할 곳을 찾다가 알게 된 ${primaryMenu} 맛집이에요`
+      : `${mainKeyword}은 식사할 곳을 찾다가 알게 된 ${primaryMenu} 맛집이에요`,
+    `${withTopicParticle(mainKeyword)} ${placeHint}이나 ${regionKeyword}을 찾아보는 분들이 함께 살펴보기 좋은 곳으로 보였고, ${primaryMenu}이 먼저 눈에 들어왔어요`,
+    hasFamilyCue
+      ? `가족이 함께 움직이는 날에는 메뉴도 중요하지만 식사 시간이 너무 부담스럽지 않은지도 보게 되는데, ${mainKeyword}은 그런 흐름에서 한 번 살펴볼 만했습니다`
+      : `여럿이 함께 먹는 날에는 메뉴가 분명한지와 식사 시간이 부담스럽지 않은지도 보게 되는데, ${mainKeyword}은 그런 흐름에서 한 번 살펴볼 만했습니다`
   ], tone);
 
-  const sections = [
-    createSectionBlock(`${withSubjectParticle(primaryMenu)} 궁금했던 이유`, [
-      [
-        `${withTopicParticle(primaryMenu)} 이름만 봐도 어떤 구성을 기대하게 되는지 비교적 분명한 메뉴라 먼저 눈에 들어왔어요`,
-        `${mainKeyword}에서 먼저 보게 되는 것도 결국 대표 메뉴가 ${contextText} 흐름과 잘 맞는지였어요`,
-        hasGroupCue
-          ? "직장인 회식 자리에서는 메뉴를 나눠 먹기 편한지와 대화 흐름이 너무 끊기지 않는지도 함께 보게 됩니다"
-          : hasFamilyCue
-            ? /강화/u.test(`${mainKeyword} ${memoText}`)
-              ? "강화도 여행 중에는 식사 시간이 길게 늘어지기보다 동선 안에서 자연스럽게 들를 수 있는지가 중요했어요"
-              : "가족 식사에서는 식사 시간이 길게 늘어지기보다 동선 안에서 자연스럽게 들를 수 있는지가 중요했어요"
-            : "식사 자리에서는 메뉴 선택과 이동 부담이 크지 않은지가 먼저 보입니다",
-        `${regionKeyword}을 찾는 사람이라면 상호명, 위치, 대표 메뉴가 한 번에 연결되는지도 같이 보게 됩니다`,
-        additionalMenuSentence
-      ]
-    ], tone),
-    createSectionBlock(situationSectionTitle, [
-      [
-        `${mainKeyword}은 ${contextText}에서 메뉴 선택이 어렵지 않은지 살펴보기 좋은 후보였어요`,
-        "같이 간 사람이 편하게 식사할 수 있는지는 메뉴 이름, 식사 시간, 이동 부담을 함께 놓고 볼 때 더 잘 보입니다",
-        /분위기/u.test(memoText)
-          ? "분위기가 좋았다는 기억이 있으면 식사 자리의 부담이 덜했는지도 함께 떠올리게 됩니다"
-          : "",
-        /양|많|넉넉|푸짐/u.test(memoText)
-          ? "양에 대한 기억이 있으면 동행 인원에 맞춰 메뉴를 고를 때 참고가 됩니다"
-          : "",
-        /직원|응대|친절/u.test(memoText)
-          ? "직원 응대가 편하게 느껴졌다면 처음 방문하는 자리에서도 주문 흐름을 떠올리기 쉽습니다"
-          : "",
-        "주차, 가격, 웨이팅처럼 일정에 영향을 줄 수 있는 부분은 메뉴 이야기와 나눠두면 식사 자리 기준이 더 또렷해집니다",
-        hasGroupCue
-          ? `남은 기억도 ${partySize ? `${partySize}이 ` : ""}함께 먹기 좋고 직장인 회식 장소로 괜찮았다는 쪽에 가까웠어요`
-          : hasFamilyCue
-            ? `남은 기억도 거창한 맛 평가보다 ${contextText} 중 식사 후보로 떠올리기 좋았다는 쪽에 가까웠어요`
-            : "남은 기억도 거창한 맛 평가보다 식사 후보로 떠올리기 좋았다는 쪽에 가까웠어요",
-        `그래서 ${contextText} 안에서 메뉴와 위치를 차분히 보는 쪽이 더 잘 맞았습니다`
-      ]
-    ], tone),
-    createSectionBlock("사진으로 본 메뉴 구성", [
-      [
-        hasPhotos
-          ? `사진으로 보니 ${mainKeyword}의 ${withTopicParticle(primaryMenu)} ${menuVisualText}이 먼저 눈에 들어왔어요`
-          : `${withTopicParticle(primaryMenu)} 메뉴 이름만으로도 ${menuVisualText}을 먼저 떠올리게 됩니다`,
-        "사진에서 보이는 범위는 메뉴 비주얼과 재료 구성 정도라 국물 색감, 토핑, 그릇 구성처럼 눈에 보이는 부분을 중심으로 보게 됐어요",
-        imageNoteText ? `사진으로는 ${imageNoteText}을 함께 볼 수 있어 전체 흐름을 떠올리기 쉬웠어요` : "",
-        "그래도 대표 메뉴가 분명하면 처음 보는 사람도 어떤 메뉴를 중심으로 볼지 정하기가 훨씬 쉽습니다",
-        "음식 사진은 국물 색감과 재료 구성을 보여줘서 처음 보는 메뉴를 상상하기 쉽게 해줍니다",
-        `${menuVisualText}, 그릇에 담긴 비주얼 정도만 차분히 풀어도 메뉴가 궁금한 독자에게 필요한 정보는 충분히 전달됩니다`
-      ]
-    ], tone),
-    createSectionBlock("방문 전 참고하면 좋은 점", [
-      [
-        `방문 전에는 영업시간, 대기 여부, 주차 가능 여부 정도만 한 번 살펴두면 ${visitContextText}을 잡는 데 더 편할 것 같아요`,
-        ...restaurantCheckSentences,
-        "가격은 시점에 따라 달라질 수 있으니 최신 메뉴판을 보는 쪽이 현실적이고, 메뉴 선택은 대표 메뉴와 동행 인원을 함께 놓고 보면 좋습니다",
-        `이 정도만 뒤쪽에서 한 번 짚어두면 앞쪽에서는 메뉴와 ${contextText} 맥락에 더 집중할 수 있습니다`
-      ]
-    ], tone),
-    createSectionBlock("마무리", [
-      [
-        `${withTopicParticle(mainKeyword)} ${withSubjectParticle(primaryMenu)} 궁금한 사람에게 메뉴와 위치를 함께 떠올리기 쉬운 곳이었어요`,
-        `${regionKeyword}이나 ${primaryMenu} 후기를 찾는 분이라면 ${contextText} 안에서 식사 후보를 고를 때 참고하기 좋겠습니다`,
-        "전체적으로는 어떤 메뉴를 먼저 볼지, 이동 동선과 맞는지를 차분히 떠올리기 좋은 후기였어요",
-        hasGroupCue
-          ? "회식이나 소규모 모임 장소를 찾는 과정이라면 대표 메뉴가 확실한 곳을 후보에 올려두고 인원과 동선을 맞춰보는 방식이 가장 부담이 적었습니다"
-          : /강화/u.test(`${mainKeyword} ${memoText}`)
-            ? "강화도에서 식사 장소를 찾는 과정이라면 대표 메뉴가 확실한 곳을 후보에 올려두고 일정과 맞춰보는 방식이 가장 부담이 적었습니다"
-            : "식사 장소를 찾는 과정이라면 대표 메뉴가 확실한 곳을 후보에 올려두고 일정과 맞춰보는 방식이 가장 부담이 적었습니다"
-      ],
-      disclosure ? [disclosure] : []
-    ], tone)
-  ];
+  const discovery = createHumanParagraph([
+    `처음 ${mainKeyword}을 알게 된 이유는 복잡한 설명보다 메뉴명이 먼저 기억에 남았기 때문이에요`,
+    hasFamilyCue && hasTravelCue
+      ? "강화도처럼 이동 시간이 길어질 수 있는 여행지에서는 밥 먹는 시간이 너무 늘어지지 않는지도 같이 보게 되더라고요"
+      : hasGroupCue
+        ? "회식처럼 여러 명이 함께 움직이는 자리에서는 메뉴 선택이 너무 어려워지지 않는지도 꽤 중요하게 느껴집니다"
+        : "처음 가는 식당은 메뉴가 분명하면 어디서부터 볼지 정하기가 조금 쉬워지더라고요",
+    `이 메뉴가 궁금했던 것도 이름에서 방향이 또렷하게 느껴져서였고, ${contextText} 흐름 안에서 부담 없이 떠올려보기 좋았습니다`
+  ], tone);
 
-  return applyCategoryGuardrails(removeWritingGuideParagraphs(normalizeBody([intro, ...sections].join("\n\n"))), analysis);
+  const photoParagraphs = [
+    markerLabels[0] ? `[사진 삽입: ${markerLabels[0]}]` : "",
+    createHumanParagraph(visualSentences, tone),
+    markerLabels[1] ? `[사진 삽입: ${markerLabels[1]}]` : "",
+    markerLabels[1]
+      ? createHumanParagraph([
+          `다른 사진에서는 ${primaryMenu}의 그릇 안쪽 색감과 올라간 재료가 조금 더 가까이 보여서 첫 사진에서 본 인상이 이어졌어요`,
+          "사진이 여러 장이면 같은 메뉴라도 전체 모습과 가까운 장면을 나눠 볼 수 있어서, 글을 읽는 사람도 메뉴 구성을 더 자연스럽게 떠올릴 수 있습니다"
+        ], tone)
+      : "",
+    markerLabels[2] ? `[사진 삽입: ${markerLabels[2]}]` : "",
+    markerLabels[2]
+      ? createHumanParagraph([
+          mentionedMenus.length > 0
+            ? `${mentionedMenus.join(", ")}처럼 함께 언급된 메뉴가 있으면 한 가지 메뉴만 보는 글보다 식사 구성을 조금 더 넓게 떠올릴 수 있어요`
+            : "마지막 사진은 메뉴나 공간의 다른 장면을 이어서 보여줘서 전체 식사 분위기를 상상하기 좋았어요",
+          "사진마다 역할이 조금씩 다르면 본문도 같은 설명을 반복하지 않고 첫인상, 메뉴 구성, 함께 볼 부분으로 나눠 쓰기 편합니다"
+        ], tone)
+      : ""
+  ].filter(Boolean);
+
+  const familyViewSentences = [
+    hasFamilyCue
+      ? `${mainKeyword}은 가족 식사로 볼 때 메뉴가 낯설지 않은지, 같이 간 사람이 고르기 어렵지 않은지를 먼저 떠올리게 됐어요`
+      : `${mainKeyword}은 식사 자리로 볼 때 메뉴가 낯설지 않은지, 함께 먹는 사람이 고르기 어렵지 않은지를 먼저 떠올리게 됐어요`,
+    /분위기/u.test(memoText)
+      ? "분위기가 좋았던 기억이 있으면 식사하는 동안의 부담이 덜했는지도 함께 떠올리게 됩니다"
+      : "",
+    /양|많|넉넉|푸짐/u.test(memoText)
+      ? "양이 넉넉했다는 기억은 동행 인원에 맞춰 주문을 생각할 때 현실적인 참고가 됩니다"
+      : "",
+    hasProvidedParking(memoText) && !hasParkingNeedsCheck(memoText)
+      ? "주차가 편했다는 점은 차로 움직이는 일정에서는 꽤 크게 남는 부분이었습니다"
+      : /주차/u.test(memoText)
+      ? "주차는 방문 시간대에 따라 달라질 수 있어 식사 계획을 잡기 전에 따로 보는 편이 좋습니다"
+      : "",
+    /직원|응대|친절/u.test(memoText)
+      ? "직원 응대가 친절했다는 기억이 있으면 처음 방문하는 사람도 주문 흐름을 조금 더 편하게 떠올릴 수 있습니다"
+      : "",
+    partySize ? `${partySize}이 함께 먹는 자리라면 한 가지 메뉴보다 함께 볼 메뉴가 있는지도 자연스럽게 보게 됩니다` : "",
+    mentionedMenus.length > 0 ? `${mentionedMenus.join(", ")}도 함께 떠올라서 메뉴 선택지가 더 또렷하게 느껴졌어요` : "",
+    hasFamilyCue
+      ? "다녀온 뒤 좋았던 기억도 거창한 표현보다 함께 움직이는 날에 식사 시간을 무리 없이 넣을 수 있었다는 쪽에 가까웠습니다"
+      : "다녀온 뒤 남는 기억도 거창한 표현보다 식사 흐름을 무리 없이 잡기 좋았다는 쪽에 가까웠습니다",
+    "메뉴를 길게 고민하기보다 메뉴 구성과 식사 시간을 함께 떠올릴 수 있었던 점도 편하게 남았습니다",
+    hasTravelCue
+      ? "강화도 여행처럼 하루 일정이 이어지는 날에는 식사 한 번도 다음 움직임과 자연스럽게 이어지는지가 꽤 중요하게 느껴졌어요"
+      : "하루 일정이 이어지는 날에는 식사 한 번도 다음 움직임과 자연스럽게 이어지는지가 꽤 중요하게 느껴졌어요"
+  ].filter(Boolean);
+  const familyView = createHumanParagraph(familyViewSentences, tone);
+
+  const preVisit = createHumanParagraph([
+    `가기 전에는 영업시간, 대기 여부, 주차 가능 여부, 최신 메뉴판 정도를 한 번만 확인해두면 ${contextText} 계획을 잡을 때 훨씬 편할 것 같아요`,
+    /가격/u.test(memoText)
+      ? "가격: [확인 필요]. 메뉴 가격은 방문 시점에 따라 달라질 수 있어 최신 메뉴판을 보는 쪽이 현실적입니다"
+      : "",
+    /주차/u.test(memoText)
+      ? "주차: [확인 필요]. 차로 움직이는 일정이라면 주차 가능 여부도 미리 살펴두는 편이 좋습니다"
+      : "",
+    "가격이나 운영 정보는 시점에 따라 달라질 수 있으니 글 안에서 단정하지 않고, 출발 전에 공식 안내나 최근 후기를 같이 보는 쪽이 현실적입니다",
+    `${primaryMenu}을 보고 방문을 생각한다면 사진에서 보이는 구성과 실제 메뉴판을 함께 놓고 고르면 기대치를 더 편하게 맞출 수 있습니다`,
+    partySize ? `${partySize}이 함께 움직이는 자리라면 메뉴 하나만 보기보다 곁들일 메뉴와 식사 시간을 같이 생각하게 됩니다` : "",
+    hasFamilyCue
+      ? "가족이 함께 움직이는 날에는 식사 시간이 조금만 어긋나도 다음 일정이 밀릴 수 있어서, 이런 기본 정보만 미리 챙겨도 마음이 훨씬 가벼웠습니다"
+      : "여럿이 함께 움직이는 날에는 식사 시간이 조금만 어긋나도 다음 일정이 밀릴 수 있어서, 이런 기본 정보만 미리 챙겨도 마음이 훨씬 가벼웠습니다"
+  ].filter(Boolean), tone);
+
+  const closing = createHumanParagraph([
+    `이곳은 ${primaryMenu}이 궁금해서 보게 된 곳이고, ${regionKeyword}을 찾는 흐름에서도 상호와 메뉴가 비교적 또렷하게 남았습니다`,
+    "전체적으로는 과하게 좋다고 몰아가기보다, 가족이나 동행과 함께 움직이는 날에 메뉴와 위치를 차분히 떠올려보기 좋은 후기였어요",
+    hasTravelCue
+      ? `강화도 쪽에서 식사할 곳을 알아보는 중이라면 ${mainKeyword}의 메뉴 사진과 기본 정보를 먼저 보고, 내 일정에 맞는지만 가볍게 맞춰보면 좋겠습니다`
+      : `${regionKeyword} 주변에서 식사할 곳을 알아보는 중이라면 ${mainKeyword}의 메뉴 사진과 기본 정보를 먼저 보고, 내 일정에 맞는지만 가볍게 맞춰보면 좋겠습니다`,
+    "무엇보다 사진에서 보이는 첫인상과 실제로 다녀온 기억을 나눠 적으니, 광고처럼 밀어붙이는 글보다 훨씬 편하게 정리되는 느낌이었습니다"
+  ], tone);
+
+  const body = normalizeBody([
+    intro,
+    discovery,
+    ...photoParagraphs,
+    familyView,
+    "방문 전 참고하면 좋은 점",
+    preVisit,
+    closing,
+    disclosure ? createHumanParagraph([disclosure], tone) : ""
+  ].filter(Boolean).join("\n\n"));
+
+  return applyCategoryGuardrails(removeWritingGuideParagraphs(body), analysis);
 };
 
 const createHumanReviewBody = (form = {}, analysis = {}) => {
@@ -6835,6 +6918,7 @@ export function createProductReviewDraft(form = {}) {
   return {
     generationId,
     category,
+    engine: "fallback",
     titles: titleCandidates,
     titleCandidates,
     finalTitle,
@@ -6852,6 +6936,13 @@ export function createProductReviewDraft(form = {}) {
     qualityIssues: quality.issues,
     qualityChecks: quality.checks,
     blogWriterQuality: quality.blogWriterQuality,
-    bodyLength: body.replace(/\s+/g, "").length
+    bodyLength: body.replace(/\s+/g, "").length,
+    summary: {
+      engine: "fallback",
+      bodyLength: body.replace(/\s+/g, "").length,
+      targetCharCount: contentPackage.targetLengthRange?.target || null,
+      requestedTargetCharCount: contentPackage.requestedTargetCharCount || null,
+      informationLimited: Boolean(contentPackage.informationLimited)
+    }
   };
 }
