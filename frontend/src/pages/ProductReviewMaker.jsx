@@ -176,6 +176,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
   const qualityScore = draft.qualityScore ?? packageData.qualityScore ?? null;
   const qualityIssues = draft.qualityIssues || packageData.qualityIssues || [];
   const qualityChecks = draft.qualityChecks || packageData.qualityChecks || [];
+  const blogWriterQuality = draft.blogWriterQuality || packageData.blogWriterQuality || null;
 
   return {
     ...draft,
@@ -190,6 +191,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
     qualityScore,
     qualityIssues,
     qualityChecks,
+    blogWriterQuality,
     sourcePayload: sourcePayload || draft.sourcePayload || null,
     contentPackage: draft.contentPackage
       ? {
@@ -201,7 +203,8 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
           blogBody: body,
           qualityScore,
           qualityIssues,
-          qualityChecks
+          qualityChecks,
+          blogWriterQuality
         }
       : null
   };
@@ -588,6 +591,13 @@ export default function ProductReviewMaker() {
 
   const createReviewPayload = ({ selectedTitle = "", generationId = result.generationId } = {}) => {
     const imageContext = getImageContext();
+    const photoMetadata = imageContext.map((item) => ({
+      index: item.index,
+      name: item.name,
+      source: item.source,
+      note: item.note,
+      ocrText: item.ocrText
+    }));
     const imageText = mergeTextBlocks(
       ...imageContext.map((item) =>
         [
@@ -603,6 +613,9 @@ export default function ProductReviewMaker() {
 
     return {
       ...form,
+      topic,
+      memory: form.experienceMemo,
+      memo: form.experienceMemo,
       productName: form.productName || topic,
       mainKeyword,
       keyword: joinedKeywords || mainKeyword,
@@ -612,9 +625,55 @@ export default function ProductReviewMaker() {
       targetCharCount,
       targetLength: targetCharCount,
       generationId,
+      images: photoMetadata,
+      photos: photoMetadata,
+      photoMetadata,
       imageContext,
       imageCount: images.length
     };
+  };
+
+  const createLocalFallbackDraft = (payload, generationId) =>
+    normalizeReviewResult(
+      {
+        ...createProductReviewDraft(payload),
+        generationId,
+        generationRoute: "local-fallback",
+        llm: {
+          used: false,
+          reason: "local-fallback"
+        }
+      },
+      generationId,
+      payload
+    );
+
+  const requestBlogDraft = async (payload, generationId) => {
+    try {
+      const response = await fetch("/api/generate-blog", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error("blog-writer-api-unavailable");
+      }
+
+      const draft = await response.json();
+      return normalizeReviewResult(
+        {
+          ...draft,
+          generationId
+        },
+        generationId,
+        payload
+      );
+    } catch {
+      return createLocalFallbackDraft(payload, generationId);
+    }
   };
 
   const extractInfoFromImages = async () => {
@@ -697,17 +756,11 @@ export default function ProductReviewMaker() {
     setDraftMessage("");
 
     const payload = createReviewPayload({ selectedTitle: "", generationId });
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
       if (activeGenerationIdRef.current !== generationId) return;
 
-      const draft = normalizeReviewResult(
-        {
-          ...createProductReviewDraft(payload),
-          generationId
-        },
-        generationId,
-        payload
-      );
+      const draft = await requestBlogDraft(payload, generationId);
+      if (activeGenerationIdRef.current !== generationId) return;
 
       setResult(draft);
       setForm((current) => ({ ...current, selectedTitle: draft.finalTitle }));

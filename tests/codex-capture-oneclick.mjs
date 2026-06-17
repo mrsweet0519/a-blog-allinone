@@ -177,9 +177,9 @@ export const runOneClickCapture = async (page) => {
   await fillAndGenerate(
     page,
     "육짬 강화도본점 맛집 후기",
-    "강화도 가족여행중 다녀와서 좋았음",
+    "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음",
     {
-      keywords: "육짬, 강화도맛집",
+      keywords: "강화도맛집",
       targetCharCount: 2500
     }
   );

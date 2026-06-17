@@ -24,11 +24,15 @@ import {
   assessCapturedCommentExtraction,
   getCaptureOcrConfidenceStatus
 } from "../shared/commentReplyGenerator.js";
+import { analyzeBlogWritingInput } from "../shared/blogWriterCategory.js";
+import { buildBlogWriterPromptPayload } from "../shared/blogWriterPrompt.js";
+import { evaluateBlogWriterQuality } from "../shared/blogWriterQuality.js";
 import {
   createProductReviewDraft,
   extractProductInfoFieldsWithMetaFromText
 } from "../shared/productReviewGenerator.js";
 import { createTistoryDraft } from "../shared/tistoryGenerator.js";
+import { onRequestPost as generateBlogOnRequestPost } from "../functions/api/generate-blog.js";
 
 const now = new Date(2026, 5, 1, 10, 0, 0);
 
@@ -845,7 +849,16 @@ assert.ok(shortKeywordExperienceReview.body.includes("처음"));
 assert.ok(shortKeywordExperienceReview.body.includes("진행"));
 
 const productReviewMakerSource = readFileSync(new URL("../frontend/src/pages/ProductReviewMaker.jsx", import.meta.url), "utf8");
+const blogWriterApiSource = readFileSync(new URL("../functions/api/generate-blog.js", import.meta.url), "utf8");
 const appLayoutSource = readFileSync(new URL("../frontend/src/components/AppLayout.jsx", import.meta.url), "utf8");
+assert.ok(blogWriterApiSource.includes("context.env"));
+assert.ok(blogWriterApiSource.includes("BLOG_WRITER_LLM_ENABLED"));
+assert.ok(blogWriterApiSource.includes("OPENAI_API_KEY"));
+assert.ok(blogWriterApiSource.includes("static-fallback"));
+assert.ok(blogWriterApiSource.includes("evaluateBlogWriterQuality"));
+assert.ok(blogWriterApiSource.includes("llm-quality-fallback"));
+assert.ok(blogWriterApiSource.includes("server-key-missing"));
+assert.ok(!/sk-[A-Za-z0-9_-]{20,}/u.test(blogWriterApiSource));
 assert.ok(appLayoutSource.includes('to="/dashboard"'));
 assert.ok(appLayoutSource.includes('aria-label="Dashboard로 이동"'));
 assert.ok(appLayoutSource.includes("Blog All-in-One"));
@@ -957,7 +970,14 @@ assert.ok(productReviewMakerSource.includes("createGenerationId"));
 assert.ok(productReviewMakerSource.includes("activeGenerationIdRef.current = generationId"));
 assert.ok(productReviewMakerSource.includes("setResult(createEmptyResult(generationId))"));
 assert.ok(productReviewMakerSource.includes('selectedTitle: selectedTitle || ""'));
-assert.ok(productReviewMakerSource.includes("window.setTimeout(() =>"));
+assert.ok(productReviewMakerSource.includes("window.setTimeout(async () =>"));
+assert.ok(productReviewMakerSource.includes('fetch("/api/generate-blog"'));
+assert.ok(productReviewMakerSource.includes("createLocalFallbackDraft"));
+assert.ok(productReviewMakerSource.includes("requestBlogDraft"));
+assert.ok(productReviewMakerSource.includes("topic,"));
+assert.ok(productReviewMakerSource.includes("memory: form.experienceMemo"));
+assert.ok(productReviewMakerSource.includes("photoMetadata"));
+assert.ok(productReviewMakerSource.includes("images: photoMetadata"));
 assert.ok(!productReviewMakerSource.includes("generateReview(result.selectedTitle)"));
 assert.ok(!productReviewMakerSource.includes("예: 에어젤 드라이샴푸 후기 / 부천금거래소 후기 / 아이랑 갈만한 카페"));
 assert.ok(!productReviewMakerSource.includes("예: 에어젤 드라이샴푸 / 부천금거래소 / 부천 아이랑 카페"));
@@ -1017,6 +1037,120 @@ try {
   assert.ok(productReviewMakerMarkup.indexOf("고급 옵션") < productReviewMakerMarkup.indexOf("목표 글자수"));
 } finally {
   await viteServer.close();
+}
+
+const createGenerateBlogRequest = (form, env = {}) =>
+  generateBlogOnRequestPost({
+    request: new Request("http://local.test/api/generate-blog", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(form)
+    }),
+    env
+  });
+
+const readJsonResponse = async (response) => JSON.parse(await response.text());
+
+const routeSampleForm = {
+  productName: "육짬 강화도본점 맛집 후기",
+  topic: "육짬 강화도본점 맛집 후기",
+  mainKeyword: "강화도맛집",
+  memory: "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음",
+  experienceMemo: "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음",
+  targetCharCount: 2500,
+  tone: "친근한",
+  category: "",
+  avoidWords: "무조건, 보장, 완벽, 즉시효과",
+  photoMetadata: [
+    { index: 1, name: "menu.jpg", note: "대표 메뉴 사진" },
+    { index: 2, name: "food.jpg", note: "음식 사진" }
+  ],
+  images: [
+    { index: 1, name: "menu.jpg", note: "대표 메뉴 사진" },
+    { index: 2, name: "food.jpg", note: "음식 사진" }
+  ],
+  imageCount: 2
+};
+const routeNoFlagResult = await readJsonResponse(await createGenerateBlogRequest(routeSampleForm, {}));
+assert.equal(routeNoFlagResult.generationRoute, "static-fallback");
+assert.equal(routeNoFlagResult.llm.used, false);
+assert.equal(routeNoFlagResult.llm.reason, "llm-disabled");
+assert.equal(routeNoFlagResult.contentPackage.mainKeyword, "육짬 강화도본점");
+assert.ok(routeNoFlagResult.qualityScore >= 95);
+
+const routeEnabledNoKeyResult = await readJsonResponse(
+  await createGenerateBlogRequest(routeSampleForm, { BLOG_WRITER_LLM_ENABLED: "true" })
+);
+assert.equal(routeEnabledNoKeyResult.generationRoute, "static-fallback");
+assert.equal(routeEnabledNoKeyResult.llm.reason, "server-key-missing");
+assert.ok(!JSON.stringify(routeEnabledNoKeyResult).includes("unit-test-key"));
+
+const originalFetchForRouteTest = globalThis.fetch;
+const routeFallbackDraft = createProductReviewDraft(routeSampleForm);
+try {
+  globalThis.fetch = async (url, init = {}) => {
+    assert.equal(url, "https://api.openai.com/v1/chat/completions");
+    const requestBody = JSON.parse(init.body);
+    assert.equal(requestBody.model, "unit-model");
+    assert.ok(String(init.headers.authorization).includes("unit-test-key"));
+    assert.ok(!JSON.stringify(requestBody).includes("OPENAI_API_KEY"));
+
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                finalTitle: routeFallbackDraft.finalTitle,
+                titleCandidates: routeFallbackDraft.titleCandidates,
+                mainKeyword: routeFallbackDraft.mainKeyword,
+                subKeywords: routeFallbackDraft.contentPackage.subKeywords,
+                body: routeFallbackDraft.body,
+                faqItems: routeFallbackDraft.contentPackage.faqItems,
+                hashtags: routeFallbackDraft.hashtags
+              })
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  const routeLlmResult = await readJsonResponse(
+    await createGenerateBlogRequest(routeSampleForm, {
+      BLOG_WRITER_LLM_ENABLED: "true",
+      OPENAI_API_KEY: "unit-test-key",
+      OPENAI_MODEL: "unit-model"
+    })
+  );
+  assert.equal(routeLlmResult.generationRoute, "llm");
+  assert.equal(routeLlmResult.llm.used, true);
+  assert.equal(routeLlmResult.llm.accepted, true);
+  assert.equal(routeLlmResult.contentPackage.mainKeyword, "육짬 강화도본점");
+  assert.ok(routeLlmResult.contentPackage.blogWriterQuality.score >= 95);
+  assert.ok(!JSON.stringify(routeLlmResult).includes("unit-test-key"));
+
+  globalThis.fetch = async () => {
+    throw new Error("network unavailable");
+  };
+  const routeLlmFailureResult = await readJsonResponse(
+    await createGenerateBlogRequest(routeSampleForm, {
+      BLOG_WRITER_LLM_ENABLED: "true",
+      OPENAI_API_KEY: "unit-test-key",
+      OPENAI_MODEL: "unit-model"
+    })
+  );
+  assert.equal(routeLlmFailureResult.generationRoute, "static-fallback");
+  assert.equal(routeLlmFailureResult.llm.used, false);
+  assert.equal(routeLlmFailureResult.llm.attempted, true);
+  assert.equal(routeLlmFailureResult.llm.reason, "llm-failed");
+  assert.ok(routeLlmFailureResult.qualityScore >= 95);
+  assert.ok(!JSON.stringify(routeLlmFailureResult).includes("network unavailable"));
+} finally {
+  globalThis.fetch = originalFetchForRouteTest;
 }
 
 const collectReviewOutputText = (review = {}) => [
@@ -1136,8 +1270,8 @@ assertQualityScore(sparseYukjjamRestaurantReview);
 
 const richYukjjamRestaurantReview = createProductReviewDraft({
   productName: "육짬 강화도본점 맛집 후기",
-  mainKeyword: "육짬, 강화도맛집",
-  experienceMemo: "강화도 가족여행중 다녀와서 좋았음",
+  mainKeyword: "강화도맛집",
+  experienceMemo: "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음",
   imageContext: [
     { index: 1, note: "대표 메뉴 사진" },
     { index: 2, note: "음식 사진" }
@@ -1154,9 +1288,56 @@ const richYukjjamSubCounts = ["강화도맛집", "갈낙짬뽕"].map((keyword) =
   countOccurrences(richYukjjamRestaurantReview.body, keyword)
 );
 const richYukjjamFaqItems = richYukjjamRestaurantReview.contentPackage.faqItems;
+const richYukjjamAnalysis = analyzeBlogWritingInput({
+  productName: "육짬 강화도본점 맛집 후기",
+  mainKeyword: "강화도맛집",
+  experienceMemo: "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음"
+});
+const richYukjjamPromptPayload = buildBlogWriterPromptPayload({
+  form: {
+    productName: "육짬 강화도본점 맛집 후기",
+    mainKeyword: "강화도맛집",
+    experienceMemo: "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음",
+    targetCharCount: 2500
+  },
+  analysis: richYukjjamAnalysis,
+  fallbackDraft: richYukjjamRestaurantReview
+});
+const richYukjjamModuleQuality = evaluateBlogWriterQuality({
+  form: {
+    productName: "육짬 강화도본점 맛집 후기",
+    mainKeyword: "강화도맛집",
+    experienceMemo: "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음"
+  },
+  category: richYukjjamRestaurantReview.category,
+  selectedTitle: richYukjjamRestaurantReview.selectedTitle,
+  titleCandidates: richYukjjamRestaurantReview.titleCandidates,
+  body: richYukjjamRestaurantReview.body,
+  mainKeyword: richYukjjamRestaurantReview.contentPackage.mainKeyword,
+  subKeywords: richYukjjamRestaurantReview.contentPackage.subKeywords,
+  hashtags: richYukjjamRestaurantReview.hashtags,
+  faqItems: richYukjjamFaqItems,
+  imageCount: 2,
+  photoGuide: richYukjjamRestaurantReview.contentPackage.photoGuide,
+  targetCharCount: 2500,
+  primaryMenu: "갈낙짬뽕"
+});
 assert.equal(richYukjjamRestaurantReview.category, "restaurant");
+assert.equal(richYukjjamAnalysis.primaryEntity, "육짬 강화도본점");
+assert.equal(richYukjjamAnalysis.mainKeyword, "육짬 강화도본점");
+assert.equal(richYukjjamAnalysis.broadKeyword, "강화도맛집");
+assert.ok(richYukjjamAnalysis.entityCorrected);
 assert.equal(richYukjjamRestaurantReview.contentPackage.mainKeyword, "육짬 강화도본점");
-assert.deepEqual(richYukjjamRestaurantReview.contentPackage.subKeywords, ["강화도맛집", "갈낙짬뽕"]);
+assert.ok(richYukjjamRestaurantReview.contentPackage.subKeywords.includes("강화도맛집"));
+assert.ok(richYukjjamRestaurantReview.contentPackage.subKeywords.includes("갈낙짬뽕"));
+assert.ok(richYukjjamRestaurantReview.contentPackage.subKeywords.includes("가족여행"));
+assert.equal(richYukjjamRestaurantReview.contentPackage.blogWriterAnalysis.mainKeyword, "육짬 강화도본점");
+assert.ok(richYukjjamRestaurantReview.contentPackage.blogWriterAnalysis.subKeywords.includes("강화도맛집"));
+assert.ok(richYukjjamRestaurantReview.contentPackage.blogWriterAnalysis.subKeywords.includes("갈낙짬뽕"));
+assert.equal(richYukjjamPromptPayload.mode, "llm-preferred-with-static-fallback");
+assert.ok(richYukjjamPromptPayload.messages[0].content.includes("가족 라이프스타일 블로거"));
+assert.ok(richYukjjamPromptPayload.messages[1].content.includes('"primaryEntity": "육짬 강화도본점"'));
+assert.ok(!richYukjjamPromptPayload.messages.some((message) => /OPENAI_API_KEY|sk-/u.test(message.content)));
 assert.ok(/육짬 강화도본점|초지대교 맛집/u.test(richYukjjamRestaurantReview.finalTitle));
 assert.ok(richYukjjamTitles.every((title) => /육짬 강화도본점|초지대교 맛집/u.test(title)));
 assert.ok(richYukjjamTitles.every((title) => Array.from(title).length >= 28 && Array.from(title).length <= 40));
@@ -1195,6 +1376,9 @@ assert.ok(!richYukjjamFaqItems.some((item) => /아이/u.test(`${item.question} $
 assert.ok(!forbiddenReviewGuidePattern.test(richYukjjamRestaurantReview.body));
 assert.ok(!forbiddenUnsupportedRestaurantClaimPattern.test(richYukjjamRestaurantReview.body));
 assertNoDuplicateBodyParts(richYukjjamRestaurantReview.body);
+assert.ok(richYukjjamModuleQuality.score >= 95, richYukjjamModuleQuality.issues.join(", "));
+assert.equal(richYukjjamModuleQuality.criticalFailed, false);
+assert.ok(richYukjjamRestaurantReview.blogWriterQuality.score >= 95);
 assertQualityScore(richYukjjamRestaurantReview);
 
 const sponsoredYukjjamRestaurantReview = createProductReviewDraft({

@@ -10,8 +10,12 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 .playwright-mcp/
+.codex-playwright-output/
 test-results/
+screenshots/*.png
 layout-*.png
+codex-preview.out
+codex-preview.err
 .codex-*.log
 .codex-*.out
 .codex-*.err
