@@ -37,7 +37,6 @@ const initialForm = {
   purchaseNotes: "",
   experienceMemo: "",
   emphasisPoints: "",
-  sponsorshipType: "",
   avoidWords: "무조건, 보장, 완벽, 즉시효과",
   tone: "친근한",
   targetCharCount: "2500",
@@ -84,7 +83,6 @@ const reviewCategoryOptions = [
   { value: "kids-place", label: "아이 동반 장소 후기" },
   { value: "place", label: "장소 후기" }
 ];
-const sponsorshipOptions = ["직접 구매", "제품 제공", "식사권 제공", "협찬/체험단"];
 const MIN_TARGET_CHAR_COUNT = 800;
 const MAX_TARGET_CHAR_COUNT = 4000;
 const MAX_REVIEW_IMAGES = 10;
@@ -334,7 +332,6 @@ const createFormSignature = (formState = {}, imageItems = []) =>
     category: formState.category || "",
     tone: formState.tone || "",
     targetCharCount: normalizeTargetCharCountInput(formState.targetCharCount),
-    sponsorshipType: formState.sponsorshipType || "",
     avoidWords: normalizeSignatureText(formState.avoidWords)
   });
 
@@ -1054,22 +1051,6 @@ export default function ProductReviewMaker() {
                   <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
                     800자~4000자 사이로 보정됩니다. 비우면 입력량에 맞춰 자동 추천합니다.
                   </p>
-                </label>
-
-                <label className="block">
-                  <FieldLabel>협찬 여부</FieldLabel>
-                  <select
-                    value={form.sponsorshipType}
-                    onChange={(event) => updateForm("sponsorshipType", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
-                  >
-                    <option value="">선택 안 함</option>
-                    {sponsorshipOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
                 </label>
 
                 <label className="block sm:col-span-2">

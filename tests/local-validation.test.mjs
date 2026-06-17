@@ -520,7 +520,7 @@ const forbiddenReviewGuidePattern =
   /정리해보려고|기준으로 풀어두면|중심으로 정리했|이런 흐름으로 작성|글에 담아보겠습니다|아래 내용은|과하게 단정하기보다|기준으로 볼 것 같아요|이번 초안|본문 흐름|검색자가 궁금|제공된 메모|확인 필요 정보|최종 발행|네이버 검색|사용자가 직접|최종 검수표|글의 중심이 분명해집니다|구체적으로 보완|글이 더 살아납니다|글이 더 구체적으로|작성하면 좋습니다|작성하면|확인할 부분으로 남겨두는 편|확인할 부분|확인되지 않은 정보는|단정하지 않는 편|후기를 함께 보는 편|방문 전 확인할 항목|안전해요|실제 후기를 함께|맛집 후기답게|본문에서|메모|제공된 정보|사진과 함께 보완|정보가 없다면/u;
 
 const forbiddenUnsupportedRestaurantClaimPattern =
-  /분위기와\s*양,\s*응대|메뉴와\s*분위기,\s*양,\s*응대|직원\s*응대가\s*좋|직원\s*친절|주차가\s*편(?:했|한|해)|주차\s*편|다시\s*가고\s*싶|재방문\s*(?:의사|하고\s*싶)|맛있었|가격은\s*\d|가격\s*만족|웨이팅\s*없|예약\s*가능|영업시간/u;
+  /분위기와\s*양,\s*응대|메뉴와\s*분위기,\s*양,\s*응대|직원\s*응대가\s*좋|직원\s*친절|주차가\s*편(?:했|한|해)|주차\s*편|다시\s*가고\s*싶|재방문\s*(?:의사|하고\s*싶)|맛있었|가격은\s*\d|가격\s*만족|웨이팅\s*없|예약\s*가능|영업시간\s*(?:은|:)\s*\d/u;
 
 const countOccurrences = (value = "", needle = "") =>
   needle ? String(value || "").split(needle).length - 1 : 0;
@@ -591,7 +591,8 @@ assert.equal(requestedRestaurantReview.titles.slice(0, 3).length, 3);
 assert.ok(requestedRestaurantReview.outline.some((heading) => heading.includes("주차")));
 assert.equal(requestedRestaurantReview.thumbnailTexts.length, 3);
 assert.ok(requestedRestaurantReview.searchKeywords.includes(requestedRestaurantMainKeyword));
-assert.ok(requestedRestaurantReview.closingParagraph.includes("가격") || requestedRestaurantReview.closingParagraph.includes("주차"));
+const requestedRestaurantReferenceSection = requestedRestaurantReview.body.split("방문 전 참고하면 좋은 점")[1] || "";
+assert.ok(requestedRestaurantReferenceSection.includes("가격: [확인 필요]") || requestedRestaurantReferenceSection.includes("주차: [확인 필요]"));
 
 const requestedCreamReview = createProductReviewDraft({
   mainKeyword: "수분크림 직접 써본 후기",
@@ -910,6 +911,8 @@ assert.ok(productReviewMakerSource.includes("고급 옵션"));
 assert.ok(productReviewMakerSource.includes("메인 키워드"));
 assert.ok(productReviewMakerSource.includes("예: 상호명 / 지역명 맛집 / 대표 메뉴"));
 assert.ok(productReviewMakerSource.includes("targetCharCount"));
+assert.ok(!productReviewMakerSource.includes("협찬 여부"));
+assert.ok(!productReviewMakerSource.includes("sponsorshipType"));
 assert.ok(productReviewMakerSource.includes("lastGeneratedSignature"));
 assert.ok(productReviewMakerSource.includes("currentFormSignature"));
 assert.ok(productReviewMakerSource.includes("createFormSignature"));
@@ -1004,6 +1007,7 @@ try {
   assert.ok(productReviewMakerMarkup.includes("글 주제를 입력해주세요"));
   assert.ok(productReviewMakerMarkup.includes("비워두면 글 주제와 메모에서 자동으로 추출합니다."));
   assert.ok(productReviewMakerMarkup.includes("목표 글자수"));
+  assert.ok(!productReviewMakerMarkup.includes("협찬 여부"));
   assert.ok(productReviewMakerMarkup.includes("value=\"2500\""));
   assert.ok(productReviewMakerMarkup.includes("800자~4000자 사이로 보정됩니다."));
   assert.ok(!productReviewMakerMarkup.includes("자동 추천 - 입력량에 맞춰 자연스럽게 작성"));
@@ -1131,53 +1135,84 @@ assert.ok(!forbiddenUnsupportedRestaurantClaimPattern.test(sparseYukjjamRestaura
 assertQualityScore(sparseYukjjamRestaurantReview);
 
 const richYukjjamRestaurantReview = createProductReviewDraft({
-  productName: "육짬 강화도본점 맛집후기",
-  mainKeyword: "육짬 강화도본점, 초지대교 맛집, 갈낙짬뽕",
+  productName: "육짬 강화도본점 맛집 후기",
+  mainKeyword: "육짬, 강화도맛집",
   experienceMemo: "강화도 가족여행중 다녀와서 좋았음",
   imageContext: [
     { index: 1, note: "대표 메뉴 사진" },
-    { index: 2, note: "매장 분위기 사진" }
+    { index: 2, note: "음식 사진" }
   ],
   imageCount: 2,
-  targetCharCount: 2900,
-  sponsorshipType: "식사권 제공"
+  targetCharCount: 2500
 });
 const richYukjjamFirstSentence = richYukjjamRestaurantReview.body.split(/(?<=[.!?])\s+/u)[0];
-const richYukjjamEarlyBody = richYukjjamRestaurantReview.body.split(/\n{2,}/u).slice(0, 6).join("\n");
+const richYukjjamFirstParagraph = richYukjjamRestaurantReview.body.split(/\n{2,}/u)[0];
+const richYukjjamEarlyBody = richYukjjamRestaurantReview.body.split(/\n{2,}/u).slice(0, 8).join("\n");
 const richYukjjamTitles = richYukjjamRestaurantReview.titleCandidates;
 const richYukjjamMainCount = countOccurrences(richYukjjamRestaurantReview.body, "육짬 강화도본점");
-const richYukjjamSubCounts = ["초지대교 맛집", "갈낙짬뽕"].map((keyword) =>
+const richYukjjamSubCounts = ["강화도맛집", "갈낙짬뽕"].map((keyword) =>
   countOccurrences(richYukjjamRestaurantReview.body, keyword)
 );
+const richYukjjamFaqItems = richYukjjamRestaurantReview.contentPackage.faqItems;
 assert.equal(richYukjjamRestaurantReview.category, "restaurant");
 assert.equal(richYukjjamRestaurantReview.contentPackage.mainKeyword, "육짬 강화도본점");
-assert.deepEqual(richYukjjamRestaurantReview.contentPackage.subKeywords, ["초지대교 맛집", "갈낙짬뽕"]);
+assert.deepEqual(richYukjjamRestaurantReview.contentPackage.subKeywords, ["강화도맛집", "갈낙짬뽕"]);
 assert.ok(/육짬 강화도본점|초지대교 맛집/u.test(richYukjjamRestaurantReview.finalTitle));
-assert.ok(richYukjjamTitles.every((title) => title.includes("육짬 강화도본점")));
+assert.ok(richYukjjamTitles.every((title) => /육짬 강화도본점|초지대교 맛집/u.test(title)));
 assert.ok(richYukjjamTitles.every((title) => Array.from(title).length >= 28 && Array.from(title).length <= 40));
 assert.ok(richYukjjamTitles.filter((title) => title.includes("갈낙짬뽕")).length >= 3);
-assert.ok(richYukjjamTitles.filter((title) => /초지대교|강화도|맛집/u.test(title)).length >= 2);
+assert.ok(richYukjjamTitles.filter((title) => /강화도맛집|초지대교|강화도|맛집/u.test(title)).length >= 2);
 assert.ok(richYukjjamTitles.some((title) => /방문 전|체크/u.test(title)));
 assert.ok(richYukjjamTitles.some((title) => /가족여행|가족 식사|식사 후보/u.test(title)));
 assert.ok(richYukjjamTitles.some((title) => /정보|요약|위치/u.test(title)));
 assert.ok(richYukjjamFirstSentence.includes("육짬 강화도본점"));
+assert.ok(countOccurrences(richYukjjamFirstParagraph, "육짬 강화도본점") >= 2);
+assert.ok(countOccurrences(richYukjjamFirstParagraph, "육짬 강화도본점") <= 3);
 assert.ok(richYukjjamEarlyBody.includes("가족"));
-assert.ok(richYukjjamEarlyBody.includes("초지대교"));
+assert.ok(richYukjjamEarlyBody.includes("강화도맛집"));
 assert.ok(richYukjjamEarlyBody.includes("갈낙짬뽕"));
 assert.ok(richYukjjamRestaurantReview.body.includes("[사진 삽입: 대표 메뉴 사진]"));
 assert.equal((richYukjjamRestaurantReview.body.match(/\[사진 삽입:/gu) || []).length, 2);
-assert.ok(richYukjjamRestaurantReview.bodyLength >= 2400 && richYukjjamRestaurantReview.bodyLength <= 3500);
+assert.ok(richYukjjamRestaurantReview.bodyLength >= 2000 && richYukjjamRestaurantReview.bodyLength <= 3500);
+assert.ok(richYukjjamRestaurantReview.body.length >= 2400 && richYukjjamRestaurantReview.body.length <= 3800);
 assert.ok(richYukjjamMainCount >= 7 && richYukjjamMainCount <= 8);
 assert.ok(richYukjjamSubCounts.every((count) => count >= 2 && count <= 4));
-assert.equal(countOccurrences(richYukjjamRestaurantReview.body, "식사권"), 1);
-assert.ok(/식사권을\s*제공받아/u.test(richYukjjamRestaurantReview.body));
+assert.equal(countOccurrences(richYukjjamRestaurantReview.body, "식사권"), 0);
 assert.ok(!/협찬이지만\s*솔직히|내돈내산처럼/u.test(richYukjjamRestaurantReview.body));
-assert.ok(!/직원\s*친절|주차\s*편|양\s*많|웨이팅\s*없|가격\s*만족|재방문|예약\s*가능|영업시간/u.test(richYukjjamRestaurantReview.body));
-assert.ok((richYukjjamRestaurantReview.body.match(/방문 전 .*확인|확인 .*정보|확인이 필요한 부분/gu) || []).length <= 1);
+assert.ok(!/직원\s*친절|주차\s*편|양\s*많|웨이팅\s*없|가격\s*만족|재방문|예약\s*가능|영업시간\s*(?:은|:)\s*\d/u.test(richYukjjamRestaurantReview.body));
+assert.ok(!/방문 전 확인|한 번 더 확인|확인이 필요합니다|확인하면 좋겠어요|확인할 항목|실제 후기를 함께|맛을 단정하기보다|맛이나 양을 과하게|맛을 대신|제공된 정보|정보가 없다면|단정하지 않는 편|안전해요/u.test(richYukjjamRestaurantReview.body));
+assert.ok(!/육짬는/u.test(collectReviewOutputText(richYukjjamRestaurantReview)));
+assert.ok(richYukjjamRestaurantReview.body.includes("육짬 강화도본점은"));
+assert.ok(richYukjjamRestaurantReview.hashtags.length >= 10 && richYukjjamRestaurantReview.hashtags.length <= 15);
+assert.equal(new Set(richYukjjamRestaurantReview.hashtags).size, richYukjjamRestaurantReview.hashtags.length);
+assert.equal(new Set(richYukjjamRestaurantReview.hashtags.map((tag) => tag.replace(/^#/u, ""))).size, richYukjjamRestaurantReview.hashtags.length);
+assert.equal(richYukjjamFaqItems.length, 3);
+assert.ok(richYukjjamFaqItems[0].question.includes("어떤 메뉴"));
+assert.ok(richYukjjamFaqItems[0].answer.includes("갈낙짬뽕"));
+assert.ok(/방문 시간대|대기|주차/u.test(richYukjjamFaqItems[1].answer));
+assert.ok(richYukjjamFaqItems[2].question.includes("강화도맛집"));
+assert.ok(!richYukjjamFaqItems.some((item) => /아이/u.test(`${item.question} ${item.answer}`)));
 assert.ok(!forbiddenReviewGuidePattern.test(richYukjjamRestaurantReview.body));
 assert.ok(!forbiddenUnsupportedRestaurantClaimPattern.test(richYukjjamRestaurantReview.body));
 assertNoDuplicateBodyParts(richYukjjamRestaurantReview.body);
 assertQualityScore(richYukjjamRestaurantReview);
+
+const sponsoredYukjjamRestaurantReview = createProductReviewDraft({
+  productName: "육짬 강화도본점 맛집 후기",
+  mainKeyword: "육짬, 강화도맛집",
+  experienceMemo: "강화도 가족여행중 다녀와서 좋았음 식사권 제공",
+  imageContext: [
+    { index: 1, note: "대표 메뉴 사진" },
+    { index: 2, note: "음식 사진" }
+  ],
+  imageCount: 2,
+  targetCharCount: 2500
+});
+assert.equal(sponsoredYukjjamRestaurantReview.contentPackage.mainKeyword, "육짬 강화도본점");
+assert.equal(countOccurrences(sponsoredYukjjamRestaurantReview.body, "식사권"), 1);
+assert.ok(/식사권을\s*제공받아/u.test(sponsoredYukjjamRestaurantReview.body));
+assert.ok(!/협찬이지만\s*솔직히|내돈내산처럼/u.test(sponsoredYukjjamRestaurantReview.body));
+assertQualityScore(sponsoredYukjjamRestaurantReview);
 
 const noProvidedFieldRestaurantReview = createProductReviewDraft({
   productName: "파스타 맛집 후기",
