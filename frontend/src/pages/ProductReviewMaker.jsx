@@ -40,8 +40,7 @@ const initialForm = {
   sponsorshipType: "",
   avoidWords: "무조건, 보장, 완벽, 즉시효과",
   tone: "친근한",
-  targetLengthOption: "auto",
-  targetLength: "auto",
+  targetCharCount: "2500",
   selectedTitle: ""
 };
 
@@ -86,12 +85,8 @@ const reviewCategoryOptions = [
   { value: "place", label: "장소 후기" }
 ];
 const sponsorshipOptions = ["직접 구매", "제품 제공", "식사권 제공", "협찬/체험단"];
-const targetLengthOptions = [
-  { value: "auto", label: "자동 추천", description: "입력량에 맞춰 자연스럽게 작성" },
-  { value: "short", label: "짧게", description: "약 1000~1500자" },
-  { value: "medium", label: "보통", description: "약 1800~2500자" },
-  { value: "long", label: "길게", description: "약 2800~3500자" }
-];
+const MIN_TARGET_CHAR_COUNT = 800;
+const MAX_TARGET_CHAR_COUNT = 4000;
 const MAX_REVIEW_IMAGES = 10;
 const supportedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -295,6 +290,21 @@ const mergeTextBlocks = (...blocks) =>
         .filter(Boolean)
     )
   ).join("\n");
+
+const normalizeTargetCharCountInput = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return "";
+
+  return String(Math.min(Math.max(parsed, MIN_TARGET_CHAR_COUNT), MAX_TARGET_CHAR_COUNT));
+};
+
+const getPayloadTargetCharCount = (value) => {
+  const normalized = normalizeTargetCharCountInput(value);
+  return normalized ? Number.parseInt(normalized, 10) : undefined;
+};
 
 const reviewTopicTailPattern =
   /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리|방법)$/u;
@@ -555,6 +565,7 @@ export default function ProductReviewMaker() {
     );
     const topic = reviewTopic || form.productName || resolvedMainKeyword;
     const mainKeyword = resolvedMainKeyword || topic;
+    const targetCharCount = getPayloadTargetCharCount(form.targetCharCount);
 
     return {
       ...form,
@@ -563,8 +574,8 @@ export default function ProductReviewMaker() {
       keyword: mainKeyword,
       productInfoText: mergeTextBlocks(form.productInfoText, imageText),
       selectedTitle: selectedTitle || "",
-      targetLengthOption: form.targetLengthOption || "auto",
-      targetLength: form.targetLengthOption || form.targetLength || "auto",
+      targetCharCount,
+      targetLength: targetCharCount,
       generationId,
       imageContext,
       imageCount: images.length
@@ -742,8 +753,7 @@ export default function ProductReviewMaker() {
       {
         ...createReviewPayload({ selectedTitle: getResultFinalTitle(result), generationId: result.generationId }),
         keyword: resolvedMainKeyword || reviewTopic,
-        targetLengthOption: form.targetLengthOption || "auto",
-        customTargetLength: form.targetLength
+        targetCharCount: getPayloadTargetCharCount(form.targetCharCount)
       },
       {
         ...result,
@@ -853,6 +863,23 @@ export default function ProductReviewMaker() {
                 className="focus-ring mt-3 min-h-[76px] w-full resize-none rounded-2xl border border-line/40 bg-white px-4 py-3 text-lg font-bold leading-7 text-ink placeholder:text-ink/28"
                 placeholder="예: 제품 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기"
               />
+              <label className="mt-3 block">
+                <div className="flex items-center justify-between gap-2">
+                  <FieldLabel>노출 키워드</FieldLabel>
+                  <span className="shrink-0 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/45">
+                    선택사항
+                  </span>
+                </div>
+                <input
+                  value={form.mainKeyword}
+                  onChange={(event) => updateForm("mainKeyword", event.target.value)}
+                  className="focus-ring mt-2 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
+                  placeholder="예: 육짬 강화도본점 / 초지대교 맛집 / 갈낙짬뽕"
+                />
+                <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
+                  비워두면 글 주제와 메모에서 자동으로 추출합니다. 여러 키워드는 쉼표로 나눠 입력하세요.
+                </p>
+              </label>
             </section>
 
             <section className="rounded-2xl bg-[#fbfaf6] p-4">
@@ -936,16 +963,6 @@ export default function ProductReviewMaker() {
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <label className="block">
-                  <FieldLabel>메인 키워드 직접 지정</FieldLabel>
-                  <input
-                    value={form.mainKeyword}
-                    onChange={(event) => updateForm("mainKeyword", event.target.value)}
-                    className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
-                    placeholder="비워두면 글 주제에서 자동으로 잡습니다."
-                  />
-                </label>
-
-                <label className="block">
                   <FieldLabel>카테고리</FieldLabel>
                   <select
                     value={form.category}
@@ -977,17 +994,26 @@ export default function ProductReviewMaker() {
 
                 <label className="block">
                   <FieldLabel>목표 글자수</FieldLabel>
-                  <select
-                    value={form.targetLengthOption}
-                    onChange={(event) => updateForm("targetLengthOption", event.target.value)}
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={MIN_TARGET_CHAR_COUNT}
+                    max={MAX_TARGET_CHAR_COUNT}
+                    step="100"
+                    value={form.targetCharCount}
+                    onChange={(event) => updateForm("targetCharCount", event.target.value)}
+                    onBlur={() =>
+                      setForm((current) => ({
+                        ...current,
+                        targetCharCount: normalizeTargetCharCountInput(current.targetCharCount)
+                      }))
+                    }
                     className="focus-ring mt-2 min-h-11 w-full rounded-md border border-line/70 bg-white px-3 text-sm"
-                  >
-                    {targetLengthOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label} - {option.description}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="예: 1800 / 2500 / 3200"
+                  />
+                  <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
+                    800자~4000자 사이로 보정됩니다. 비우면 입력량에 맞춰 자동 추천합니다.
+                  </p>
                 </label>
 
                 <label className="block">
@@ -1291,10 +1317,14 @@ function BlogBodyPreview({ body = "", images = [] }) {
               <figure
                 key={`${paragraph}-${index}`}
                 data-testid="inline-photo-preview"
-                className="overflow-hidden rounded-md border border-line bg-white shadow-[0_10px_24px_rgba(31,36,40,0.06)]"
+                className="rounded-md border border-line bg-white p-2 shadow-[0_10px_24px_rgba(31,36,40,0.06)]"
               >
-                <img src={image.url} alt={markerMatch[1]} className="h-52 w-full object-cover sm:h-64" />
-                <figcaption className="flex items-center justify-between gap-3 px-3 py-2 text-xs font-bold text-ink/55">
+                <img
+                  src={image.url}
+                  alt={markerMatch[1]}
+                  className="mx-auto max-h-[520px] w-full rounded-sm object-contain"
+                />
+                <figcaption className="flex items-center justify-between gap-3 px-1.5 pt-2 text-xs font-bold text-ink/55">
                   <span>{markerMatch[1]}</span>
                   <span className="shrink-0 text-moss">업로드 순서 {photoIndex}</span>
                 </figcaption>
