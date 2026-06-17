@@ -135,7 +135,7 @@ const uniqueText = (items = []) =>
 
 const splitCommaList = (value = "", limit = 10) =>
   text(value)
-    .split(/[\n,]/u)
+    .split(/[\n,/]+/u)
     .map((item) => item.trim())
     .filter(Boolean)
     .slice(0, limit);
@@ -267,7 +267,10 @@ const getTargetLengthSettings = (form = {}, category = inferReviewCategory(form)
 const normalizeTargetLength = (value) => normalizeNumericTargetLength(value);
 
 const getKeywordParts = (form = {}) =>
-  uniqueText(splitCommaList(form.mainKeyword || form.keyword, 5).map(normalizeMainKeyword));
+  uniqueText([
+    ...splitCommaList(form.mainKeyword || form.keyword, 5).map(normalizeMainKeyword),
+    ...splitCommaList(form.subKeywords, 5).map(normalizeMainKeyword)
+  ]);
 
 const getMainKeyword = (form = {}) =>
   getKeywordParts(form)[0] || deriveMainKeywordFromTopic(form.productName) || "상품 후기";
@@ -280,6 +283,8 @@ const getRelatedKeywords = (form = {}) =>
     ...getKeywordParts(form).slice(1),
     ...splitCommaList(form.emphasisPoints, 5)
   ]).slice(0, 5);
+
+const getSubKeywords = (form = {}) => getKeywordParts(form).slice(1);
 
 const getKeywordRelatedText = (form = {}) => {
   const keywordRelated = getKeywordParts(form).slice(1);
@@ -1248,7 +1253,9 @@ const normalizeSeoTitleCandidate = (candidate = "", mainKeyword = "", category =
   const titlePrefix = nonReviewTitleCategories.has(category) ? keyword : reviewTitle;
   const simpleReviewTitle = compact(title) === compact(reviewTitle);
 
-  if (visibleLength < 28 || simpleReviewTitle) {
+  if (category === "restaurant" && visibleLength < 28 && !simpleReviewTitle && visibleLength >= 24) {
+    title = `${title} 정보 정리`;
+  } else if (visibleLength < 28 || simpleReviewTitle) {
     const expansion =
       (SEO_TITLE_EXPANSION_PHRASES[category] || SEO_TITLE_EXPANSION_PHRASES.place)[index] ||
       (SEO_TITLE_SUPPORT_PHRASES[category] || SEO_TITLE_SUPPORT_PHRASES.place)[index] ||
@@ -1284,8 +1291,13 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
   const restaurantPlaceKeyword =
     secondaryTitleKeywords.find((keyword) => /맛집|초지|강화|본점|근처|동네|역/u.test(keyword) && keyword !== restaurantMenuForTitle) ||
     "";
+  const restaurantRegionKeyword =
+    restaurantPlaceKeyword ||
+    (/강화/u.test(`${titleKeyword} ${memoText}`) ? "강화도 맛집" : "") ||
+    (/초지/u.test(`${titleKeyword} ${memoText}`) ? "초지대교 맛집" : "") ||
+    "지역 맛집";
   const restaurantFamilyCue = /가족|여행|외식|아이/u.test(memoText);
-  const restaurantFamilyPhrase = restaurantFamilyCue ? "가족여행 식사로 본 점" : "방문 전 확인할 점";
+  const restaurantFamilyPhrase = restaurantFamilyCue ? "가족여행 식사로 본 점" : "식사 후보로 본 점";
   const titleVariantIndex = getTitleVariantIndex(form);
 
   const titleMap = {
@@ -1307,10 +1319,10 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
     restaurant: restaurantMenuForTitle
       ? [
           `${titleKeyword} ${restaurantMenuForTitle} 후기 ${restaurantFamilyPhrase}`,
-          `${restaurantPlaceKeyword || titleKeyword} ${titleKeyword} ${restaurantMenuForTitle} 후기`,
-          `${titleKeyword} 맛집 후기 ${restaurantMenuForTitle} 먹기 전 확인할 점`,
-          `${titleKeyword.replace(/강화도본점/u, "강화도 본점")} ${restaurantMenuForTitle} 후기 가족 식사 기준 정리`,
-          `${restaurantMenuForTitle} 유명한 ${titleKeyword} 방문 전 체크 포인트`
+          `${restaurantRegionKeyword} ${titleKeyword} ${restaurantMenuForTitle} 방문 후기`,
+          `${titleKeyword} 방문 전 ${restaurantMenuForTitle} 메뉴와 동선 체크`,
+          `${titleKeyword} 가족여행 식사 후보로 본 메뉴와 위치`,
+          `${titleKeyword} 맛집 후기 ${restaurantMenuForTitle} 위치 정보 요약`
         ]
       : hasKidsCafeSignal
       ? [
@@ -1437,11 +1449,11 @@ const createExperienceTitleCandidates = (form = {}, category = inferReviewCatego
     restaurant: restaurantMenuForTitle
       ? [
           [
-            `${titleKeyword} ${restaurantMenuForTitle} 후기 메뉴 기준 정리`,
-            `${restaurantPlaceKeyword || titleKeyword} ${titleKeyword} ${restaurantMenuForTitle} 방문 전 참고`,
-            `${titleKeyword} 처음 가기 전 본 ${restaurantMenuForTitle} 후기`,
-            `${restaurantMenuForTitle} 유명한 ${titleKeyword} 가족 식사 기준`,
-            `${titleKeyword} 식사 전 살펴본 ${restaurantMenuForTitle} 포인트`
+            `${titleKeyword} ${restaurantMenuForTitle} 메뉴 기준 가족 식사 후기`,
+            `${restaurantRegionKeyword} ${titleKeyword} 방문 전 메뉴 살펴보기`,
+            `${titleKeyword} ${restaurantMenuForTitle} 먹기 전 위치와 대기 체크`,
+            `${titleKeyword} 가족여행 식사 동선과 메뉴 위치 정리`,
+            `${titleKeyword} 정보 요약 ${restaurantMenuForTitle}과 위치 기준`
           ]
         ]
       : hasKidsCafeSignal
@@ -1963,11 +1975,14 @@ const getDisclosureSentence = (form = {}) => {
   if (sponsorship === "직접 구매") {
     return "직접 경험한 내용을 바탕으로 썼고, 느낀 점은 개인차가 있을 수 있습니다";
   }
+  if (sponsorship === "식사권 제공") {
+    return "이 글은 식사권을 제공받아 다녀온 후기이며, 가족 식사 기준으로 참고할 만한 부분을 적었습니다";
+  }
   return `이 글은 ${sponsorship}을 바탕으로 작성했지만, 실제로 확인한 내용과 느낀 점을 함께 담았습니다`;
 };
 
 const WRITING_GUIDE_PATTERN =
-  /후기\s*흐름으로\s*정리해보려고|정리해보려고|기준으로\s*풀어두면\s*자연스럽|기준으로\s*풀어두면|중심으로\s*정리(?:했|하)|아래\s*내용은\s*정리했습니다|아래\s*내용은|글에\s*담아보겠습니다|이런\s*흐름으로\s*작성|과하게\s*단정하기보다|기준으로\s*볼\s*것\s*같아요|먼저\s*보려고\s*했|사진이\s*있다면|사진과\s*메모만으로도\s*초안|발행\s*전|본문\s*흐름|글\s*흐름|작성\s*가이드|검색자가\s*궁금해할\s*포인트|제공된\s*메모|확인\s*필요\s*정보는\s*따로|최종\s*발행|네이버\s*검색|글의\s*중심이\s*분명해집니다|구체적으로\s*보완|글이\s*더\s*살아납니다|작성하면\s*좋습니다|확인할\s*부분으로\s*남겨두는\s*편|맛집\s*후기답게|본문에서|메모에|제공된\s*정보|추가\s*메모/u;
+  /후기\s*흐름으로\s*정리해보려고|정리해보려고|기준으로\s*풀어두면\s*자연스럽|기준으로\s*풀어두면|중심으로\s*정리(?:했|하)|아래\s*내용은\s*정리했습니다|아래\s*내용은|글에\s*담아보겠습니다|이런\s*흐름으로\s*작성|과하게\s*단정하기보다|기준으로\s*볼\s*것\s*같아요|먼저\s*보려고\s*했|사진이\s*있다면|사진과\s*메모만으로도\s*초안|발행\s*전|본문\s*흐름|글\s*흐름|작성\s*가이드|검색자가\s*궁금해할\s*포인트|제공된\s*메모|확인\s*필요\s*정보는\s*따로|최종\s*발행|네이버\s*검색|글의\s*중심이\s*분명해집니다|구체적으로\s*보완|글이\s*더\s*살아납니다|글이\s*더\s*구체적으로|작성하면\s*좋습니다|작성하면|확인할\s*부분으로\s*남겨두는\s*편|확인할\s*부분|확인되지\s*않은\s*정보는|단정하지\s*않는\s*편|후기를\s*함께\s*보는\s*편|방문\s*전\s*확인할\s*항목|안전해요|실제\s*후기를\s*함께|맛집\s*후기답게|본문에서|메모|제공된\s*정보|사진과\s*함께\s*보완|정보가\s*없다면/u;
 
 const removeWritingGuideParagraphs = (body = "") =>
   normalizeBody(body)
@@ -2035,6 +2050,7 @@ const getPrimaryRestaurantMenu = (form = {}, memoText = "") =>
     memoText,
     form.productName,
     form.mainKeyword,
+    form.subKeywords,
     form.keyword,
     form.productInfoText
   ].map(text).filter(Boolean).join(" "))[0] || "";
@@ -2656,6 +2672,21 @@ const polishPublishableBlogBody = (body = "") => {
       .replace(/되요/gu, "돼요")
       .replace(/남어요/gu, "남아요")
       .replace(/맞어요/gu, "맞아요")
+      .replace(/자연스럽어요/gu, "자연스러워요")
+      .replace(/대표 메뉴이/gu, "대표 메뉴가")
+      .replace(/대표 메뉴은/gu, "대표 메뉴는")
+      .replace(/대표 메뉴을/gu, "대표 메뉴를")
+      .replace(/대표 메뉴명\s*메뉴/gu, "대표 메뉴")
+      .replace(/대표 메뉴명이/gu, "대표 메뉴가")
+      .replace(/대표 메뉴명은/gu, "대표 메뉴는")
+      .replace(/대표 메뉴명을/gu, "대표 메뉴를")
+      .replace(/이 메뉴\s*메뉴/gu, "대표 메뉴")
+      .replace(/이 메뉴이/gu, "이 메뉴가")
+      .replace(/이 메뉴은/gu, "이 메뉴는")
+      .replace(/이 메뉴을/gu, "이 메뉴를")
+      .replace(/짬뽕 메뉴이/gu, "짬뽕 메뉴가")
+      .replace(/짬뽕 메뉴은/gu, "짬뽕 메뉴는")
+      .replace(/짬뽕 메뉴을/gu, "짬뽕 메뉴를")
       .replace(/높이에요/gu, "높여줘요")
   );
 };
@@ -3087,30 +3118,30 @@ const createDepthSupportSections = ({
       createSectionBlock("방문 전에 더 확인한 기준", [
         [
           primaryMenu
-            ? `${withTopicParticle(primaryMenu)} 궁금해서 보는 분이라면 메뉴 사진과 실제 후기를 함께 확인하는 편이 좋겠습니다`
-            : "대표 메뉴가 분명하지 않을 때는 메뉴판과 실제 주문 후기를 함께 보는 편이 좋겠습니다",
+            ? `${withTopicParticle(primaryMenu)} 궁금하다면 사진으로 보이는 구성과 메뉴 이름을 먼저 살펴보면 됩니다`
+            : "대표 메뉴가 분명하지 않을 때는 메뉴판 사진과 주문 구성을 먼저 살펴보면 됩니다",
           hasFamilyCue
             ? "가족과 함께 움직이는 날에는 식사 시간, 이동 동선, 아이가 먹기 괜찮은 메뉴까지 같이 보게 됩니다"
             : "함께 식사하는 자리라면 방문 시간대와 대기 여부도 메뉴만큼 중요하게 느껴질 수 있습니다",
           hasParkingCue
             ? "주차 관련 내용은 이동 방식과 함께 정리하면 방문 계획을 세우기 더 쉽습니다"
-            : "주차 가능 여부는 아직 확인한 내용이 없으니 방문 전에 따로 볼 항목으로 남겨두는 편이 안전합니다"
+            : "주차 가능 여부는 방문 시간대마다 달라질 수 있어 출발 전에 한 번 살펴보면 좋겠습니다"
         ]
       ]),
       createSectionBlock("대표 메뉴를 볼 때 나눈 기준", [
         [
           primaryMenu && /짬뽕/u.test(primaryMenu)
-            ? "짬뽕 메뉴는 사진으로 보이는 국물과 재료 구성을 먼저 보고, 실제 맛과 맵기는 여러 후기를 함께 비교하면 좋겠습니다"
+            ? "짬뽕 메뉴는 사진으로 보이는 국물과 재료 구성을 먼저 보고, 맵기나 간은 개인차가 있을 수 있다고 보는 게 편했습니다"
             : "대표 메뉴는 사진으로 보이는 구성과 가격, 같이 곁들일 메뉴가 있는지를 나눠 보면 주문하기가 더 편합니다",
-          "양이나 가격은 사진만으로 단정하기 어려워서 메뉴판이나 최신 후기를 함께 확인하는 편이 좋겠습니다",
-          "맛 표현은 직접 남긴 내용이 있을 때만 구체적으로 쓰고, 부족한 부분은 확인 항목으로 두는 것이 더 자연스럽습니다"
+          "양이나 가격은 사진만으로 단정하기 어려워서 메뉴판을 한 번 더 보고 고르는 쪽이 현실적입니다",
+          "맛 표현은 직접 기억나는 범위 안에서만 남기는 편이 읽는 사람에게도 부담이 적었습니다"
         ]
       ]),
       createSectionBlock("정리해서 참고할 부분", [
         [
           `${withTopicParticle(mainKeyword)} 찾는 분이라면 대표 메뉴, 위치, 대기 여부를 먼저 보고 움직이면 시행착오를 줄일 수 있습니다`,
-          "중요한 약속이나 가족 식사라면 운영시간과 예약 가능 여부도 함께 보는 편이 마음이 편합니다",
-          "좋았던 점만 길게 쓰기보다 아직 확인하지 못한 부분을 분리해두면 실제 방문 전 참고하기 좋은 글이 됩니다"
+          "중요한 약속이나 가족 식사라면 운영시간과 예약 여부도 함께 보는 편이 마음이 편합니다",
+          "좋았던 기억은 살리되 가격이나 시간처럼 바뀔 수 있는 정보는 최신 안내를 보는 쪽이 좋겠습니다"
         ],
         infoLines
       ])
@@ -3306,10 +3337,46 @@ const createQualityCheck = (id, label, passed, weight, detail = "") => ({
   detail
 });
 
+const getRestaurantTitleIntentCount = (titles = [], mainKeyword = "", primaryMenu = "") => {
+  const intents = new Set();
+
+  titles.forEach((title) => {
+    if (primaryMenu && title.includes(primaryMenu)) intents.add("menu");
+    if (/초지|강화|지역|근처|맛집/u.test(title)) intents.add("region");
+    if (/방문\s*전|체크|살펴보기|대기/u.test(title)) intents.add("pre-visit");
+    if (/가족|여행|외식|식사/u.test(title)) intents.add("family");
+    if (/정보|요약|위치|기준|정리/u.test(title)) intents.add("summary");
+    if (mainKeyword && title.startsWith(mainKeyword)) intents.add("main-front");
+  });
+
+  return intents.size;
+};
+
+const hasRestaurantTitleCandidateQuality = (titles = [], form = {}) => {
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const primaryMenu = getPrimaryRestaurantMenu(form, memoText);
+  const candidateTitles = uniqueText(titles).filter(Boolean).slice(0, 5);
+  if (candidateTitles.length < 5) return false;
+
+  const menuMentions = primaryMenu ? candidateTitles.filter((title) => title.includes(primaryMenu)).length : 5;
+  const regionMentions = candidateTitles.filter((title) => /초지|강화|지역|근처|맛집/u.test(title)).length;
+  const structureSeeds = new Set(candidateTitles.map((title) => title.replace(mainKeyword, "").split(/\s+/u).slice(0, 3).join(" ")));
+
+  return (
+    candidateTitles.every((title) => title.includes(mainKeyword) && Array.from(title).length >= 28 && Array.from(title).length <= 40) &&
+    menuMentions >= 3 &&
+    regionMentions >= 2 &&
+    structureSeeds.size >= 4 &&
+    getRestaurantTitleIntentCount(candidateTitles, mainKeyword, primaryMenu) >= 5
+  );
+};
+
 const assessBlogWriterQuality = ({
   form = {},
   category = inferReviewCategory(form),
   selectedTitle = "",
+  titleCandidates = [],
   body = "",
   hashtags = [],
   photoGuide = [],
@@ -3317,11 +3384,18 @@ const assessBlogWriterQuality = ({
 } = {}) => {
   const mainKeyword = getMainKeyword(form);
   const memoText = getFormMemoText(form);
+  const targetSettings = getTargetLengthSettings(form, category);
+  const keywordRange = getMainKeywordTargetRange(targetSettings.target);
   const normalizedBody = normalizeBody(body);
   const paragraphs = normalizedBody.split(/\n{2,}/u).filter(Boolean);
-  const firstParagraph = paragraphs[0] || "";
+  const firstParagraph =
+    paragraphs.find((paragraph) => !/^\[사진 삽입:/u.test(paragraph) && !isLikelyBodyHeading(paragraph)) ||
+    paragraphs[0] ||
+    "";
   const firstSentence = firstParagraph.split(/(?<=[.!?。])\s+/u)[0] || firstParagraph;
   const keywordCount = countOccurrences(normalizedBody, mainKeyword);
+  const subKeywords = getSubKeywords(form);
+  const subKeywordCounts = subKeywords.map((keyword) => countOccurrences(normalizedBody, keyword));
   const memoSignals = getMemoQualitySignals(form);
   const memoMatches = countMemoSignalsInBody(memoSignals, normalizedBody);
   const forbiddenScanText = normalizeQualityForbiddenScanText(`${selectedTitle}\n${normalizedBody}`, category);
@@ -3338,11 +3412,37 @@ const assessBlogWriterQuality = ({
   const hasWritingGuideLeak = WRITING_GUIDE_PATTERN.test(normalizedBody);
   const duplicateBodyIssues = collectDuplicateBodyIssues(normalizedBody);
   const primaryRestaurantMenu = category === "restaurant" ? getPrimaryRestaurantMenu(form, memoText) : "";
+  const restaurantTitleCandidatesOk =
+    category !== "restaurant" || hasRestaurantTitleCandidateQuality(titleCandidates.length > 0 ? titleCandidates : [selectedTitle], form);
+  const sponsorship = text(form.sponsorshipType);
+  const sponsorshipDisclosureCount = sponsorship
+    ? sponsorship === "식사권 제공"
+      ? countOccurrences(normalizedBody, "식사권")
+      : countOccurrences(normalizedBody, sponsorship)
+    : 0;
+  const hasSponsorshipDisclosure =
+    !sponsorship ||
+    sponsorship === "직접 구매" ||
+    (sponsorship === "식사권 제공"
+      ? sponsorshipDisclosureCount === 1 && /식사권을\s*제공받아/u.test(normalizedBody)
+      : sponsorshipDisclosureCount === 1);
+  const repeatedCheckInfo =
+    category === "restaurant" &&
+    ((normalizedBody.match(/\[확인 필요\]/gu) || []).length >= 2 ||
+      (normalizedBody.match(/확인(?:해|하|할|하면|하고|한)/gu) || []).length > 14);
   const earlyRestaurantBody = paragraphs.slice(0, 5).join("\n");
   const hasWeakRestaurantMenuFocus =
     category === "restaurant" &&
     primaryRestaurantMenu &&
     (countOccurrences(normalizedBody, primaryRestaurantMenu) < 2 || !earlyRestaurantBody.includes(primaryRestaurantMenu));
+  const hasKeywordPlacement =
+    category === "restaurant"
+      ? firstSentence.includes(mainKeyword) && keywordCount >= keywordRange.idealMin && keywordCount <= keywordRange.max
+      : keywordCount >= 2 && keywordCount <= 8;
+  const hasFirstSentenceQuality =
+    (category === "restaurant" ? firstSentence.includes(mainKeyword) : true) &&
+    !/무조건|대박|보장|이번 글/u.test(firstSentence) &&
+    Array.from(firstSentence).length >= 16;
   const hasTone = /더라고요|있었어요|느껴졌어요|같아요|좋겠다는 생각/u.test(normalizedBody);
   const repeatedPhrasePenalty =
     (normalizedBody.match(/좋더라고요/gu) || []).length > 4 ||
@@ -3366,14 +3466,21 @@ const assessBlogWriterQuality = ({
     createQualityCheck(
       "keyword-placement",
       "메인 키워드 배치",
-      firstSentence.includes(mainKeyword) && keywordCount >= 2 && keywordCount <= 8,
+      hasKeywordPlacement,
       10,
       `${keywordCount}회`
     ),
     createQualityCheck(
+      "sub-keyword-coverage",
+      "보조 키워드 반영",
+      subKeywords.length === 0 || subKeywordCounts.every((count) => count >= 1 && count <= 5),
+      4,
+      subKeywords.length === 0 ? "보조 키워드 없음" : subKeywords.map((keyword, index) => `${keyword} ${subKeywordCounts[index]}회`).join(", ")
+    ),
+    createQualityCheck(
       "first-sentence",
       "첫 문장 품질",
-      firstSentence.includes(mainKeyword) && !/무조건|대박|보장|역대급/u.test(firstSentence) && Array.from(firstSentence).length >= 24,
+      hasFirstSentenceQuality,
       8,
       firstSentence
     ),
@@ -3427,6 +3534,27 @@ const assessBlogWriterQuality = ({
       hasWeakRestaurantMenuFocus ? `${primaryRestaurantMenu} 초반 반영 부족` : "대표 메뉴 초반 반영"
     ),
     createQualityCheck(
+      "restaurant-title-intents",
+      "맛집 제목 후보 의도 분리",
+      restaurantTitleCandidatesOk,
+      0,
+      restaurantTitleCandidatesOk ? "의도 분리" : "메뉴/지역/상황형 제목 후보 보강 필요"
+    ),
+    createQualityCheck(
+      "sponsorship-disclosure",
+      "협찬 고지 1회 반영",
+      hasSponsorshipDisclosure,
+      0,
+      hasSponsorshipDisclosure ? "고지 정상" : "협찬 고지 누락 또는 반복"
+    ),
+    createQualityCheck(
+      "check-info-repetition",
+      "확인 정보 반복 여부",
+      !repeatedCheckInfo,
+      0,
+      repeatedCheckInfo ? "확인 정보 반복 과다" : "반복 없음"
+    ),
+    createQualityCheck(
       "photo-placement",
       "사진 삽입 위치 자연스러움",
       imageCount === 0 || (photoMarkerCount >= 1 && photoMarkerCount <= Math.min(imageCount, 3) && photoGuide.length > 0),
@@ -3455,7 +3583,11 @@ const assessBlogWriterQuality = ({
     hasUnsupportedClaim ||
     hasWritingGuideLeak ||
     duplicateBodyIssues.length > 0 ||
-    hasWeakRestaurantMenuFocus;
+    hasWeakRestaurantMenuFocus ||
+    !restaurantTitleCandidatesOk ||
+    !hasSponsorshipDisclosure ||
+    repeatedCheckInfo ||
+    (category === "restaurant" && keywordCount < keywordRange.min);
   const score = Math.max(0, Math.min(100, Math.round(criticalFailed ? Math.min(rawScore, 89) : rawScore)));
   const issues = checks
     .filter((item) => !item.passed)
@@ -3476,9 +3608,163 @@ const createChecklistBodySection = (items = []) =>
 
 const getBodyLength = (body = "") => String(body || "").replace(/\s+/g, "").length;
 
+const getMainKeywordTargetRange = (targetCharCount = DEFAULT_TARGET_LENGTH) => {
+  const target = Number.isFinite(Number(targetCharCount)) ? Number(targetCharCount) : DEFAULT_TARGET_LENGTH;
+
+  if (target < 1600) return { min: 4, idealMin: 4, idealMax: 5, max: 6 };
+  if (target < 2400) return { min: 5, idealMin: 5, idealMax: 6, max: 7 };
+  if (target < 3500) return { min: 6, idealMin: 7, idealMax: 8, max: 9 };
+  return { min: 7, idealMin: 8, idealMax: 9, max: 10 };
+};
+
+const createRestaurantKeywordSupportParagraphs = (form = {}, currentBody = "", targetSettings = {}) => {
+  const mainKeyword = getMainKeyword(form);
+  if (!mainKeyword) return [];
+
+  const memoText = getFormMemoText(form);
+  const range = getMainKeywordTargetRange(targetSettings.target);
+  const currentCount = countOccurrences(currentBody, mainKeyword);
+  const needed = Math.max(0, range.idealMin - currentCount);
+  if (needed === 0) return [];
+
+  const subKeywords = getSubKeywords(form);
+  const regionKeyword = subKeywords.find((keyword) => /맛집|초지|강화|근처|지역/u.test(keyword)) || "";
+  const primaryMenu = getPrimaryRestaurantMenu(form, memoText) || subKeywords.find((keyword) => getRestaurantMenus(keyword).length > 0) || "";
+  const familyCue = /가족|여행|외식|아이/u.test(memoText);
+  const support = [
+    `${mainKeyword}은 ${familyCue ? "가족여행 중 식사 후보를 고를 때" : "식사 후보를 고를 때"} 상호명, 위치, 대표 메뉴를 함께 보기 좋은 이름이었습니다`,
+    regionKeyword
+      ? `${mainKeyword}을 ${regionKeyword} 흐름으로 찾는 분이라면 위치와 이동 동선을 같이 보게 됩니다`
+      : `${mainKeyword}을 볼 때는 위치와 이동 동선을 같이 보게 됩니다`,
+    primaryMenu
+      ? `${mainKeyword}은 ${primaryMenu} 메뉴가 먼저 떠오르는 곳이라 사진으로 보이는 구성을 차분히 살펴보게 됐습니다`
+      : `${mainKeyword}은 대표 메뉴 구성이 먼저 궁금해지는 곳이라 사진으로 보이는 범위를 차분히 살펴보게 됐습니다`,
+    `${mainKeyword}을 다시 보면 가격이나 운영시간보다, ${familyCue ? "가족과 함께 들른 식사 기억" : "식사 자리의 흐름"}이 먼저 남았습니다`
+  ];
+
+  return support.slice(0, Math.min(needed, support.length));
+};
+
+const ensureRestaurantKeywordDensity = (body = "", form = {}, category = inferReviewCategory(form), targetSettings = {}) => {
+  if (category !== "restaurant") return body;
+
+  const supportParagraphs = createRestaurantKeywordSupportParagraphs(form, body, targetSettings);
+  if (supportParagraphs.length === 0) return body;
+
+  return normalizeBody([
+    body,
+    createSectionBlock("한 번 더 정리하면", [supportParagraphs], normalizeTone(form.tone))
+  ].join("\n\n"));
+};
+
+const ensureRestaurantMinimumBodyLength = (body = "", form = {}, category = inferReviewCategory(form), targetSettings = {}) => {
+  if (category !== "restaurant" || getBodyLength(body) >= targetSettings.min) return body;
+
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const subKeywords = getSubKeywords(form);
+  const regionKeyword = subKeywords.find((keyword) => /초지|강화|맛집|근처/u.test(keyword)) || "지역 맛집";
+  const primaryMenu = getPrimaryRestaurantMenu(form, memoText) || subKeywords.find((keyword) => getRestaurantMenus(keyword).length > 0) || "대표 메뉴";
+  const hasFamilyCue = /가족|여행|외식|아이/u.test(memoText);
+  const supportParagraphs = [
+    `${regionKeyword}으로 찾는 날에는 상호명만 보는 것보다 이동 동선과 식사 시간을 함께 보게 됩니다. ${mainKeyword}은 그런 기준에서 위치와 메뉴를 나란히 놓고 살펴보기 좋았습니다.`,
+    hasFamilyCue
+      ? `강화도 가족여행중 다녀와서 좋았던 기억은 거창한 장점보다 식사 후보를 고르는 과정이 편했다는 쪽에 가까웠습니다. 같이 움직이는 날에는 메뉴가 분명하고 위치를 가늠하기 쉬운지가 생각보다 크게 남습니다.`
+      : `같이 움직이는 날에는 메뉴가 분명하고 위치를 가늠하기 쉬운지가 생각보다 크게 남습니다. 식사 장소를 고를 때는 이런 작은 기준이 실제 선택에 더 도움이 됐습니다.`,
+    `사진으로 보니 ${primaryMenu}은 메뉴 이름과 구성이 먼저 눈에 들어왔습니다. 맛이나 양을 과하게 말하기보다, 어떤 메뉴를 먼저 볼지 정하는 정도로 참고하기 좋았습니다.`,
+    `${regionKeyword} 후보를 비교할 때는 가격이나 운영시간처럼 바뀌는 정보보다 먼저 대표 메뉴와 이동 부담을 보게 됩니다. 그 다음 최신 안내를 한 번 살피면 가족 식사 계획을 세우기가 훨씬 편합니다.`,
+    "사진이 있는 글은 음식 맛을 대신 말해주기보다 어떤 구성을 봤는지 차분히 보여줄 때 더 읽기 편했습니다. 메뉴 사진, 외관, 이동 동선이 이어지면 처음 보는 사람도 식사 상황을 떠올리기 쉽습니다.",
+    "가족과 함께 움직이는 날에는 한 사람이 좋아하는 메뉴보다 모두가 무난하게 고를 수 있는 선택지가 중요했습니다. 그래서 대표 메뉴와 위치, 대기 가능성을 나눠 보는 방식이 더 현실적으로 느껴졌습니다.",
+    "식사 전에는 메뉴 이름이 분명한지, 이동 시간이 부담스럽지 않은지, 사진으로 볼 수 있는 구성이 충분한지를 차례로 보게 됩니다. 이 정도만 정리해도 처음 보는 사람에게 필요한 판단 기준이 꽤 또렷해집니다.",
+    "처음 보는 식당 글은 한 문장짜리 추천보다 왜 그곳을 보게 됐는지, 어떤 상황에서 떠올리면 좋은지가 드러날 때 더 오래 읽힙니다. 가족 식사처럼 동행이 있는 날에는 이런 맥락이 특히 중요합니다."
+  ];
+  const selectedParagraphs = [];
+  let draft = body;
+
+  for (const paragraph of supportParagraphs) {
+    if (getBodyLength(draft) >= targetSettings.min) break;
+    selectedParagraphs.push(paragraph);
+    draft = normalizeBody([body, createSectionBlock("가족여행 식사 기준", [selectedParagraphs], normalizeTone(form.tone))].join("\n\n"));
+  }
+
+  return selectedParagraphs.length > 0 ? draft : body;
+};
+
+const limitRestaurantSubKeywordRepetition = (body = "", form = {}, category = inferReviewCategory(form)) => {
+  if (category !== "restaurant") return body;
+
+  let result = body;
+  getSubKeywords(form).forEach((keyword) => {
+    if (!keyword || countOccurrences(result, keyword) <= 4) return;
+
+    const alternatives = getRestaurantMenus(keyword).length > 0
+      ? ["대표 메뉴", "이 메뉴", "짬뽕 메뉴", "메뉴 사진"]
+      : ["지역 맛집", "근처 식사 후보", "방문 지역", "식사 후보"];
+    let seen = 0;
+    result = result.replace(new RegExp(escapeRegExp(keyword), "gu"), (match) => {
+      seen += 1;
+      if (seen <= 4) return match;
+      return alternatives[(seen - 5) % alternatives.length];
+    });
+  });
+
+  return normalizeBody(result);
+};
+
+const limitRestaurantHeadingCount = (body = "", category = "place", maxHeadings = 8) => {
+  if (category !== "restaurant") return body;
+
+  let headingCount = 0;
+  const paragraphs = normalizeBody(body).split(/\n{2,}/u).filter(Boolean);
+  const filtered = paragraphs.filter((paragraph) => {
+    if (!isLikelyBodyHeading(paragraph)) return true;
+    headingCount += 1;
+    return headingCount <= maxHeadings;
+  });
+
+  return normalizeBody(filtered.join("\n\n"));
+};
+
+const ensureGeneralMinimumBodyLength = (body = "", form = {}, category = inferReviewCategory(form), targetSettings = {}) => {
+  if (category === "restaurant" || getBodyLength(body) >= targetSettings.min) return body;
+
+  const mainKeyword = getMainKeyword(form);
+  const memoText = getFormMemoText(form);
+  const tone = normalizeTone(form.tone);
+  const educationSupport = [
+    `${mainKeyword}을 처음 보는 입장에서는 용어를 외우는 것보다 전체 순서를 먼저 잡는 편이 부담이 적습니다. 공고를 보고, 조건을 살피고, 입찰 흐름을 이해하는 순서가 보이면 낯선 주제도 조금 작게 느껴집니다.`,
+    /커리큘럼/u.test(memoText)
+      ? "커리큘럼을 미리 볼 수 있다는 점은 수업을 고를 때 꽤 중요한 기준이 됩니다. 내가 궁금한 단계가 포함되어 있는지, 초보자가 따라갈 수 있는 흐름인지 비교하기가 쉬워지기 때문입니다."
+      : "수업을 고를 때는 강의 시간이 길어 보이는지보다 내가 궁금한 단계가 실제로 다뤄지는지가 더 중요합니다. 처음 듣는 사람일수록 전체 순서와 예시가 함께 있는 구성이 편합니다.",
+    /입찰/u.test(memoText)
+      ? "입찰 흐름은 한 번에 이해하기보다 반복되는 단계를 나눠 보는 쪽이 현실적입니다. 공고, 조건, 참여 방식, 이후 절차가 구분되면 수업 뒤에 무엇을 더 찾아봐야 할지도 선명해집니다."
+      : "낯선 분야는 결과보다 준비 과정이 더 크게 느껴질 때가 많습니다. 그래서 수업 전에는 준비물, 기본 용어, 질문할 수 있는 범위를 차례로 보는 것이 좋습니다.",
+    `${mainKeyword}은 초보자 기준으로 보면 어려운 단어를 줄이고 큰 흐름을 먼저 잡는 데 의미가 있습니다. 이후 세부 자료를 다시 찾아보더라도 처음 방향을 잡아둔 상태라면 훨씬 덜 막막합니다.`
+  ];
+  const genericSupport = [
+    `${mainKeyword}을 처음 살펴볼 때는 장점만 보는 것보다 내 상황과 맞는 기준을 먼저 나누는 편이 좋습니다. 필요한 정보가 어디에 있는지 알면 실제 선택이 훨씬 쉬워집니다.`,
+    "사진이나 짧은 기억이 함께 있으면 전체 분위기를 떠올리기 좋습니다. 다만 바뀔 수 있는 정보는 최신 안내를 보고, 직접 느낀 부분과 구분해서 읽는 편이 더 현실적입니다.",
+    "마지막으로 비교할 기준을 남겨두면 같은 주제를 다시 볼 때도 덜 헷갈립니다. 처음 본 인상, 실제로 중요했던 점, 나중에 다시 살펴볼 내용을 나눠두면 글의 쓰임이 분명해집니다."
+  ];
+  const support = category === "education" ? educationSupport : genericSupport;
+  const selectedParagraphs = [];
+  let draft = body;
+
+  for (const paragraph of support) {
+    if (getBodyLength(draft) >= targetSettings.min) break;
+    selectedParagraphs.push(paragraph);
+    draft = normalizeBody([body, createSectionBlock("마지막으로 비교할 기준", [selectedParagraphs], tone)].join("\n\n"));
+  }
+
+  return selectedParagraphs.length > 0 ? draft : body;
+};
+
 const isLikelyBodyHeading = (paragraph = "") => {
   const value = text(paragraph);
   if (!value || /^\[사진 삽입:/u.test(value)) return false;
+  if (/^(?:왜|대표|매장|맛과|이런|좋았던|가족|마무리|방문 전|정리해서|한 번|.+기준|.+부분|.+점)(?:\s|$)/u.test(value)) {
+    return Array.from(value).length <= 32 && !/[.!?。]$/u.test(value);
+  }
   return !/[.!?。요다]$/u.test(value) && Array.from(value).length <= 32;
 };
 
@@ -3543,7 +3829,14 @@ const dedupePublishableBody = (body = "") => {
     result.push(paragraph);
   });
 
-  return normalizeBody(result.join("\n\n"));
+  const withoutOrphanHeadings = result.filter((paragraph, index) => {
+    if (!isLikelyBodyHeading(paragraph)) return true;
+
+    const nextContent = result.slice(index + 1).find((item) => !/^\[사진 삽입:/u.test(item));
+    return Boolean(nextContent && !isLikelyBodyHeading(nextContent));
+  });
+
+  return normalizeBody(withoutOrphanHeadings.join("\n\n"));
 };
 
 const trimBodyToMaxLength = (body = "", targetSettings = {}) => {
@@ -3728,30 +4021,30 @@ const createNaturalReviewExpansionSections = (form = {}, category = inferReviewC
               : `${withObjectParticle(mainKeyword)} 찾아본 건 ${withSubjectParticle(primaryMenu)} 대표 메뉴로 언급되어 먼저 확인해보고 싶었기 때문입니다`
             : hasFamilyCue
             ? `${withObjectParticle(mainKeyword)} 알아본 건 가족이 함께 식사해도 분위기와 메뉴 구성이 괜찮을지 궁금했기 때문입니다`
-            : `${withObjectParticle(mainKeyword)} 알아본 건 대표 메뉴와 방문 전 확인할 점을 같이 보고 싶었기 때문입니다`,
+            : `${withObjectParticle(mainKeyword)} 알아본 건 대표 메뉴와 이동 기준을 같이 보고 싶었기 때문입니다`,
           primaryMenu && /짬뽕/u.test(primaryMenu)
-            ? `${withTopicParticle(primaryMenu)} 사진으로 보기에는 국물과 해산물 구성이 먼저 눈에 들어와 메뉴 사진과 실제 후기를 함께 확인해보고 싶었습니다`
+            ? `${withTopicParticle(primaryMenu)} 사진으로 보기에는 국물과 해산물 구성이 먼저 눈에 들어와 메뉴 구성이 궁금했습니다`
             : /파스타/u.test(`${mainKeyword} ${memoText}`)
             ? "파스타를 먹으러 갈 때는 메뉴 구성과 식사 상황이 내 동행과 맞는지 먼저 보게 됩니다"
             : "식사 장소는 대표 메뉴만 보지 않고 위치, 대기 여부, 운영시간처럼 움직임에 영향을 주는 정보도 함께 확인하면 좋습니다",
           hasParkingMemo
-            ? "차를 가지고 움직이는 날이라면 주차 관련 메모도 방문 전 판단에 중요한 기준이 됩니다"
-            : "주차 여부는 입력된 정보가 없으니 방문 전 따로 확인할 항목으로 남겨두는 편이 안전합니다"
+            ? "차를 가지고 움직이는 날이라면 주차 관련 기억도 식사 동선을 잡는 기준이 됩니다"
+            : "주차 여부는 방문 시간대마다 달라질 수 있어 출발 전에 한 번 살펴보면 좋겠습니다"
         ]
       ], tone),
       createSectionBlock(primaryMenu ? "대표 메뉴를 보며 확인할 점" : "직접 방문하며 느낀 점", [
         [
           primaryMenu
             ? `${withObjectParticle(primaryMenu)} 중심으로 보면 이 글에서 가장 먼저 봐야 할 메뉴가 분명해집니다`
-            : `${withObjectParticle(mainKeyword)} 볼 때는 대표 메뉴와 방문 전 확인할 정보를 나눠 보는 편이 좋습니다`,
+            : `${withObjectParticle(mainKeyword)} 볼 때는 대표 메뉴와 이동 정보를 나눠 보는 편이 좋습니다`,
           hasAmountMemo
-            ? "양과 관련된 메모가 있다면 가족 외식이나 여러 명이 나눠 먹는 상황에서 중요한 참고점이 됩니다"
+            ? "양과 관련해 직접 남긴 내용이 있다면 가족 외식이나 여러 명이 나눠 먹는 상황에서 중요한 참고점이 됩니다"
             : primaryMenu
-              ? "양은 사진만으로 단정하기 어려워서 방문 전에는 메뉴 사진과 실제 주문 후기를 함께 보는 편이 좋겠습니다"
+              ? "양은 사진만으로 단정하기 어려워서 인원수에 맞춰 메뉴판을 다시 보는 쪽이 좋겠습니다"
               : "함께 방문하는 자리라면 메뉴 구성과 위치, 운영시간을 먼저 확인하는 것이 현실적입니다",
           hasStaffMemo
-            ? "직원 응대와 관련된 메모가 있다면 주문 흐름을 설명할 때 자연스럽게 살릴 수 있습니다"
-            : "직원 응대는 실제로 확인한 내용이 없으니 경험처럼 단정하지 않는 편이 좋겠습니다",
+            ? "직원 응대와 관련해 직접 남긴 내용은 주문 흐름을 설명할 때 자연스럽게 살릴 수 있습니다"
+            : "주문 흐름은 방문 시간대와 매장 상황에 따라 달라질 수 있어 가볍게 참고하는 정도가 좋겠습니다",
           hasChildCue
             ? "아이와 함께라면 아이 메뉴나 화장실 동선도 추가로 확인하면 더 편하게 다녀올 수 있습니다"
             : "가격이나 운영시간처럼 바뀔 수 있는 정보는 방문 전에 한 번 더 확인하면 더 편하게 다녀올 수 있습니다"
@@ -3762,47 +4055,47 @@ const createNaturalReviewExpansionSections = (form = {}, category = inferReviewC
           hasTasteMemo
             ? "실제로 기억나는 맛 표현은 과장하지 않고 떠오르는 범위 안에서만 적는 것이 자연스럽습니다"
             : primaryMenu
-              ? `${withTopicParticle(primaryMenu)} 유명하다는 점은 충분히 살리되, 직접 맛을 본 표현은 확인한 내용 안에서만 쓰는 편이 안전합니다`
-              : "맛 표현은 직접 남긴 내용이 있을 때 더 구체적으로 적고, 부족하면 확인이 필요한 부분으로 두는 편이 좋습니다",
+              ? `${withTopicParticle(primaryMenu)} 유명하다는 점은 충분히 살리되, 맛 표현은 기억나는 범위 안에서만 보는 것이 좋습니다`
+              : "맛 표현은 직접 남긴 내용이 있을 때 더 구체적으로 적고, 부족한 부분은 메뉴 구성 중심으로 보는 편이 좋습니다",
           /분위기/u.test(memoText)
             ? "좋았던 점은 분위기가 편하게 느껴져 식사하는 동안 부담이 크지 않았다는 부분입니다"
-            : "좋았던 점은 대표 메뉴가 분명해 방문 전 확인할 기준을 잡기 쉬웠다는 부분입니다",
-          "시간대에 따라 대기나 운영 흐름은 달라질 수 있으니, 중요한 일정이라면 예약 가능 여부를 같이 보는 편이 좋겠습니다",
-          `${withObjectParticle(mainKeyword)} 고를 때 대표 메뉴와 위치를 함께 보는 분이라면 참고하기 좋은 초안입니다`,
+            : "좋았던 점은 대표 메뉴가 분명해 식사 후보를 고르기 쉬웠다는 부분입니다",
+          "시간대에 따라 대기나 운영 흐름은 달라질 수 있으니, 중요한 일정이라면 예약 여부를 같이 보는 편이 좋겠습니다",
+          `${withObjectParticle(mainKeyword)} 고를 때 대표 메뉴와 위치를 함께 보는 분이라면 참고하기 좋은 후기입니다`,
           hasFamilyCue
             ? "가족여행처럼 같이 움직이는 자리라면 메뉴 선택과 이동 부담을 함께 보는 것이 더 현실적입니다"
-            : "맛만 길게 쓰기보다 메뉴, 위치, 대기 여부처럼 방문 전 판단에 필요한 정보를 나눠두는 편이 좋습니다"
+            : "맛만 길게 쓰기보다 메뉴, 위치, 대기 여부처럼 식사 계획에 필요한 정보를 함께 보는 편이 좋습니다"
         ]
       ], tone),
-      createSectionBlock(hasFamilyCue ? "가족 외식 기준으로 본 부분" : "방문 전 확인할 부분", [
+      createSectionBlock(hasFamilyCue ? "가족 외식 기준으로 본 부분" : "방문 전 살펴볼 부분", [
         [
           hasFamilyCue
             ? "가족 외식에서는 메뉴가 모두에게 맞을지, 식사 시간이 부담스럽지 않을지, 이동 동선이 괜찮을지를 함께 보게 됩니다"
             : "대표 메뉴와 방문 시간대, 대기 여부를 먼저 확인하면 식사 계획을 잡기 더 편합니다",
           hasParkingMemo
-            ? "주차 관련 메모가 있다면 이동 방식과 함께 자연스럽게 정리할 수 있습니다"
-            : "주차 정보가 없다면 방문 전 한 번 더 확인하는 편이 마음이 편합니다",
-          "가격과 운영시간은 바뀔 수 있으니 방문 전 최신 정보를 확인해두는 편이 안전합니다"
+            ? "주차 관련 기억이 있다면 이동 방식과 함께 자연스럽게 정리할 수 있습니다"
+            : "주차 정보가 없다면 출발 전에 한 번 살펴보는 편이 마음이 편합니다",
+          "가격과 운영시간은 바뀔 수 있으니 방문 전 최신 안내를 보는 편이 좋겠습니다"
         ]
       ], tone),
       createSectionBlock("이런 분께 추천해요", [
         [
           hasFamilyCue
             ? "가족여행 중 식사 장소를 찾으면서 대표 메뉴와 위치를 함께 보는 분께 참고가 될 것 같습니다"
-            : "대표 메뉴와 방문 전 확인할 정보를 함께 보고 식사 장소를 고르는 분께 참고가 될 것 같습니다",
+            : "대표 메뉴와 위치 정보를 함께 보고 식사 장소를 고르는 분께 참고가 될 것 같습니다",
           "맛집을 고를 때 메뉴 사진만 보는 것보다 위치와 대기 여부까지 함께 보는 분에게 잘 맞습니다",
-          "다만 중요한 약속이라면 예약 가능 여부와 대표 메뉴 가격은 방문 전에 다시 확인하는 편이 좋겠습니다"
+          "다만 중요한 약속이라면 예약 여부와 대표 메뉴 가격은 방문 전에 다시 확인하는 편이 좋겠습니다"
         ]
       ], tone),
       createSectionBlock("마무리", [
         [
           primaryMenu
-            ? `${withTopicParticle(mainKeyword)} ${withObjectParticle(primaryMenu)} 중심으로 먼저 확인하면 방문 전 궁금한 점이 훨씬 줄어듭니다`
-            : `${withTopicParticle(mainKeyword)} 대표 메뉴와 방문 전 확인할 정보를 나눠보면 판단이 더 쉬워집니다`,
+            ? `${withTopicParticle(mainKeyword)} ${withObjectParticle(primaryMenu)} 중심으로 먼저 보면 식사 전 궁금한 점이 훨씬 줄어듭니다`
+            : `${withTopicParticle(mainKeyword)} 대표 메뉴와 위치 정보를 나눠보면 판단이 더 쉬워집니다`,
           hasFamilyCue
             ? "가족과 함께 움직이는 날에는 식사 시간과 이동 부담이 같이 중요해서 확인할 정보를 미리 나눠두는 편이 좋았습니다"
             : "함께 가는 식사라면 맛뿐 아니라 위치와 운영 흐름도 함께 보는 편이 좋았습니다",
-          "방문 전 확인할 정보만 한 번 더 챙긴다면 더 편하게 다녀올 수 있을 것 같습니다"
+          "가격, 운영시간, 대기처럼 바뀔 수 있는 정보만 한 번 더 챙긴다면 더 편하게 다녀올 수 있을 것 같습니다"
         ]
       ], tone)
     ];
@@ -3977,7 +4270,7 @@ const createNaturalReviewFinishingSections = (form = {}, category = inferReviewC
           "방문 시간대에 따라 좌석 여유와 대기 여부는 달라질 수 있어 먼저 확인하면 좋겠습니다",
           hasParkingCue
             ? "주차 관련 내용이 있다면 이동 방식과 함께 정리하면 방문 계획을 세우기 더 쉽습니다"
-            : "주차나 예약 가능 여부는 시간대에 따라 달라질 수 있어 한 번 더 확인하는 편이 좋겠습니다",
+            : "주차나 예약 여부는 시간대에 따라 달라질 수 있어 한 번 더 확인하는 편이 좋겠습니다",
           hasAmountCue
             ? "양과 관련해 직접 남긴 내용이 있다면 인원수에 맞춰 메뉴를 고를 때 참고가 됩니다"
             : "대표 메뉴와 사이드 구성을 미리 보면 주문할 때 훨씬 덜 고민하게 됩니다",
@@ -3989,13 +4282,13 @@ const createNaturalReviewFinishingSections = (form = {}, category = inferReviewC
       createSectionBlock("정리해서 보면", [
         [
           primaryMenu
-            ? `${withTopicParticle(mainKeyword)} ${withObjectParticle(primaryMenu)} 중심으로 보면 방문 전 궁금한 점을 정리하기 쉽습니다`
-            : `${withTopicParticle(mainKeyword)} 대표 메뉴와 확인 정보를 나눠보면 방문 전 판단이 쉬워집니다`,
-          "사진 속 음식이 좋아 보여도 실제 맛과 맵기, 가격은 후기와 최신 정보를 함께 보는 편이 안전합니다",
+            ? `${withTopicParticle(mainKeyword)} ${withObjectParticle(primaryMenu)} 중심으로 보면 식사 전 궁금한 점을 정리하기 쉽습니다`
+            : `${withTopicParticle(mainKeyword)} 대표 메뉴와 위치 정보를 나눠보면 방문 전 판단이 쉬워집니다`,
+          "사진 속 음식이 좋아 보여도 실제 맛과 맵기, 가격은 방문 시점과 개인차를 함께 생각하는 편이 좋겠습니다",
           hasStaffCue
             ? "직원 응대와 관련해 직접 남긴 내용은 주문 흐름을 설명할 때 자연스럽게 살릴 수 있습니다"
-            : "응대와 주문 흐름은 실제로 확인한 내용이 없으면 단정하지 않고 확인 항목으로만 두는 편이 좋습니다",
-          "주말이나 저녁처럼 사람이 몰릴 수 있는 시간대에는 방문 시간과 예약 가능 여부까지 함께 보면 더 편안하게 다녀올 수 있습니다"
+            : "응대와 주문 흐름은 방문 시간대와 매장 상황에 따라 달라질 수 있습니다",
+          "주말이나 저녁처럼 사람이 몰릴 수 있는 시간대에는 방문 시간과 예약 여부까지 함께 보면 더 편안하게 다녀올 수 있습니다"
         ]
       ], tone)
     ];
@@ -4129,6 +4422,27 @@ const createPublishableReviewBody = ({
     body = dedupePublishableBody(removeWritingGuideParagraphs(polishPublishableBlogBody(expandedBody)));
   }
 
+  body = dedupePublishableBody(removeWritingGuideParagraphs(polishPublishableBlogBody(
+    ensureGeneralMinimumBodyLength(
+      limitRestaurantHeadingCount(
+        limitRestaurantSubKeywordRepetition(
+          ensureRestaurantMinimumBodyLength(
+            ensureRestaurantKeywordDensity(body, form, category, targetSettings),
+            form,
+            category,
+            targetSettings
+          ),
+          form,
+          category
+        ),
+        category
+      ),
+      form,
+      category,
+      targetSettings
+    )
+  )));
+
   body = trimBodyToMaxLength(body, targetSettings);
 
   return dedupePublishableBody(insertPhotoMarkersIntoBody(body, category, getImageCount(form)));
@@ -4159,6 +4473,7 @@ const createProductReviewContentPackage = ({
   return {
     generationId,
     mainKeyword,
+    subKeywords: getSubKeywords(form),
     targetCharCount: targetSettings.option === "custom" ? targetSettings.target : null,
     targetLengthOption: targetSettings.option,
     targetLengthRange: {
@@ -4207,7 +4522,7 @@ const createRestaurantMenuSentences = (memoText = "") => {
 
     if (/짬뽕/u.test(primaryMenu)) {
       sentences.push(
-        `${primaryMenu}은 사진으로 보기에는 국물과 재료 구성이 먼저 보이고, 실제 맛과 맵기는 방문 전 후기를 함께 확인하는 편이 좋겠습니다`
+        `${primaryMenu}은 사진으로 보기에는 국물과 재료 구성이 먼저 보이고, 실제 맛과 맵기는 개인차가 있을 수 있습니다`
       );
     } else {
       sentences.push(
@@ -4251,8 +4566,8 @@ const createRestaurantCheckSentences = (memoText = "") => {
   }
 
   if (sentences.length === 0) {
-    sentences.push("맛이나 양, 가격 정보는 실제 방문 후 사진과 함께 보완하면 글이 더 구체적으로 완성될 수 있어요");
-    sentences.push("주차나 웨이팅 여부는 방문 시간대에 따라 달라질 수 있으니 방문 전 한 번 더 확인하면 좋겠습니다");
+    sentences.push("맛이나 양, 가격 정보는 직접 기억나는 범위 안에서만 더하면 글이 훨씬 현실적으로 읽혀요");
+    sentences.push("주차나 웨이팅 여부는 방문 시간대에 따라 달라질 수 있으니 출발 전에 한 번 살펴보면 좋겠습니다");
   }
 
   return sentences;
@@ -4464,12 +4779,15 @@ const createReviewAnalysis = (form = {}, category = inferReviewCategory(form), c
   const photoElements = getPhotoElementsForAnalysis(form);
   const productSubtype = detectProductSubtype(form, memoText);
   const mainKeyword = getMainKeyword(form);
+  const subKeywords = getSubKeywords(form);
   const productInfoItems = summarizeProductInfo(form).filter(
     (item) => !["productName", "brandName", "category"].includes(item.field)
   );
 
   return {
     topic: mainKeyword,
+    subKeywords,
+    keywordSourceText: [mainKeyword, ...subKeywords].join(" "),
     baseKeyword: getReviewTitleBase(mainKeyword),
     category,
     writerPersona: getBlogWriterPersona(category),
@@ -4845,7 +5163,7 @@ const createNaturalReviewOutlineFromContext = ({ form = {}, category = "place", 
         `${withSubjectParticle(primaryMenu)} 궁금해서 보게 된 곳`,
         `${primaryMenu} 메뉴를 중심으로 본 부분`,
         "매장 분위기와 주차 등 방문 전 참고할 점",
-        "맛과 가격은 확인이 필요한 부분",
+        "맛과 가격을 볼 때",
         "이런 식사 상황에 추천하고 싶어요"
       ];
     }
@@ -5011,9 +5329,10 @@ const createHumanIntroParagraph = (analysis) => {
   }
 
   if (category === "restaurant") {
-    const primaryMenu = getPrimaryRestaurantMenu({ productName: topic }, memoText);
+    const keywordSourceText = analysis.keywordSourceText || topic;
+    const primaryMenu = getPrimaryRestaurantMenu({ productName: keywordSourceText }, memoText);
     const hasFamilyTravelCue = /가족|여행|외식/u.test(memoText);
-    const placeCue = /초지대교/u.test(`${topic} ${memoText}`) ? "초지대교 근처에서" : "근처에서";
+    const placeCue = /초지대교/u.test(`${keywordSourceText} ${memoText}`) ? "초지대교 근처에서" : "근처에서";
 
     if (primaryMenu) {
       return createHumanParagraph([
@@ -5021,15 +5340,15 @@ const createHumanIntroParagraph = (analysis) => {
           ? `${withObjectParticle(topic)} 찾아본 건 가족여행 중 ${placeCue} 식사할 곳을 알아보다가 ${withSubjectParticle(primaryMenu)} 유명하다는 이야기를 봤기 때문이에요`
           : `${withObjectParticle(topic)} 알아보게 된 건 ${withSubjectParticle(primaryMenu)} 유명하다는 이야기가 먼저 눈에 들어왔기 때문이에요`,
         /짬뽕/u.test(primaryMenu)
-          ? `${primaryMenu}처럼 국물 메뉴는 사진으로 보이는 재료 구성과 실제 후기에서 말하는 맵기 정도를 함께 보면 방문 전 판단에 도움이 되겠더라고요`
-          : `${withTopicParticle(primaryMenu)} 취향을 탈 수 있는 메뉴라 사진으로 보이는 구성과 실제 후기를 함께 확인해보고 싶었습니다`,
-        `${withTopicParticle(topic)} ${withObjectParticle(primaryMenu)} 중심으로 보면 방문 전 확인할 점도 자연스럽게 정리됩니다`,
+          ? `${primaryMenu}처럼 국물 메뉴는 사진으로 보이는 재료 구성을 먼저 보게 되고, 맵기는 사람마다 다를 수 있겠더라고요`
+          : `${withTopicParticle(primaryMenu)} 취향을 탈 수 있는 메뉴라 사진으로 보이는 구성을 먼저 살펴보게 됐습니다`,
+        `${withTopicParticle(topic)} ${withObjectParticle(primaryMenu)} 중심으로 보면 메뉴와 위치 흐름이 자연스럽게 잡힙니다`,
         analysis.photoSentences[0] || ""
       ], tone);
     }
 
     return createHumanParagraph([
-      `${withObjectParticle(topic)} 알아본 건 대표 메뉴와 방문 전 확인할 점을 함께 보고 싶었기 때문이에요`,
+      `${withObjectParticle(topic)} 알아본 건 대표 메뉴와 식사 동선을 함께 보고 싶었기 때문이에요`,
       /주차/u.test(memoText)
         ? `${withTopicParticle(topic)} 음식 맛도 중요하지만 차를 가지고 움직이는 날에는 주차가 편한지도 꽤 크게 느껴지더라고요`
         : `${withTopicParticle(topic)} 메뉴만 보고 고르기보다 같이 간 사람이 편하게 식사할 수 있을지도 함께 보게 됐습니다`,
@@ -5370,13 +5689,14 @@ const createHumanReviewSections = (analysis) => {
 
   if (category === "restaurant") {
     const partySize = getPartySize(memoText);
-    const primaryMenu = getPrimaryRestaurantMenu({ productName: topic }, memoText);
+    const keywordSourceText = analysis.keywordSourceText || topic;
+    const primaryMenu = getPrimaryRestaurantMenu({ productName: keywordSourceText }, memoText);
     const hasFamilyCue = /가족|외식|아이|아이랑|여행/u.test(memoText);
     const hasTasteCue = /맛|국물|매콤|칼칼|시원|진하|불맛|담백|맛있/u.test(memoText);
     const hasAmountCue = /양|많|넉넉|푸짐/u.test(memoText);
     const hasParkingCue = /주차/u.test(memoText);
     const hasStaffCue = /직원|응대|친절/u.test(memoText);
-    const placeCue = /초지대교/u.test(`${topic} ${memoText}`) ? "초지대교 근처" : "근처";
+    const placeCue = /초지대교/u.test(`${keywordSourceText} ${memoText}`) ? "초지대교 근처" : "근처";
 
     return [
       createSectionBlock(outline[0], [
@@ -5387,9 +5707,9 @@ const createHumanReviewSections = (analysis) => {
               : `${withSubjectParticle(primaryMenu)} 유명하다는 점은 이곳을 볼 때 가장 먼저 확인하게 되는 부분이었어요`
             : `${withObjectParticle(topic)} 보게 된 건 대표 메뉴와 식사 분위기를 함께 확인하고 싶었기 때문이에요`,
           primaryMenu && /짬뽕/u.test(primaryMenu)
-            ? "짬뽕 메뉴는 사진으로 보이는 국물과 재료 구성이 먼저 눈에 들어오지만, 실제 맛과 맵기는 방문 전 후기까지 함께 확인하는 편이 좋겠습니다"
+            ? "짬뽕 메뉴는 사진으로 보이는 국물과 재료 구성이 먼저 눈에 들어오지만, 실제 맛과 맵기는 개인차가 있을 수 있습니다"
             : primaryMenu
-              ? `${withTopicParticle(primaryMenu)} 사진으로 보이는 구성과 가격, 실제 후기를 함께 보면 방문 전 판단하기 좋은 메뉴입니다`
+              ? `${withTopicParticle(primaryMenu)} 사진으로 보이는 구성과 메뉴 이름을 함께 보면 식사 후보를 잡기 좋은 메뉴입니다`
               : "대표 메뉴가 분명하면 방문 전 어떤 메뉴를 먼저 볼지 정하기 더 쉽습니다",
           /본점|강화도/u.test(`${topic} ${memoText}`)
             ? "본점이나 지역명이 함께 들어간 맛집은 처음 가는 사람도 위치와 대표 메뉴를 같이 확인하고 싶어 합니다"
@@ -5406,28 +5726,28 @@ const createHumanReviewSections = (analysis) => {
           ...createRestaurantMenuSentences(`${topic}\n${memoText}`),
           hasTasteCue
             ? "실제로 기억나는 맛 표현은 국물, 소스, 재료, 맵기처럼 떠오르는 범위 안에서만 적는 편이 자연스럽습니다"
-            : "직접 맛을 본 표현이 부족하다면 맛을 단정하기보다 메뉴 사진과 실제 후기를 함께 확인하는 흐름이 자연스럽습니다",
+            : "맛을 단정하기보다 메뉴 사진으로 보이는 구성과 동행 상황을 먼저 보는 흐름이 자연스럽습니다",
           hasAmountCue
             ? "양과 관련해 남긴 내용이 있다면 가족 외식이나 여러 명이 나눠 먹는 자리에서 중요한 참고점이 됩니다"
-            : "양은 사진만으로 단정하기 어려워서 1인 기준인지, 나눠 먹기 좋은지는 방문 전 후기를 함께 보는 편이 좋겠습니다"
+            : "양은 사진만으로 단정하기 어려워서 인원수에 맞춰 메뉴판을 다시 보는 쪽이 좋겠습니다"
         ]
       ], tone),
       createSectionBlock(outline[2], [
         [
           /분위기/u.test(memoText)
             ? "분위기가 좋았던 기억은 가족 외식이나 여행 중 식사 장소를 고를 때 특히 읽기 좋은 포인트입니다"
-            : "매장 분위기와 좌석, 주문 동선은 사진으로 확인되는 범위와 방문 전 확인 항목을 나눠 적는 편이 좋습니다",
+            : "매장 분위기와 좌석, 주문 동선은 사진으로 확인되는 범위 안에서만 보는 편이 좋습니다",
           hasStaffCue
             ? "직원 응대가 친절했다는 점은 처음 방문한 맛집에서 주문 흐름을 편하게 만들어주는 기준이 됩니다"
-            : "응대나 주문 흐름은 실제로 확인한 내용이 없으면 경험처럼 단정하지 않는 편이 좋습니다",
+            : "응대나 주문 흐름은 방문 시간대와 매장 상황에 따라 달라질 수 있습니다",
           hasParkingCue
             ? "주차가 편했다는 점은 차로 이동하는 가족 외식이나 여행 동선에서 꽤 중요한 장점으로 남습니다"
-            : "주차 정보가 없다면 방문 전 한 번 더 확인해야 할 항목으로 따로 빼두는 편이 안전합니다"
+            : "주차 정보는 방문 시간대마다 달라질 수 있어 출발 전에 한 번 살펴보면 좋겠습니다"
         ]
       ], tone),
       createSectionBlock(outline[3], [
         [
-          "확인되지 않은 정보는 한 번만 따로 정리해두면 글이 과장되지 않고 읽기 편합니다",
+          "가격, 운영시간, 대기처럼 바뀔 수 있는 정보는 한 번만 짚어두면 글이 과장되지 않고 읽기 편합니다",
           ...createRestaurantCheckSentences(memoText)
         ]
       ], tone),
@@ -5437,7 +5757,7 @@ const createHumanReviewSections = (analysis) => {
             ? "가족 외식이나 강화도 여행 중 식사 장소를 찾는 분이라면 대표 메뉴와 대기 여부를 함께 확인해보면 좋겠습니다"
             : `${recommendedReader}께 참고가 될 것 같아요`,
           primaryMenu
-            ? `${withTopicParticle(primaryMenu)} 궁금한 분이라면 메뉴 사진, 가격, 웨이팅 정보를 추가로 확인한 뒤 방문 계획을 잡는 방식이 좋겠습니다`
+            ? `${withTopicParticle(primaryMenu)} 궁금한 분이라면 메뉴 사진과 위치를 먼저 보고 방문 계획을 잡는 방식이 좋겠습니다`
             : "대표 메뉴와 방문 시간대, 주차 가능 여부를 같이 보면 실제로 움직일 때 더 편합니다",
           partySize ? `${partySize}이 함께 움직이는 자리라면 메뉴 선택과 식사 시간을 먼저 맞춰보는 편이 좋겠습니다` : ""
         ]
@@ -5863,7 +6183,7 @@ const createExperienceReviewBody = (form = {}, selectedTitle = "", category = in
         "처음 이용한다면 상담 전에 원하는 범위와 예산을 간단히 정리해두면 대화가 훨씬 편해집니다"
       ], tone),
       createMarkedSection("이용 전 확인할 점", [
-        "견적, 예약 가능 시간, 진행 기간, 추가 비용 여부는 이용 전에 한 번 더 확인해두면 좋습니다",
+        "견적, 예약 시간, 진행 기간, 추가 비용 여부는 이용 전에 한 번 더 확인해두면 좋습니다",
         "서비스 범위가 넓다면 내가 필요한 부분이 포함되는지도 꼭 나눠서 보는 편이 안전해요"
       ], tone),
       createMarkedSection("이런 분께 추천해요", [
@@ -6102,6 +6422,7 @@ export function createProductReviewDraft(form = {}) {
     form,
     category,
     selectedTitle,
+    titleCandidates: titles,
     body,
     hashtags,
     photoGuide,
@@ -6112,7 +6433,12 @@ export function createProductReviewDraft(form = {}) {
     const targetSettings = getTargetLengthSettings(form, category);
     bodyWithoutChecklist = trimBodyToMaxLength(
       polishPublishableBlogBody(
-        normalizeBody([body, ...createNaturalReviewFinishingSections(form, category)].join("\n\n"))
+        ensureRestaurantKeywordDensity(
+          normalizeBody([body, ...createNaturalReviewFinishingSections(form, category)].join("\n\n")),
+          form,
+          category,
+          targetSettings
+        )
       ),
       targetSettings
     );
@@ -6130,6 +6456,7 @@ export function createProductReviewDraft(form = {}) {
       form,
       category,
       selectedTitle,
+      titleCandidates: titles,
       body,
       hashtags,
       photoGuide,

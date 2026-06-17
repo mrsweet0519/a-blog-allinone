@@ -24,6 +24,8 @@ export const screenshotPaths = {
   targetLength: resolve(screenshotsDir, "naver-target-length-options.png"),
   keywordInput: resolve(screenshotsDir, "naver-keyword-input.png"),
   yukjjam: resolve(screenshotsDir, "naver-yukjjam-result.png"),
+  titleCandidates: resolve(screenshotsDir, "naver-title-candidates.png"),
+  regenerateButton: resolve(screenshotsDir, "naver-regenerate-button.png"),
   dryShampoo: resolve(screenshotsDir, "naver-dryshampoo-result.png"),
   customsLecture: resolve(screenshotsDir, "naver-customs-lecture-result.png"),
   photoPreview: resolve(screenshotsDir, "naver-photo-inline-preview.png")
@@ -82,28 +84,33 @@ const splitFirstSentences = (body = "") =>
     .slice(0, 5);
 
 const hardForbiddenPattern =
-  /인생맛집|역대급|효과\s*보장|가격\s*미쳤다|협찬이지만\s*솔직히|내돈내산처럼|무조건\s*추천|완전\s*대박|100%\s*해결|즉시효과|완치|글의\s*중심이\s*분명해집니다|구체적으로\s*보완|글이\s*더\s*살아납니다|작성하면\s*좋습니다|확인할\s*부분으로\s*남겨두는\s*편|맛집\s*후기답게|본문에서|메모에|제공된\s*정보|추가\s*메모|직원\s*응대가\s*좋|주차가\s*편(?:했|한|해)|다시\s*가고\s*싶/u;
+  /인생맛집|역대급|효과\s*보장|가격\s*미쳤다|협찬이지만\s*솔직히|내돈내산처럼|무조건\s*추천|완전\s*대박|100%\s*해결|즉시효과|완치|글의\s*중심이\s*분명해집니다|구체적으로\s*보완|글이\s*더\s*살아납니다|글이\s*더\s*구체적으로|작성하면\s*좋습니다|확인할\s*부분으로\s*남겨두는\s*편|확인할\s*부분|확인되지\s*않은\s*정보는|단정하지\s*않는\s*편|후기를\s*함께\s*보는\s*편|방문\s*전\s*확인할\s*항목|안전해요|실제\s*후기를\s*함께|맛집\s*후기답게|본문에서|메모|제공된\s*정보|사진과\s*함께\s*보완|정보가\s*없다면|직원\s*응대가\s*좋|직원\s*친절|주차가\s*편(?:했|한|해)|주차\s*편|다시\s*가고\s*싶|웨이팅\s*없|예약\s*가능|영업시간/u;
 
 const goToNaverMaker = async (page) => {
   await page.goto(`${origin}/one-click/naver`, { waitUntil: "networkidle" });
 };
 
-const fillAndGenerate = async (page, topic, memo, { keywords = "", targetCharCount = "" } = {}) => {
+const fillAndGenerate = async (page, topic, memo, { keywords = "", targetCharCount = "", sponsorshipType = "" } = {}) => {
   await page
     .getByPlaceholder("예: 제품 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기")
     .fill(topic);
   if (keywords) {
     await page
-      .getByPlaceholder("예: 육짬 강화도본점 / 초지대교 맛집 / 갈낙짬뽕")
+      .getByPlaceholder("예: 상호명 / 지역명 맛집 / 대표 메뉴")
       .fill(keywords);
   }
   await page
     .getByPlaceholder("좋았던 점, 아쉬웠던 점, 아이 반응, 재방문 의사처럼 기억나는 말만 적어주세요.")
     .fill(memo);
-  if (targetCharCount) {
+  if (targetCharCount || sponsorshipType) {
     const advancedOptions = page.locator("details").filter({ hasText: "고급 옵션" }).first();
     await advancedOptions.locator("summary").click();
+  }
+  if (targetCharCount) {
     await page.getByLabel("목표 글자수").fill(String(targetCharCount));
+  }
+  if (sponsorshipType) {
+    await page.getByLabel("협찬 여부").selectOption(sponsorshipType);
   }
   await page.getByRole("button", { name: "블로그 초안 만들기" }).click();
   await page.getByText("최종 추천 제목").waitFor({ state: "visible" });
@@ -147,18 +154,18 @@ export const runOneClickCapture = async (page) => {
     .getByPlaceholder("예: 제품 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기")
     .fill("육짬 강화도본점 맛집후기");
   await page
-    .getByPlaceholder("예: 육짬 강화도본점 / 초지대교 맛집 / 갈낙짬뽕")
+    .getByPlaceholder("예: 상호명 / 지역명 맛집 / 대표 메뉴")
     .fill("육짬 강화도본점, 초지대교 맛집, 갈낙짬뽕");
   results.keywordInput = {
-    visible: await page.getByLabel("노출 키워드").isVisible(),
-    value: await page.getByLabel("노출 키워드").inputValue()
+    visible: await page.getByLabel("메인 키워드").isVisible(),
+    value: await page.getByLabel("메인 키워드").inputValue()
   };
   await page.screenshot({ path: screenshotPaths.keywordInput, fullPage: true });
 
   await goToNaverMaker(page);
   const advancedOptions = page.locator("details").filter({ hasText: "고급 옵션" }).first();
   await advancedOptions.locator("summary").click();
-  await page.getByLabel("목표 글자수").fill("2400");
+  await page.getByLabel("목표 글자수").fill("2900");
   results.targetLength = {
     selectedTargetLength: await page.getByLabel("목표 글자수").inputValue(),
     visible: await page.getByLabel("목표 글자수").isVisible()
@@ -169,13 +176,23 @@ export const runOneClickCapture = async (page) => {
   await fillAndGenerate(
     page,
     "육짬 강화도본점 맛집후기",
-    "초지대교맛집\n가족여행으로 다녀옴\n갈낙짬뽕이 유명한 곳",
+    "강화도 가족여행중 다녀와서 좋았음",
     {
       keywords: "육짬 강화도본점, 초지대교 맛집, 갈낙짬뽕",
-      targetCharCount: 2400
+      targetCharCount: 2900,
+      sponsorshipType: "식사권 제공"
     }
   );
   results.yukjjam = await readResult(page, screenshotPaths.yukjjam);
+  await page.getByText("제목 더보기").click();
+  await page.screenshot({ path: screenshotPaths.titleCandidates, fullPage: true });
+  await page
+    .getByPlaceholder("좋았던 점, 아쉬웠던 점, 아이 반응, 재방문 의사처럼 기억나는 말만 적어주세요.")
+    .fill("강화도 가족여행중 다녀와서 좋았음\n아이랑 먹기 편한지도 다시 보고 싶음");
+  results.regenerateButton = {
+    text: await page.getByRole("button", { name: /변경 내용으로 다시 만들기/u }).textContent()
+  };
+  await page.screenshot({ path: screenshotPaths.regenerateButton, fullPage: true });
 
   await goToNaverMaker(page);
   await fillAndGenerate(

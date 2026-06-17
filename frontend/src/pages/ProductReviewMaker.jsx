@@ -306,6 +306,38 @@ const getPayloadTargetCharCount = (value) => {
   return normalized ? Number.parseInt(normalized, 10) : undefined;
 };
 
+const normalizeSignatureText = (value = "") => String(value ?? "").trim().replace(/\s+/g, " ");
+
+const splitKeywordInput = (value = "") =>
+  Array.from(
+    new Set(
+      String(value ?? "")
+        .split(/[\n,/]+/u)
+        .map((item) => normalizeMainKeywordInput(item))
+        .filter(Boolean)
+    )
+  );
+
+const createFormSignature = (formState = {}, imageItems = []) =>
+  JSON.stringify({
+    topic: normalizeSignatureText(formState.productName),
+    mainKeyword: normalizeSignatureText(formState.mainKeyword),
+    memo: normalizeSignatureText(formState.experienceMemo),
+    photos: imageItems.map((item, index) => ({
+      index,
+      id: item.id,
+      name: item.name,
+      source: item.source,
+      note: normalizeSignatureText(item.note),
+      ocrText: normalizeSignatureText(item.ocrText)
+    })),
+    category: formState.category || "",
+    tone: formState.tone || "",
+    targetCharCount: normalizeTargetCharCountInput(formState.targetCharCount),
+    sponsorshipType: formState.sponsorshipType || "",
+    avoidWords: normalizeSignatureText(formState.avoidWords)
+  });
+
 const reviewTopicTailPattern =
   /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리|방법)$/u;
 
@@ -374,31 +406,35 @@ export default function ProductReviewMaker() {
   const [fieldMeta, setFieldMeta] = useState(() => createInitialFieldMeta());
   const [draftId, setDraftId] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
+  const [lastGeneratedSignature, setLastGeneratedSignature] = useState("");
 
   const reviewTopic = useMemo(
     () => form.productName.trim() || form.mainKeyword.trim(),
     [form.mainKeyword, form.productName]
   );
+  const keywordParts = useMemo(() => splitKeywordInput(form.mainKeyword), [form.mainKeyword]);
   const resolvedMainKeyword = useMemo(
-    () => normalizeMainKeywordInput(form.mainKeyword) || deriveMainKeywordFromTopic(form.productName),
-    [form.mainKeyword, form.productName]
+    () => keywordParts[0] || deriveMainKeywordFromTopic(form.productName),
+    [form.productName, keywordParts]
   );
-  const hasSeedInput = useMemo(
-    () =>
-      images.length > 0 ||
-      Boolean(
-        form.experienceMemo.trim() ||
-          form.productInfoText.trim() ||
-          fieldLabels.some(([field]) => form[field].trim())
-      ),
-    [form, images.length]
-  );
-  const isReady = useMemo(
-    () => Boolean(reviewTopic && hasSeedInput),
-    [hasSeedInput, reviewTopic]
-  );
+  const subKeywords = useMemo(() => keywordParts.slice(1), [keywordParts]);
+  const currentFormSignature = useMemo(() => createFormSignature(form, images), [form, images]);
+  const isReady = useMemo(() => Boolean(reviewTopic), [reviewTopic]);
   const hasResult = Boolean(result.body);
   const isReading = ocrStatus === "reading" || images.some((item) => item.ocrStatus === "reading");
+  const hasChangedSinceGeneration = Boolean(
+    hasResult && lastGeneratedSignature && currentFormSignature !== lastGeneratedSignature
+  );
+  const generateButtonLabel = !reviewTopic
+    ? "글 주제를 입력해주세요"
+    : status === "generating"
+    ? "생성 중..."
+    : hasResult
+    ? hasChangedSinceGeneration
+      ? "변경 내용으로 다시 만들기"
+      : "다시 만들기"
+    : "블로그 초안 만들기";
+  const isGenerateButtonEmphasized = !hasResult || hasChangedSinceGeneration;
 
   useEffect(() => {
     imagesRef.current = images;
@@ -566,12 +602,14 @@ export default function ProductReviewMaker() {
     const topic = reviewTopic || form.productName || resolvedMainKeyword;
     const mainKeyword = resolvedMainKeyword || topic;
     const targetCharCount = getPayloadTargetCharCount(form.targetCharCount);
+    const joinedKeywords = [mainKeyword, ...subKeywords].filter(Boolean).join(", ");
 
     return {
       ...form,
       productName: form.productName || topic,
       mainKeyword,
-      keyword: mainKeyword,
+      keyword: joinedKeywords || mainKeyword,
+      subKeywords,
       productInfoText: mergeTextBlocks(form.productInfoText, imageText),
       selectedTitle: selectedTitle || "",
       targetCharCount,
@@ -652,6 +690,7 @@ export default function ProductReviewMaker() {
     if (!isReady) return;
 
     const generationId = createGenerationId();
+    const generationSignature = currentFormSignature;
     activeGenerationIdRef.current = generationId;
     setResult(createEmptyResult(generationId));
     setForm((current) => ({ ...current, selectedTitle: "" }));
@@ -675,6 +714,7 @@ export default function ProductReviewMaker() {
 
       setResult(draft);
       setForm((current) => ({ ...current, selectedTitle: draft.finalTitle }));
+      setLastGeneratedSignature(generationSignature);
       setStatus("generated");
       setDraftId("");
       setDraftMessage("");
@@ -835,7 +875,7 @@ export default function ProductReviewMaker() {
               <h3 className="mt-1 text-xl font-bold leading-tight text-ink">사진 넣고 글 생성</h3>
             </div>
             <span className="rounded-full bg-[#fff8e6] px-3 py-1 text-xs font-bold text-moss">
-              {isReady ? "준비 완료" : "30초 입력"}
+              {reviewTopic ? "준비 완료" : "주제 입력"}
             </span>
           </div>
 
@@ -865,7 +905,7 @@ export default function ProductReviewMaker() {
               />
               <label className="mt-3 block">
                 <div className="flex items-center justify-between gap-2">
-                  <FieldLabel>노출 키워드</FieldLabel>
+                  <FieldLabel>메인 키워드</FieldLabel>
                   <span className="shrink-0 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/45">
                     선택사항
                   </span>
@@ -874,7 +914,7 @@ export default function ProductReviewMaker() {
                   value={form.mainKeyword}
                   onChange={(event) => updateForm("mainKeyword", event.target.value)}
                   className="focus-ring mt-2 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
-                  placeholder="예: 육짬 강화도본점 / 초지대교 맛집 / 갈낙짬뽕"
+                  placeholder="예: 상호명 / 지역명 맛집 / 대표 메뉴"
                 />
                 <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
                   비워두면 글 주제와 메모에서 자동으로 추출합니다. 여러 키워드는 쉼표로 나눠 입력하세요.
@@ -1048,10 +1088,14 @@ export default function ProductReviewMaker() {
               type="button"
               onClick={() => generateReview()}
               disabled={!isReady || status === "generating" || isReading}
-              className="focus-ring inline-flex min-h-[58px] w-full items-center justify-center gap-2 rounded-2xl bg-moss px-5 py-4 text-base font-bold text-white shadow-[0_14px_28px_rgba(73,111,99,0.22)] transition hover:bg-[#456b61] disabled:cursor-not-allowed disabled:bg-ink/25 disabled:shadow-none"
+              className={`focus-ring inline-flex min-h-[58px] w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-base font-bold transition disabled:cursor-not-allowed disabled:bg-ink/25 disabled:text-white disabled:shadow-none ${
+                isGenerateButtonEmphasized
+                  ? "bg-moss text-white shadow-[0_14px_28px_rgba(73,111,99,0.22)] hover:bg-[#456b61]"
+                  : "bg-white text-moss shadow-[inset_0_0_0_1px_rgba(73,111,99,0.18)] hover:bg-[#fff8e6]"
+              }`}
             >
               <WandSparkles size={19} aria-hidden="true" />
-              블로그 초안 만들기
+              {generateButtonLabel}
             </button>
           </div>
         </section>
