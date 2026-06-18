@@ -21,7 +21,7 @@ const normalizeParagraphKey = (paragraph = "") =>
     .toLowerCase();
 
 export const BLOG_WRITER_GUIDE_PATTERN =
-  /정보가 부족하면|사진과 함께 보완하면|본문에서는|구체적으로|확인 필요 정보는|단정하지 않는 편이|단정하지 않는 편|제공된 정보|메모에|맛집 후기답게|글의 중심|자연스러운 흐름|작성 가이드|글 작성|초안에서는|사진을 추가하면|안전해요|맛을 단정하기보다|실제 후기를 함께|맛을 대신/u;
+  /정보가 부족하면|사진과 함께 보완하면|본문에서는|본문에서|글을 읽는 사람|글 안에서|광고처럼|구체적으로|확인 필요 정보는|단정하지 않고|단정하지 않는 편이|단정하지 않는 편|제공된 정보|메모에|맛집 후기답게|글의 중심|글의 흐름|글이 더 구체적으로|자연스럽게 정리되는 느낌|자연스러운 흐름|작성 가이드|글 작성|작성하면|초안에서는|사진을 추가하면|안전해요|맛을 단정하기보다|실제 후기를 함께|맛을 대신/u;
 
 export const BLOG_WRITER_FORBIDDEN_CATEGORY_PATTERN =
   /서비스 신청|신청 과정|진행 과정|체험 흐름|비용 일정|견적|결과 확인 장면|사용감|발림감|제형|제품 패키지|커리큘럼|수강 흐름/u;
@@ -62,9 +62,9 @@ const getRestaurantTitleIntentCount = (titles = []) => {
   return [
     /갈낙짬뽕|짬뽕|탕수육|파스타|대표 메뉴|메뉴/u,
     /강화도맛집|초지대교|강화도|지역|근처|맛집/u,
-    /방문 전|체크|참고|가기 전/u,
+    /방문 후기|다녀온|들른|궁금했던|가기 전/u,
     /가족여행|가족 식사|가족|회식|모임|여행/u,
-    /정보|요약|위치|정리/u
+    /후기|위치|근처|식사/u
   ].filter((pattern) => pattern.test(joinedTitles)).length;
 };
 
@@ -144,7 +144,8 @@ export const evaluateBlogWriterQuality = ({
     !/붉은\s*국물|해산물|채소|색감|그릇|재료|토핑|튀김\s*색|담긴\s*구성/u.test(normalizedBody);
   const awkwardTitle =
     category === "restaurant" &&
-    (titles.some((title) => /식사\s*후보|기준\s*정리|확인할\s*점/u.test(title)) || getRestaurantTitleIntentCount(titles) < 5);
+    (titles.some((title) => /식사\s*후보|식사로\s*본\s*점|정보\s*정리|기준\s*정리|확인할\s*점/u.test(title)) ||
+      getRestaurantTitleIntentCount(titles) < 5);
   const weakExperienceFlow =
     category === "restaurant" &&
     !/(가족여행|가족 식사|회식|다녀온 뒤|알게 된 이유|궁금했던 이유|사진으로 보니)/u.test(normalizedBody);
