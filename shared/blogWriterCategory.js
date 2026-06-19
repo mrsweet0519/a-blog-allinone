@@ -6,7 +6,7 @@ const compact = (value) =>
     .replace(/[^\p{L}\p{N}_-]/gu, "");
 
 const splitCommaList = (value = "", limit = 10) =>
-  text(value)
+  (Array.isArray(value) ? value.join(",") : text(value))
     .split(/[,\n/|]+/u)
     .map((item) => item.trim())
     .filter(Boolean)
@@ -38,16 +38,20 @@ const RESTAURANT_MENU_PATTERN = /갈낙짬뽕|짬뽕|탕수육|짜장|국물|파
 export const BLOG_WRITER_CATEGORIES = [
   "restaurant",
   "cafe",
-  "kidsPlace",
-  "familyDining",
-  "lifestyleProduct",
-  "seasonal",
-  "fashion",
-  "flowers",
+  "kids-place",
+  "product",
   "experience",
   "store",
   "education",
-  "information"
+  "hospital",
+  "service",
+  "travel",
+  "information",
+  "comparison",
+  "place",
+  "seasonal",
+  "fashion",
+  "flowers"
 ];
 
 export const normalizeBlogKeyword = (value = "") => {
@@ -128,11 +132,15 @@ export const shouldUseTopicEntityAsMain = ({ inputKeyword = "", topicKeyword = "
 export const inferBlogWriterCategory = (form = {}) => {
   const source = `${text(form.category)} ${text(form.productName)} ${text(form.mainKeyword || form.keyword)} ${text(form.experienceMemo || form.memo || form.productInfoText)}`;
 
+  if (/비교|추천|고르는\s*법|구매\s*전|장단점|체크포인트|선택\s*기준/u.test(source)) return "comparison";
+  if (/병원|의원|피부관리|시술|진료|치과|한의원|피부과|검진/u.test(source)) return "hospital";
+  if (/여행|숙소|호텔|펜션|리조트|조식|체크인|객실|코스|바다|관광/u.test(source)) return "travel";
+  if (/서비스|신청|예약|견적|설치|수리|청소|대행|렌탈|컨설팅/u.test(source)) return "service";
   if (/강의|수업|커리큘럼|입찰|공매|교육|강사/u.test(source)) return "education";
   if (/맛집|식당|짬뽕|탕수육|파스타|스테이크|식사|외식|회식/u.test(source)) return "restaurant";
   if (/카페|커피|디저트|브런치/u.test(source)) return "cafe";
-  if (/아이|키즈|체험관|놀이터|실내체험|가족/u.test(source)) return "kidsPlace";
-  if (/드라이샴푸|샴푸|화장품|텀블러|제품|사용|휴대|패키지/u.test(source)) return "lifestyleProduct";
+  if (/아이|키즈|체험관|놀이터|실내체험|가족/u.test(source)) return "kids-place";
+  if (/드라이샴푸|샴푸|화장품|텀블러|제품|사용|휴대|패키지/u.test(source)) return "product";
   if (/꽃|꽃집|화분|플라워/u.test(source)) return "flowers";
   if (/패션|의류|신발|가방|착용/u.test(source)) return "fashion";
   if (/시즌|계절|명절|여름|겨울|봄|가을/u.test(source)) return "seasonal";

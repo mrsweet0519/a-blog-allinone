@@ -17,7 +17,8 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import { extractCaptureTextFromImage } from "../lib/captureOcr.js";
 import {
   createProductReviewDraft,
-  extractProductInfoFieldsWithMetaFromText
+  extractProductInfoFieldsWithMetaFromText,
+  parseSubKeywords
 } from "../lib/productReviewGenerator.js";
 import { saveDraft } from "../lib/localDrafts.js";
 
@@ -25,6 +26,7 @@ const initialForm = {
   productName: "",
   brandName: "",
   mainKeyword: "",
+  subKeywords: "",
   productInfoText: "",
   category: "",
   ingredients: "",
@@ -52,8 +54,17 @@ const createEmptyResult = (generationId = "") => ({
   titleCandidates: [],
   finalTitle: "",
   selectedTitle: "",
+  primaryEntity: "",
   mainKeyword: "",
+  subKeywords: [],
+  searchIntent: null,
+  experienceStatus: "",
+  informationSufficiency: null,
+  factMap: null,
+  imageAnalysis: null,
+  writerPlan: null,
   body: "",
+  faq: [],
   hashtags: [],
   imageSuggestions: [],
   outline: [],
@@ -178,6 +189,16 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
   const qualityChecks = draft.qualityChecks || packageData.qualityChecks || [];
   const blogWriterQuality = draft.blogWriterQuality || packageData.blogWriterQuality || null;
   const engine = draft.engine || packageData.engine || (draft.generationRoute === "llm" ? "llm" : "fallback");
+  const primaryEntity = draft.primaryEntity || packageData.primaryEntity || packageData.blogWriterAnalysis?.primaryEntity || "";
+  const subKeywords = draft.subKeywords || packageData.subKeywords || packageData.blogWriterAnalysis?.subKeywords || [];
+  const searchIntent = draft.searchIntent || packageData.searchIntent || packageData.blogWriterAnalysis?.searchIntent || null;
+  const experienceStatus = draft.experienceStatus || packageData.experienceStatus || packageData.blogWriterAnalysis?.experienceStatus || "";
+  const informationSufficiency =
+    draft.informationSufficiency || packageData.informationSufficiency || packageData.blogWriterAnalysis?.informationSufficiency || null;
+  const factMap = draft.factMap || packageData.factMap || null;
+  const imageAnalysis = draft.imageAnalysis || packageData.imageAnalysis || null;
+  const writerPlan = draft.writerPlan || packageData.writerPlan || null;
+  const faq = draft.faq || draft.faqItems || packageData.faqItems || [];
   const summary = {
     ...(packageData.summary || {}),
     ...(draft.summary || {}),
@@ -200,8 +221,17 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
     selectedTitle: finalTitle,
     titleCandidates,
     titles: titleCandidates,
+    primaryEntity,
     mainKeyword,
+    subKeywords,
+    searchIntent,
+    experienceStatus,
+    informationSufficiency,
+    factMap,
+    imageAnalysis,
+    writerPlan,
     body,
+    faq,
     bodyLength,
     qualityScore,
     qualityIssues,
@@ -214,8 +244,17 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
           generationId: nextGenerationId,
           finalRecommendedTitle: finalTitle,
           titleCandidates,
+          primaryEntity,
           mainKeyword,
+          subKeywords,
+          searchIntent,
+          experienceStatus,
+          informationSufficiency,
+          factMap,
+          imageAnalysis,
+          writerPlan,
           blogBody: body,
+          faqItems: faq,
           engine,
           actualBodyLength: bodyLength,
           summary,
@@ -341,6 +380,7 @@ const createFormSignature = (formState = {}, imageItems = []) =>
   JSON.stringify({
     topic: normalizeSignatureText(formState.productName),
     mainKeyword: normalizeSignatureText(formState.mainKeyword),
+    subKeywords: parseSubKeywords(formState.subKeywords, formState.mainKeyword).map(normalizeSignatureText),
     memo: normalizeSignatureText(formState.experienceMemo),
     photos: imageItems.map((item, index) => ({
       index,
@@ -435,7 +475,10 @@ export default function ProductReviewMaker() {
     () => keywordParts[0] || deriveMainKeywordFromTopic(form.productName),
     [form.productName, keywordParts]
   );
-  const subKeywords = useMemo(() => keywordParts.slice(1), [keywordParts]);
+  const subKeywords = useMemo(
+    () => parseSubKeywords([...keywordParts.slice(1), ...parseSubKeywords(form.subKeywords, resolvedMainKeyword)], resolvedMainKeyword),
+    [form.subKeywords, keywordParts, resolvedMainKeyword]
+  );
   const currentFormSignature = useMemo(() => createFormSignature(form, images), [form, images]);
   const isReady = useMemo(() => Boolean(reviewTopic), [reviewTopic]);
   const hasResult = Boolean(result.body);
@@ -993,7 +1036,24 @@ export default function ProductReviewMaker() {
                   placeholder="예: 상호명 / 지역명 맛집 / 대표 메뉴"
                 />
                 <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
-                  비워두면 글 주제와 메모에서 자동으로 추출합니다. 여러 키워드는 쉼표로 나눠 입력하세요.
+                  비워두면 글 주제와 메모에서 자동으로 추출합니다. 구체적인 상호명이나 상품명을 우선합니다.
+                </p>
+              </label>
+              <label className="mt-3 block">
+                <div className="flex items-center justify-between gap-2">
+                  <FieldLabel>서브 키워드</FieldLabel>
+                  <span className="shrink-0 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/45">
+                    선택사항
+                  </span>
+                </div>
+                <input
+                  value={form.subKeywords}
+                  onChange={(event) => updateForm("subKeywords", event.target.value)}
+                  className="focus-ring mt-2 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
+                  placeholder="예: 지역명 맛집, 대표 메뉴, 가족 외식"
+                />
+                <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
+                  비워두면 글 주제와 메모에서 자동 추천합니다. 최대 3개까지 쉼표로 나눠 입력하세요.
                 </p>
               </label>
             </section>
@@ -1262,7 +1322,7 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-generation-engine={result.engine || packageData.engine || ""}>
       <div className="sticky top-3 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/94 px-4 py-3 shadow-[0_12px_28px_rgba(31,36,40,0.075)] backdrop-blur">
         <div>
           <p className="text-xs font-bold text-moss">편집 가능한 원고</p>

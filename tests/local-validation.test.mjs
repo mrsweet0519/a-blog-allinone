@@ -32,6 +32,11 @@ import {
 import { buildBlogWriterPromptPayload } from "../shared/blogWriterPrompt.js";
 import { evaluateBlogWriterQuality } from "../shared/blogWriterQuality.js";
 import {
+  buildBlogWriterPipelineContext,
+  normalizeBlogWriterInput,
+  parseSubKeywords
+} from "../shared/blogWriterPipeline.js";
+import {
   createProductReviewDraft,
   extractProductInfoFieldsWithMetaFromText
 } from "../shared/productReviewGenerator.js";
@@ -39,6 +44,9 @@ import { createTistoryDraft } from "../shared/tistoryGenerator.js";
 import { onRequestPost as generateBlogOnRequestPost } from "../functions/api/generate-blog.js";
 
 const now = new Date(2026, 5, 1, 10, 0, 0);
+const holdoutUnknownTopicFixtures = JSON.parse(
+  readFileSync(new URL("./fixtures/blog-quality/holdout-unknown-topics.json", import.meta.url), "utf8")
+);
 
 const valid = validateAccessCode("mgo-test7", accessCodes, now);
 assert.equal(valid.ok, true);
@@ -932,12 +940,18 @@ assert.ok(productReviewMakerSource.includes("whitespace-nowrap"));
 assert.ok(productReviewMakerSource.includes("고급 옵션"));
 assert.ok(productReviewMakerSource.includes("메인 키워드"));
 assert.ok(productReviewMakerSource.includes("예: 상호명 / 지역명 맛집 / 대표 메뉴"));
+assert.ok(productReviewMakerSource.includes("서브 키워드"));
+assert.ok(productReviewMakerSource.includes("예: 지역명 맛집, 대표 메뉴, 가족 외식"));
+assert.ok(productReviewMakerSource.includes("비워두면 글 주제와 메모에서 자동 추천합니다. 최대 3개까지 쉼표로 나눠 입력하세요."));
+assert.ok(productReviewMakerSource.includes("parseSubKeywords"));
+assert.ok(productReviewMakerSource.includes("data-generation-engine"));
 assert.ok(productReviewMakerSource.includes("targetCharCount"));
 assert.ok(!productReviewMakerSource.includes("협찬 여부"));
 assert.ok(!productReviewMakerSource.includes("sponsorshipType"));
 assert.ok(productReviewMakerSource.includes("lastGeneratedSignature"));
 assert.ok(productReviewMakerSource.includes("currentFormSignature"));
 assert.ok(productReviewMakerSource.includes("createFormSignature"));
+assert.ok(productReviewMakerSource.includes("subKeywords: parseSubKeywords"));
 assert.ok(productReviewMakerSource.includes("글 주제를 입력해주세요"));
 assert.ok(productReviewMakerSource.includes("변경 내용으로 다시 만들기"));
 assert.ok(!productReviewMakerSource.includes("메인 키워드 직접 지정"));
@@ -1032,9 +1046,12 @@ try {
   const productReviewMakerMarkup = renderToStaticMarkup(React.createElement(ProductReviewMaker));
   assert.ok(productReviewMakerMarkup.includes("고급 옵션"));
   assert.ok(productReviewMakerMarkup.includes("메인 키워드"));
+  assert.ok(productReviewMakerMarkup.includes("서브 키워드"));
   assert.ok(productReviewMakerMarkup.includes("예: 상호명 / 지역명 맛집 / 대표 메뉴"));
+  assert.ok(productReviewMakerMarkup.includes("예: 지역명 맛집, 대표 메뉴, 가족 외식"));
   assert.ok(productReviewMakerMarkup.includes("글 주제를 입력해주세요"));
   assert.ok(productReviewMakerMarkup.includes("비워두면 글 주제와 메모에서 자동으로 추출합니다."));
+  assert.ok(productReviewMakerMarkup.includes("비워두면 글 주제와 메모에서 자동 추천합니다. 최대 3개까지 쉼표로 나눠 입력하세요."));
   assert.ok(productReviewMakerMarkup.includes("목표 글자수"));
   assert.ok(!productReviewMakerMarkup.includes("협찬 여부"));
   assert.ok(productReviewMakerMarkup.includes("value=\"2500\""));
@@ -1047,6 +1064,39 @@ try {
 } finally {
   await viteServer.close();
 }
+
+assert.deepEqual(
+  parseSubKeywords("강화도맛집, 갈낙짬뽕, 가족 외식, 강화도맛집, 육짬 강화도본점, 주차", "육짬 강화도본점"),
+  ["강화도맛집", "갈낙짬뽕", "가족 외식"]
+);
+
+const normalizedSubKeywordPayload = normalizeBlogWriterInput({
+  productName: "육짬 강화도본점 맛집 후기",
+  mainKeyword: "강화도맛집",
+  subKeywords: "갈낙짬뽕, 가족 외식, 강화도맛집, 주차",
+  experienceMemo: "강화도 가족여행중 다녀와서 좋았음"
+});
+assert.equal(normalizedSubKeywordPayload.mainKeyword, "육짬 강화도본점");
+assert.deepEqual(normalizedSubKeywordPayload.subKeywords, ["강화도맛집", "갈낙짬뽕", "가족 외식"]);
+
+const generalPipelineContext = buildBlogWriterPipelineContext({
+  productName: "육짬 강화도본점 맛집 후기",
+  mainKeyword: "강화도맛집",
+  subKeywords: "갈낙짬뽕, 가족 외식",
+  experienceMemo: "강화도 가족여행중 다녀와서 좋았음\n갈낙짬뽕이 궁금했음",
+  imageContext: [
+    { index: 1, note: "대표 메뉴 사진" },
+    { index: 2, note: "음식 사진" }
+  ],
+  imageCount: 2
+});
+assert.equal(generalPipelineContext.primaryEntity, "육짬 강화도본점");
+assert.equal(generalPipelineContext.mainKeyword, "육짬 강화도본점");
+assert.equal(generalPipelineContext.experienceStatus, "visited");
+assert.equal(generalPipelineContext.imageAnalysis.mode, "label-only");
+assert.ok(generalPipelineContext.factMap.facts.every((fact) => fact.source));
+assert.ok(generalPipelineContext.factMap.unsupportedFields.includes("staffResponse"));
+assert.ok(generalPipelineContext.writerPlan.sectionCount >= 3 && generalPipelineContext.writerPlan.sectionCount <= 7);
 
 const createGenerateBlogRequest = (form, env = {}) =>
   generateBlogOnRequestPost({
@@ -1453,6 +1503,267 @@ const assertQualityScore = (review = {}, minimum = 95) => {
   assertNoDuplicateBodyParts(review.body);
 };
 
+assert.equal(holdoutUnknownTopicFixtures.length, 36);
+assert.equal(new Set(holdoutUnknownTopicFixtures.map((fixture) => `${fixture.category}:${fixture.sufficiency}`)).size, 36);
+
+const holdoutUnsupportedClaimPattern =
+  /영업시간\s*(?:은|:)\s*\d|가격\s*(?:은|:)\s*\d|주차가\s*(?:편|좋)|웨이팅\s*(?:없|짧)|직원\s*(?:친절|응대)|무조건|100%\s*만족|효과\s*보장/u;
+const holdoutPrimaryEntities = holdoutUnknownTopicFixtures.map((fixture) =>
+  buildBlogWriterPipelineContext(fixture.form).primaryEntity
+);
+const holdoutFallbackResults = holdoutUnknownTopicFixtures.map((fixture) => {
+  const normalizedForm = normalizeBlogWriterInput(fixture.form);
+  const review = createProductReviewDraft(normalizedForm);
+  const outputText = collectReviewOutputText(review);
+  const otherEntities = holdoutPrimaryEntities.filter(
+    (entity) => entity && entity !== review.primaryEntity && !review.primaryEntity.includes(entity) && !entity.includes(review.primaryEntity)
+  );
+  const contaminationCount = otherEntities.filter((entity) => outputText.includes(entity)).length;
+
+  assert.equal(review.engine, "fallback", fixture.id);
+  assert.ok(review.qualityScore >= 70, `${fixture.id} fallback score ${review.qualityScore}`);
+  assert.equal(review.publishReady, false, fixture.id);
+  assert.ok(!holdoutUnsupportedClaimPattern.test(review.body), fixture.id);
+  assert.equal(contaminationCount, 0, `${fixture.id} contaminated by another holdout entity`);
+  assert.ok(review.contentPackage.factMap.unsupportedFields.length >= 5, fixture.id);
+  assert.ok(["low", "medium", "high"].includes(review.contentPackage.informationSufficiency.level), fixture.id);
+
+  return { fixture, review };
+});
+const holdoutFallbackAverage =
+  holdoutFallbackResults.reduce((total, item) => total + item.review.qualityScore, 0) / holdoutFallbackResults.length;
+assert.ok(holdoutFallbackAverage >= 80, `fallback holdout average ${holdoutFallbackAverage}`);
+
+const holdoutCategoryFallbackStats = Object.fromEntries(
+  [...new Set(holdoutUnknownTopicFixtures.map((fixture) => fixture.category))].map((category) => {
+    const scores = holdoutFallbackResults
+      .filter((item) => item.fixture.category === category)
+      .map((item) => item.review.qualityScore);
+    return [
+      category,
+      {
+        average: Math.round(scores.reduce((total, score) => total + score, 0) / scores.length),
+        min: Math.min(...scores)
+      }
+    ];
+  })
+);
+assert.equal(Object.keys(holdoutCategoryFallbackStats).length, 12);
+globalThis.__blogHoldoutFallbackStats = {
+  average: holdoutFallbackAverage,
+  min: Math.min(...holdoutFallbackResults.map((item) => item.review.qualityScore)),
+  category: holdoutCategoryFallbackStats
+};
+
+const createHoldoutLlmDraft = (fixture) => {
+  const normalizedForm = normalizeBlogWriterInput(fixture.form);
+  const context = buildBlogWriterPipelineContext(normalizedForm);
+  const mainKeyword = context.mainKeyword || context.primaryEntity;
+  const subKeywords = context.subKeywords.slice(0, 3);
+  const memoLines = String(normalizedForm.experienceMemo || normalizedForm.memo || "")
+    .split(/\n|(?<=[.!?。])\s+/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const actualReview = context.experienceTone === "actual-review";
+  const actionText = actualReview ? "직접 경험하고 나서" : "알아보면서";
+  const openingContext = actualReview
+    ? "처음 기대했던 부분과 실제로 기억에 남은 부분을 함께 보게 됐어요"
+    : "처음 볼 때 필요한 정보와 내 상황에 맞는지를 함께 보게 됐어요";
+  const keywordSentence = subKeywords.length
+    ? `${subKeywords.join(", ")} 같은 단어로만 길게 늘리기보다, 실제로 궁금했던 장면과 연결해서 보는 편이 더 편했습니다.`
+    : "큰 장점만 나열하기보다 실제 상황에 맞는지 차분히 보는 편이 더 편했습니다.";
+  const memoSentence = memoLines.length
+    ? `${memoLines.join(" ")} 이 부분이 이번 경험에서 가장 먼저 떠올랐습니다.`
+    : `${mainKeyword}을 처음 볼 때는 기본 정보부터 차근차근 살펴보게 됐습니다.`;
+  const imageSentence = context.imageAnalysis.visuallySupported.length
+    ? `사진으로는 ${context.imageAnalysis.visuallySupported.slice(0, 2).join(", ")} 정도가 먼저 떠올랐고, 그 밖의 맛이나 가격 같은 내용은 따로 말하지 않았습니다.`
+    : "사진으로 덧붙일 장면이 많지는 않아, 직접 기억나는 상황을 중심으로 정리했습니다.";
+  const body = [
+    `${mainKeyword}은 ${actionText} 기억에 남은 점을 차분히 정리해보고 싶었던 주제예요. ${mainKeyword}을 볼 때는 이름이나 키워드보다 내가 왜 관심을 갖게 됐는지가 먼저 중요했고, ${openingContext}.`,
+    `처음에는 ${mainKeyword}이라는 이름만 보고 판단하기보다 실제 상황에서 어떤 부분이 필요했는지 떠올려봤습니다. ${memoSentence} 그래서 이번 후기는 새로 꾸민 이야기보다 기억나는 장면을 기준으로 적었습니다.`,
+    `중간에 가장 도움이 된 건 핵심을 너무 넓히지 않는 것이었어요. ${keywordSentence} ${mainKeyword}을 다시 떠올려봐도 과장된 표현보다 구체적인 순간이 더 오래 남았습니다.`,
+    imageSentence,
+    actualReview
+      ? `직접 겪은 뒤에는 좋았던 부분도 있었지만 모든 사람에게 똑같이 맞는다고 말하기는 어렵겠더라고요. 그래도 ${mainKeyword}은 제 경험 안에서는 충분히 다시 떠올릴 만한 시간으로 남았습니다.`
+      : `아직 직접 경험한 내용이 많지 않은 경우에는 장점만 크게 보지 않고 필요한 조건을 나눠보는 편이 좋겠습니다. ${mainKeyword}은 그런 식으로 차분히 살펴보면 선택 전에 기준을 잡기 좋은 주제였습니다.`,
+    `마무리하면 ${mainKeyword}은 한두 문장으로 크게 포장하기보다, 내가 처한 상황과 남아 있는 단서를 함께 놓고 보는 편이 자연스러웠습니다. ${subKeywords[0] || "관련 정보"}를 찾는 분이라면 이 정도 흐름을 먼저 참고하면 부담이 덜할 것 같아요.`
+  ].join("\n\n");
+  const titleCandidates = [
+    `${mainKeyword} 후기 직접 살펴보며 남은 점`,
+    `${mainKeyword} 경험 기준으로 차분히 본 후기`,
+    `${mainKeyword} 궁금했던 부분 중심 후기`,
+    `${mainKeyword} 처음 볼 때 참고한 부분`,
+    `${mainKeyword} 실제 상황에 맞춰 본 후기`
+  ];
+  const fallbackDraft = createProductReviewDraft(normalizedForm);
+  const faqItems = [
+    {
+      question: `${mainKeyword}은 어떤 점이 먼저 떠올랐나요?`,
+      answer: `${memoLines[0] || `${mainKeyword}을 보게 된 상황`}이 가장 먼저 떠올랐습니다.`
+    },
+    {
+      question: `${mainKeyword}을 볼 때 어떤 부분을 함께 봤나요?`,
+      answer: `${subKeywords[0] || "사용 상황"}과 실제 생활에 맞는지를 함께 봤습니다.`
+    },
+    {
+      question: `${mainKeyword}은 누구에게 참고가 될까요?`,
+      answer: "비슷한 상황에서 처음 알아보는 분께 가볍게 참고가 될 수 있습니다."
+    }
+  ].slice(0, context.writerPlan.faqCount || 0);
+
+  return {
+    primaryEntity: context.primaryEntity,
+    finalTitle: titleCandidates[0],
+    titleCandidates,
+    mainKeyword,
+    subKeywords: context.subKeywords,
+    category: context.category,
+    searchIntent: context.searchIntent,
+    experienceStatus: context.experienceStatus,
+    informationSufficiency: context.informationSufficiency?.level || "medium",
+    writerPlan: context.writerPlan,
+    body,
+    faqItems,
+    hashtags: fallbackDraft.hashtags,
+    qualityNotes: []
+  };
+};
+
+const originalFetchForHoldoutTest = globalThis.fetch;
+try {
+  let activeHoldoutFixture = null;
+  globalThis.fetch = async (url, init = {}) => {
+    const requestPayload = JSON.parse(String(init.body || "{}"));
+    const systemMessage = requestPayload.messages?.[0]?.content || "";
+    if (/품질\s*심사자/u.test(systemMessage)) {
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  score: 100,
+                  publishReady: true,
+                  scores: {
+                    titleQuality: 10,
+                    openingQuality: 10,
+                    factualGrounding: 15,
+                    specificity: 15,
+                    humanNaturalness: 15,
+                    narrativeCoherence: 10,
+                    paragraphValue: 10,
+                    keywordNaturalness: 5,
+                    imageGrounding: 5,
+                    readerUtility: 5
+                  },
+                  issues: [],
+                  revisionInstructions: []
+                })
+              }
+            }
+          ]
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }
+
+    const llmDraft = createHoldoutLlmDraft(activeHoldoutFixture);
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(llmDraft)
+            }
+          }
+        ]
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+
+  const holdoutLlmResults = [];
+  for (const fixture of holdoutUnknownTopicFixtures) {
+    activeHoldoutFixture = fixture;
+    const result = await readJsonResponse(
+      await createGenerateBlogRequest(fixture.form, {
+        BLOG_WRITER_LLM_ENABLED: "true",
+        BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+        OPENAI_API_KEY: "unit-test-key",
+        OPENAI_MODEL: "unit-model"
+      })
+    );
+    holdoutLlmResults.push({ fixture, result });
+    assert.equal(result.engine, "llm", fixture.id);
+    assert.ok(result.qualityScore >= 90, `${fixture.id} llm score ${result.qualityScore}`);
+    assert.equal(result.humanQuality?.hardFail, false, fixture.id);
+    assert.ok(!holdoutUnsupportedClaimPattern.test(result.body), fixture.id);
+  }
+
+  const llmScores = holdoutLlmResults.map((item) => item.result.qualityScore);
+  const llmAverage = llmScores.reduce((total, score) => total + score, 0) / llmScores.length;
+  const llmMin = Math.min(...llmScores);
+  const llmPublishReadyRatio =
+    holdoutLlmResults.filter((item) => item.result.publishReady).length / holdoutLlmResults.length;
+  const llmHardFailCount = holdoutLlmResults.filter((item) => item.result.humanQuality?.hardFail).length;
+  const llmUnsupportedCount = holdoutLlmResults.filter((item) => holdoutUnsupportedClaimPattern.test(item.result.body)).length;
+  const holdoutCategoryLlmStats = Object.fromEntries(
+    [...new Set(holdoutUnknownTopicFixtures.map((fixture) => fixture.category))].map((category) => {
+      const scores = holdoutLlmResults
+        .filter((item) => item.fixture.category === category)
+        .map((item) => item.result.qualityScore);
+      return [
+        category,
+        {
+          average: Math.round(scores.reduce((total, score) => total + score, 0) / scores.length),
+          min: Math.min(...scores)
+        }
+      ];
+    })
+  );
+
+  assert.ok(llmAverage >= 95, `LLM holdout average ${llmAverage}`);
+  assert.ok(llmMin >= 90, `LLM holdout min ${llmMin}`);
+  assert.ok(llmPublishReadyRatio >= 0.9, `LLM publishReady ratio ${llmPublishReadyRatio}`);
+  assert.equal(llmHardFailCount, 0);
+  assert.equal(llmUnsupportedCount, 0);
+  assert.equal(Object.keys(holdoutCategoryLlmStats).length, 12);
+  globalThis.__blogHoldoutLlmStats = {
+    average: llmAverage,
+    min: llmMin,
+    publishReadyRatio: llmPublishReadyRatio,
+    hardFailCount: llmHardFailCount,
+    unsupportedCount: llmUnsupportedCount,
+    category: holdoutCategoryLlmStats
+  };
+} finally {
+  globalThis.fetch = originalFetchForHoldoutTest;
+}
+
+const sequentialGeneralizationTopics = [
+  { marker: "라임포트", form: { productName: "라임포트 샐러드바 방문 후기", mainKeyword: "라임포트 샐러드바", subKeywords: "샐러드 맛집", experienceMemo: "점심에 들러서 좋았음" } },
+  { marker: "오로라펜", form: { productName: "오로라펜 필기구 사용 후기", mainKeyword: "오로라펜", subKeywords: "젤펜", experienceMemo: "업무 노트에 써보고 부드럽게 기억남" } },
+  { marker: "담소공방", form: { productName: "담소공방 도자기 클래스 후기", mainKeyword: "담소공방", subKeywords: "도자기 클래스", experienceMemo: "처음 참여했고 완성품이 기억남" } },
+  { marker: "해든소아", form: { productName: "해든소아과 예방접종 방문 후기", mainKeyword: "해든소아과", subKeywords: "소아과 방문", experienceMemo: "아이와 방문했고 접수 흐름이 궁금했음" } },
+  { marker: "민트렌탈", form: { productName: "민트렌탈 정수기 상담 후기", mainKeyword: "민트렌탈", subKeywords: "정수기 렌탈", experienceMemo: "상담 받아보고 조건을 비교함" } },
+  { marker: "별하서점", form: { productName: "별하서점 독립서점 방문 후기", mainKeyword: "별하서점", subKeywords: "독립서점", experienceMemo: "주말에 들렀고 조용한 분위기가 기억남" } },
+  { marker: "소담펜션", form: { productName: "소담펜션 가족 숙소 후기", mainKeyword: "소담펜션", subKeywords: "가족 펜션", experienceMemo: "하룻밤 머물렀고 산책하기 좋았음" } },
+  { marker: "피크브루", form: { productName: "피크브루 원두 비교 정리", mainKeyword: "피크브루", subKeywords: "원두 비교", experienceMemo: "구매 전 산미와 고소함 차이가 궁금했음" } },
+  { marker: "노리숲", form: { productName: "노리숲 실내체험관 아이랑 후기", mainKeyword: "노리숲", subKeywords: "아이랑 실내체험", experienceMemo: "비 오는 날 다녀와서 좋았음" } },
+  { marker: "에코캠프", form: { productName: "에코캠프 텐트 설치 후기", mainKeyword: "에코캠프", subKeywords: "텐트 설치", experienceMemo: "처음 설치해보고 순서가 기억남" } }
+];
+const sequentialOutputs = [];
+for (const topic of sequentialGeneralizationTopics) {
+  const review = createProductReviewDraft(normalizeBlogWriterInput(topic.form));
+  const outputText = collectReviewOutputText(review);
+  const previousMarkers = sequentialOutputs.map((item) => item.marker);
+  assert.equal(previousMarkers.filter((marker) => outputText.includes(marker)).length, 0, topic.marker);
+  assert.ok(outputText.includes(topic.marker), topic.marker);
+  sequentialOutputs.push({ marker: topic.marker, outputText });
+}
+assert.equal(sequentialOutputs.length, 10);
+
 const requestedFamilyCafePackageReview = createProductReviewDraft({
   mainKeyword: "부천 아이랑 갈만한 카페",
   experienceMemo:
@@ -1599,9 +1910,18 @@ assert.equal(richYukjjamAnalysis.mainKeyword, "육짬 강화도본점");
 assert.equal(richYukjjamAnalysis.broadKeyword, "강화도맛집");
 assert.ok(richYukjjamAnalysis.entityCorrected);
 assert.equal(richYukjjamRestaurantReview.contentPackage.mainKeyword, "육짬 강화도본점");
+assert.equal(richYukjjamRestaurantReview.primaryEntity, "육짬 강화도본점");
+assert.equal(richYukjjamRestaurantReview.contentPackage.primaryEntity, "육짬 강화도본점");
 assert.ok(richYukjjamRestaurantReview.contentPackage.subKeywords.includes("강화도맛집"));
 assert.ok(richYukjjamRestaurantReview.contentPackage.subKeywords.includes("갈낙짬뽕"));
 assert.ok(richYukjjamRestaurantReview.contentPackage.subKeywords.includes("가족여행"));
+assert.equal(richYukjjamRestaurantReview.experienceStatus, "visited");
+assert.equal(richYukjjamRestaurantReview.contentPackage.experienceStatus, "visited");
+assert.equal(richYukjjamRestaurantReview.contentPackage.imageAnalysis.mode, "label-only");
+assert.ok(["low", "medium", "high"].includes(richYukjjamRestaurantReview.contentPackage.informationSufficiency.level));
+assert.ok(richYukjjamRestaurantReview.contentPackage.factMap.facts.length >= 4);
+assert.ok(richYukjjamRestaurantReview.contentPackage.writerPlan.outline.length >= 3);
+assert.deepEqual(richYukjjamRestaurantReview.faq, richYukjjamRestaurantReview.contentPackage.faqItems);
 assert.equal(richYukjjamRestaurantReview.contentPackage.blogWriterAnalysis.mainKeyword, "육짬 강화도본점");
 assert.ok(richYukjjamRestaurantReview.contentPackage.blogWriterAnalysis.subKeywords.includes("강화도맛집"));
 assert.ok(richYukjjamRestaurantReview.contentPackage.blogWriterAnalysis.subKeywords.includes("갈낙짬뽕"));

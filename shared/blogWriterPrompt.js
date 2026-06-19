@@ -1,4 +1,5 @@
 import { analyzeBlogWritingInput } from "./blogWriterCategory.js";
+import { buildBlogWriterPipelineContext } from "./blogWriterPipeline.js";
 
 export const BLOG_WRITER_SYSTEM_PROMPT = `
 당신은 네이버 블로그에 실제로 올릴 수 있는 한국어 생활형 후기를 쓰는 가족 라이프스타일 블로거입니다.
@@ -22,10 +23,16 @@ export const BLOG_WRITER_SYSTEM_PROMPT = `
 `.trim();
 
 export const BLOG_WRITER_OUTPUT_SCHEMA = {
+  primaryEntity: "string",
   finalTitle: "string",
   titleCandidates: ["string"],
   mainKeyword: "string",
   subKeywords: ["string"],
+  category: "string",
+  searchIntent: "object",
+  experienceStatus: "visited|stayed|used|eaten|attended|purchased|researched|planned|unknown",
+  informationSufficiency: "low|medium|high",
+  writerPlan: "object",
   body: "string",
   faqItems: [{ question: "string", answer: "string" }],
   hashtags: ["string"],
@@ -35,14 +42,25 @@ export const BLOG_WRITER_OUTPUT_SCHEMA = {
 const toJsonBlock = (value) => JSON.stringify(value, null, 2);
 
 export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWritingInput(form), fallbackDraft = null } = {}) => {
+  const pipelineContext = buildBlogWriterPipelineContext(form, {
+    category: fallbackDraft?.category || fallbackDraft?.contentPackage?.category || analysis.category,
+    analysis
+  });
   const payload = {
     task: "네이버 블로그 publishable draft 생성",
-    category: analysis.category,
+    pipelineSteps: pipelineContext.pipelineSteps,
+    category: pipelineContext.category,
     topic: analysis.topic,
-    primaryEntity: analysis.primaryEntity,
-    mainKeyword: analysis.mainKeyword,
-    broadKeyword: analysis.broadKeyword,
-    subKeywords: analysis.subKeywords,
+    primaryEntity: pipelineContext.primaryEntity,
+    mainKeyword: pipelineContext.mainKeyword,
+    broadKeyword: pipelineContext.broadKeyword,
+    subKeywords: pipelineContext.subKeywords,
+    searchIntent: pipelineContext.searchIntent,
+    experienceStatus: pipelineContext.experienceStatus,
+    informationSufficiency: pipelineContext.informationSufficiency,
+    factMap: pipelineContext.factMap,
+    imageAnalysis: pipelineContext.imageAnalysis,
+    writerPlan: pipelineContext.writerPlan,
     memoText: analysis.memoText,
     targetCharCount: form.targetCharCount || form.targetLength || 2500,
     effectiveTargetCharCount:
@@ -67,7 +85,11 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
 
   return [
     "아래 입력값만 근거로 최종 원고를 작성하세요.",
+    "Input Normalization → Primary Entity Extraction → Keyword Parsing → Category/Search Intent → Experience Status → Information Sufficiency → Fact Map → Image Vision Analysis → Writer Brief → Dynamic Outline → Title Candidates → Body → FAQ/hashtags → Human Quality → Revision → Best Result 순서의 writerPlan을 따르세요.",
     "메인 키워드는 primary entity를 우선하고, broad keyword는 서브키워드로만 자연스럽게 배치하세요.",
+    "experienceStatus가 visited/stayed/used/eaten/attended/purchased가 아니면 실제 방문·사용 후기처럼 쓰지 마세요.",
+    "imageAnalysis.mode가 label-only이면 라벨과 메모로 알 수 있는 내용만 쓰고, 사진 속 맛·가격·양·직원 응대·영업시간은 만들지 마세요.",
+    "informationSufficiency가 low이면 긴 글자수를 억지로 맞추지 말고 800~1400자 수준의 밀도 있는 원고로 끝내세요.",
     "맛집 글이면 첫 문장에 mainKeyword를 넣고, 첫 문단에는 mainKeyword 2~3회와 서브키워드 1개 이상을 넣으세요.",
     "맛집 글의 본문 문단 역할은 1) 가족여행 중 식사 장소를 찾게 된 상황 2) 상호와 메뉴를 알게 된 이유 3) 사진으로 본 메뉴 첫인상 4) 가족 식사 관점 5) 다녀온 뒤 기억에 남은 점 6) 과장 없는 마무리 순서로 겹치지 않게 작성하세요.",
     "맛집 제목 후보 5개는 의도를 분리하고, 식사 후보, 식사로 본 점, 정보 정리, 확인할 점 표현은 쓰지 말며, 대표 메뉴는 3개 이상 제목에 포함하세요.",

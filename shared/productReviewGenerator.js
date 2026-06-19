@@ -14,6 +14,7 @@ import {
   BLOG_WRITER_GUIDE_PATTERN,
   evaluateBlogWriterQuality
 } from "./blogWriterQuality.js";
+import { buildBlogWriterPipelineContext } from "./blogWriterPipeline.js";
 
 const DEFAULT_TARGET_LENGTH = 2500;
 const MIN_TARGET_CHAR_COUNT = 800;
@@ -186,7 +187,7 @@ const uniqueText = (items = []) =>
   Array.from(new Set(items.map(text).filter(Boolean)));
 
 const splitCommaList = (value = "", limit = 10) =>
-  text(value)
+  (Array.isArray(value) ? value.join(",") : text(value))
     .split(/[\n,/]+/u)
     .map((item) => item.trim())
     .filter(Boolean)
@@ -295,11 +296,41 @@ const hasSparseRestaurantFallbackInput = (form = {}, category = inferReviewCateg
   return memoCount <= 4 && imageCount <= 2 && productInfoLength < 160 && imageDetailLength < 140;
 };
 
+const hasSparseGeneralFallbackInput = (form = {}, category = inferReviewCategory(form)) => {
+  if (category === "restaurant" || category === "cafe") return hasSparseRestaurantFallbackInput(form, category);
+
+  const memoCount = splitMemoLines(form.experienceMemo || form.memory || form.memo).length;
+  const imageCount = getImageCount(form);
+  const productInfoLength = text(form.productInfoText || form.productInfo || "").length;
+  const imageDetailLength = getImageContextItems(form)
+    .map((item) => `${item.note || ""} ${item.ocrText || ""}`)
+    .join(" ")
+    .trim().length;
+
+  return memoCount <= 2 && imageCount <= 1 && productInfoLength < 140 && imageDetailLength < 90;
+};
+
+const hasMediumGeneralFallbackInput = (form = {}, category = inferReviewCategory(form)) => {
+  if (category === "restaurant" || category === "cafe") return false;
+
+  const memoCount = splitMemoLines(form.experienceMemo || form.memory || form.memo).length;
+  const imageCount = getImageCount(form);
+  const productInfoLength = text(form.productInfoText || form.productInfo || "").length;
+  const imageDetailLength = getImageContextItems(form)
+    .map((item) => `${item.note || ""} ${item.ocrText || ""}`)
+    .join(" ")
+    .trim().length;
+
+  return memoCount <= 3 && imageCount <= 1 && productInfoLength < 220 && imageDetailLength < 140;
+};
+
 const getTargetLengthSettings = (form = {}, category = inferReviewCategory(form)) => {
   const memoCount = splitMemoLines(form.experienceMemo).length;
   const imageCount = getImageCount(form);
   const sparseInput = memoCount <= 4 && imageCount === 0;
   const sparseFallbackInput = hasSparseRestaurantFallbackInput(form, category);
+  const sparseGeneralFallbackInput = hasSparseGeneralFallbackInput(form, category);
+  const mediumGeneralFallbackInput = hasMediumGeneralFallbackInput(form, category);
 
   if (hasExplicitNumericTargetLength(form)) {
     const requestedTarget = getExplicitTargetCharCount(form);
@@ -309,6 +340,26 @@ const getTargetLengthSettings = (form = {}, category = inferReviewCategory(form)
         target: 1700,
         min: 1200,
         max: 1900,
+        requestedTarget,
+        informationLimited: true
+      };
+    }
+    if (sparseGeneralFallbackInput && requestedTarget > 1600) {
+      return {
+        option: "custom",
+        target: 1400,
+        min: 800,
+        max: 1600,
+        requestedTarget,
+        informationLimited: true
+      };
+    }
+    if (mediumGeneralFallbackInput && requestedTarget > 2200) {
+      return {
+        option: "custom",
+        target: 1900,
+        min: 1400,
+        max: 2200,
         requestedTarget,
         informationLimited: true
       };
@@ -332,6 +383,14 @@ const getTargetLengthSettings = (form = {}, category = inferReviewCategory(form)
 
   if (sparseInput && (category === "restaurant" || category === "cafe")) {
     return { option, target: 1300, min: 1000, max: 1600 };
+  }
+
+  if (sparseGeneralFallbackInput) {
+    return { option, target: 1200, min: 800, max: 1400, informationLimited: true };
+  }
+
+  if (mediumGeneralFallbackInput) {
+    return { option, target: 1800, min: 1400, max: 2200, informationLimited: true };
   }
 
   if (sparseInput) return { option, target: 1400, min: 1000, max: 1800 };
@@ -4736,17 +4795,39 @@ const createProductReviewContentPackage = ({
   generationId = ""
 } = {}) => {
   const mainKeyword = getMainKeyword(form);
+  const subKeywords = getSubKeywords(form);
   const targetSettings = getTargetLengthSettings(form, category);
   const blogWriterAnalysis = analyzeBlogWritingInput(form);
+  const pipelineContext = buildBlogWriterPipelineContext(form, {
+    category,
+    analysis: {
+      ...blogWriterAnalysis,
+      mainKeyword,
+      subKeywords
+    }
+  });
 
   return {
     generationId,
+    primaryEntity: pipelineContext.primaryEntity,
     mainKeyword,
-    subKeywords: getSubKeywords(form),
+    subKeywords,
+    category,
+    searchIntent: pipelineContext.searchIntent,
+    experienceStatus: pipelineContext.experienceStatus,
+    informationSufficiency: pipelineContext.informationSufficiency,
+    factMap: pipelineContext.factMap,
+    imageAnalysis: pipelineContext.imageAnalysis,
+    writerPlan: pipelineContext.writerPlan,
     blogWriterAnalysis: {
       ...blogWriterAnalysis,
+      primaryEntity: pipelineContext.primaryEntity,
       mainKeyword,
-      subKeywords: getSubKeywords(form)
+      subKeywords,
+      category,
+      searchIntent: pipelineContext.searchIntent,
+      experienceStatus: pipelineContext.experienceStatus,
+      informationSufficiency: pipelineContext.informationSufficiency
     },
     targetCharCount: targetSettings.option === "custom" ? targetSettings.target : null,
     targetLengthOption: targetSettings.option,
@@ -4764,7 +4845,8 @@ const createProductReviewContentPackage = ({
       bodyLength: body.replace(/\s+/g, "").length,
       targetCharCount: targetSettings.target,
       requestedTargetCharCount: targetSettings.requestedTarget || null,
-      informationLimited: Boolean(targetSettings.informationLimited)
+      informationLimited: Boolean(targetSettings.informationLimited),
+      informationSufficiency: pipelineContext.informationSufficiency?.level || null
     },
     secondaryKeywords: createSecondaryKeywords(form, category),
     searchIntentAnalysis: createSearchIntentAnalysis(form, category),
@@ -4777,6 +4859,7 @@ const createProductReviewContentPackage = ({
     infoSummary,
     recommendedFor,
     faqItems,
+    faq: faqItems,
     hashtags,
     finalChecklist,
     qualityScore,
@@ -7052,8 +7135,17 @@ export function createProductReviewDraft(form = {}) {
     titleCandidates,
     finalTitle,
     selectedTitle: finalTitle,
+    primaryEntity: contentPackage.primaryEntity,
     mainKeyword: contentPackage.mainKeyword,
+    subKeywords: contentPackage.subKeywords,
+    searchIntent: contentPackage.searchIntent,
+    experienceStatus: contentPackage.experienceStatus,
+    informationSufficiency: contentPackage.informationSufficiency,
+    factMap: contentPackage.factMap,
+    imageAnalysis: contentPackage.imageAnalysis,
+    writerPlan: contentPackage.writerPlan,
     body,
+    faq: contentPackage.faqItems,
     hashtags,
     imageSuggestions,
     outline,
@@ -7075,7 +7167,8 @@ export function createProductReviewDraft(form = {}) {
       bodyLength: body.replace(/\s+/g, "").length,
       targetCharCount: contentPackage.targetLengthRange?.target || null,
       requestedTargetCharCount: contentPackage.requestedTargetCharCount || null,
-      informationLimited: Boolean(contentPackage.informationLimited)
+      informationLimited: Boolean(contentPackage.informationLimited),
+      informationSufficiency: contentPackage.informationSufficiency?.level || null
     }
   };
 }

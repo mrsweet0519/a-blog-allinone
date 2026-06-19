@@ -2,6 +2,7 @@ import { createProductReviewDraft } from "../../shared/productReviewGenerator.js
 import { buildBlogWriterPromptPayload } from "../../shared/blogWriterPrompt.js";
 import { evaluateBlogWriterQuality } from "../../shared/blogWriterQuality.js";
 import { createHumanQualityFactMap, evaluateHumanQuality } from "../../shared/blogWriterHumanQuality.js";
+import { buildBlogWriterPipelineContext, normalizeBlogWriterInput } from "../../shared/blogWriterPipeline.js";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const LLM_ENABLED_PATTERN = /^(1|true|yes|on)$/iu;
@@ -110,8 +111,13 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
       form: {
         productName: form.productName || form.topic || "",
         mainKeyword: form.mainKeyword || form.keyword || "",
+        subKeywords: form.subKeywords || draft.contentPackage?.subKeywords || [],
         memo: form.experienceMemo || form.memory || form.memo || "",
-        imageCount: form.imageCount || form.images?.length || form.photos?.length || 0
+        imageCount: form.imageCount || form.images?.length || form.photos?.length || 0,
+        experienceStatus: draft.contentPackage?.experienceStatus || form.experienceStatus || "",
+        informationSufficiency: draft.contentPackage?.informationSufficiency || form.informationSufficiency || null,
+        factMap: draft.contentPackage?.factMap || null,
+        imageAnalysis: draft.contentPackage?.imageAnalysis || form.imageAnalysis || null
       },
       draft: {
         title: draft.finalTitle || draft.selectedTitle || "",
@@ -154,8 +160,9 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}
   {
     role: "user",
     content: JSON.stringify({
-      factMap: createHumanQualityFactMap(form, form.imageAnalysis || form.imageContext || form.images || form.photoMetadata),
-      imageAnalysis: form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
+      factMap: draft.contentPackage?.factMap || createHumanQualityFactMap(form, form.imageAnalysis || form.imageContext || form.images || form.photoMetadata),
+      imageAnalysis: draft.contentPackage?.imageAnalysis || form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
+      writerPlan: draft.contentPackage?.writerPlan || null,
       currentDraft: {
         finalTitle: draft.finalTitle || draft.selectedTitle || "",
         titleCandidates: draft.titleCandidates || draft.titles || [],
@@ -199,16 +206,18 @@ const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form
 
 const evaluateDraftHumanQuality = ({ form = {}, draft = {}, engine = "fallback", llmJudge = null } = {}) => {
   const packageData = draft.contentPackage || {};
+  const factMap = packageData.factMap || createHumanQualityFactMap(form, packageData.imageAnalysis || form.imageAnalysis || form.imageContext || form.images || form.photoMetadata);
+  const imageAnalysis = packageData.imageAnalysis || form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null;
   return evaluateHumanQuality({
     title: draft.finalTitle || draft.selectedTitle || packageData.finalRecommendedTitle || "",
     titleCandidates: draft.titleCandidates || draft.titles || packageData.titleCandidates || [],
     body: draft.body || packageData.blogBody || "",
     faq: getDraftFaqItems(draft),
     hashtags: draft.hashtags || packageData.hashtags || [],
-    factMap: createHumanQualityFactMap(form, form.imageAnalysis || form.imageContext || form.images || form.photoMetadata),
-    imageAnalysis: form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
+    factMap,
+    imageAnalysis,
     category: draft.category || packageData.blogWriterAnalysis?.category || "",
-    visitStatus: packageData.blogWriterAnalysis?.visitStatus || "",
+    visitStatus: packageData.experienceStatus || packageData.blogWriterAnalysis?.visitStatus || "",
     mainKeyword: draft.mainKeyword || packageData.mainKeyword || "",
     subKeywords: packageData.subKeywords || [],
     requestedTargetCharCount: packageData.requestedTargetCharCount || form.targetCharCount || form.targetLength || 2500,
@@ -342,20 +351,43 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     effectiveTargetCharCount: targetCharCount,
     engine: "llm"
   });
+  const pipelineContext = buildBlogWriterPipelineContext(form, {
+    category: fallbackDraft.category,
+    analysis: {
+      ...(fallbackPackage.blogWriterAnalysis || {}),
+      mainKeyword,
+      subKeywords
+    },
+    factMap: fallbackPackage.factMap,
+    imageAnalysis: fallbackPackage.imageAnalysis,
+    experienceStatus: fallbackPackage.experienceStatus,
+    informationSufficiency: fallbackPackage.informationSufficiency,
+    searchIntent: fallbackPackage.searchIntent,
+    writerPlan: fallbackPackage.writerPlan
+  });
 
   const contentPackage = {
     ...fallbackPackage,
+    primaryEntity: pipelineContext.primaryEntity,
     finalRecommendedTitle: finalTitle,
     titleCandidates,
     mainKeyword,
     subKeywords,
+    category: fallbackDraft.category,
+    searchIntent: pipelineContext.searchIntent,
+    experienceStatus: pipelineContext.experienceStatus,
+    informationSufficiency: pipelineContext.informationSufficiency,
+    factMap: pipelineContext.factMap,
+    imageAnalysis: pipelineContext.imageAnalysis,
+    writerPlan: pipelineContext.writerPlan,
     blogBody: body,
     engine: "llm",
     actualBodyLength: bodyLength,
     summary: {
       engine: "llm",
       bodyLength,
-      targetCharCount
+      targetCharCount,
+      informationSufficiency: pipelineContext.informationSufficiency?.level || null
     },
     faqItems,
     hashtags,
@@ -378,13 +410,24 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     titles: titleCandidates,
     body,
     bodyLength,
+    primaryEntity: contentPackage.primaryEntity,
     mainKeyword,
+    subKeywords,
+    category: fallbackDraft.category,
+    searchIntent: contentPackage.searchIntent,
+    experienceStatus: contentPackage.experienceStatus,
+    informationSufficiency: contentPackage.informationSufficiency,
+    factMap: contentPackage.factMap,
+    imageAnalysis: contentPackage.imageAnalysis,
+    writerPlan: contentPackage.writerPlan,
+    faq: faqItems,
     hashtags,
     engine: "llm",
     summary: {
       engine: "llm",
       bodyLength,
-      targetCharCount
+      targetCharCount,
+      informationSufficiency: pipelineContext.informationSufficiency?.level || null
     },
     contentPackage,
     qualityScore,
@@ -440,7 +483,7 @@ const hasUsableLlmDraft = (draft = {}) =>
   Boolean(String(draft.finalTitle || draft.selectedTitle || "").trim() || normalizeList(draft.titleCandidates || draft.titles).length > 0);
 
 export async function onRequestPost(context) {
-  const form = await parseJsonRequest(context.request);
+  const form = normalizeBlogWriterInput(await parseJsonRequest(context.request));
   const fallbackDraft = createProductReviewDraft(form);
   const promptPayload = buildBlogWriterPromptPayload({
     form,

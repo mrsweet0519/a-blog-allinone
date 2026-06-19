@@ -118,14 +118,17 @@ const UNSUPPORTED_CLAIM_PATTERNS = [
 const VISIT_CUE_PATTERN = /다녀|방문|먹어|먹었|갔다|갔|들렀|들른|사용|써봤|수강|듣고|좋았|느꼈|기억/u;
 
 const normalizeFactMap = (factMap = {}, fallbackText = "") => {
+  const factValues = [].concat(factMap.facts || []).map((fact) =>
+    typeof fact === "object" && fact !== null ? fact.value || fact.text || fact.label || "" : fact
+  );
   const supported = unique([
     ...[].concat(factMap.supported || []),
-    ...[].concat(factMap.facts || []),
+    ...factValues,
     factMap.memoText,
     fallbackText
   ]);
   const visuallySupported = unique([].concat(factMap.visuallySupported || [], factMap.imageFacts || []));
-  const denied = unique([].concat(factMap.denied || [], factMap.unsupported || []));
+  const denied = unique([].concat(factMap.denied || [], factMap.unsupported || [], factMap.unsupportedFields || []));
   const sourceText = `${supported.join("\n")}\n${visuallySupported.join("\n")}`;
   return { supported, visuallySupported, denied, sourceText };
 };
@@ -466,6 +469,7 @@ export const createHumanQualityFactMap = (form = {}, imageAnalysis = null) => {
   const memoText = text(form.experienceMemo || form.memory || form.memo || "");
   const topic = text(form.productName || form.topic || form.title || "");
   const mainKeyword = text(form.mainKeyword || form.keyword || "");
+  const experienceStatus = text(form.experienceStatus || form.contentPackage?.experienceStatus || "");
   const imageFacts = [];
   const imageItems = Array.isArray(imageAnalysis)
     ? imageAnalysis
@@ -481,10 +485,25 @@ export const createHumanQualityFactMap = (form = {}, imageAnalysis = null) => {
     if (note) imageFacts.push(note);
   });
   return {
+    facts: unique([topic, mainKeyword, memoText]).map((value) => ({
+      field: "input",
+      value,
+      source: "request",
+      confidence: 0.75,
+      allowedAsExperience: VISIT_CUE_PATTERN.test(memoText)
+    })),
     supported: unique([topic, mainKeyword, memoText]),
     visuallySupported: unique(imageFacts),
+    unsupportedFields: ["exactPrice", "businessHours", "parkingEase", "waitingTime", "staffResponse", "tasteGuarantee", "quantityGuarantee"],
     memoText,
-    visitStatus: VISIT_CUE_PATTERN.test(memoText) ? "visited" : "unknown"
+    experienceStatus: experienceStatus || (VISIT_CUE_PATTERN.test(memoText) ? "visited" : "unknown"),
+    visitStatus: experienceStatus
+      ? ["visited", "stayed", "used", "eaten", "attended", "purchased"].includes(experienceStatus)
+        ? "visited"
+        : "unknown"
+      : VISIT_CUE_PATTERN.test(memoText)
+        ? "visited"
+        : "unknown"
   };
 };
 
