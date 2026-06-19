@@ -25,6 +25,10 @@ import {
   getCaptureOcrConfidenceStatus
 } from "../shared/commentReplyGenerator.js";
 import { analyzeBlogWritingInput } from "../shared/blogWriterCategory.js";
+import {
+  evaluateHumanQuality,
+  selectBestHumanQualityAttempt
+} from "../shared/blogWriterHumanQuality.js";
 import { buildBlogWriterPromptPayload } from "../shared/blogWriterPrompt.js";
 import { evaluateBlogWriterQuality } from "../shared/blogWriterQuality.js";
 import {
@@ -856,6 +860,10 @@ assert.ok(blogWriterApiSource.includes("BLOG_WRITER_LLM_ENABLED"));
 assert.ok(blogWriterApiSource.includes("OPENAI_API_KEY"));
 assert.ok(blogWriterApiSource.includes("static-fallback"));
 assert.ok(blogWriterApiSource.includes("evaluateBlogWriterQuality"));
+assert.ok(blogWriterApiSource.includes("evaluateHumanQuality"));
+assert.ok(blogWriterApiSource.includes("BLOG_WRITER_LLM_JUDGE_ENABLED"));
+assert.ok(blogWriterApiSource.includes("BLOG_WRITER_LLM_REVISION_ENABLED"));
+assert.ok(blogWriterApiSource.includes("buildHumanJudgeMessages"));
 assert.ok(blogWriterApiSource.includes('engine: "llm"'));
 assert.ok(blogWriterApiSource.includes('engine: "fallback"'));
 assert.ok(blogWriterApiSource.includes("server-key-missing"));
@@ -1052,6 +1060,101 @@ const createGenerateBlogRequest = (form, env = {}) =>
 
 const readJsonResponse = async (response) => JSON.parse(await response.text());
 
+const loadBlogQualityFixture = (name) =>
+  JSON.parse(readFileSync(new URL(`./fixtures/blog-quality/${name}.json`, import.meta.url), "utf8"));
+
+const evaluateBlogQualityFixture = (fixture, overrides = {}) =>
+  evaluateHumanQuality({
+    title: fixture.title,
+    titleCandidates: fixture.titleCandidates,
+    body: fixture.body,
+    faq: fixture.faq,
+    hashtags: fixture.hashtags || [],
+    factMap: fixture.factMap,
+    imageAnalysis: fixture.factMap?.visuallySupported || null,
+    category: fixture.category,
+    visitStatus: fixture.factMap?.visitStatus,
+    mainKeyword: fixture.mainKeyword,
+    subKeywords: fixture.subKeywords,
+    requestedTargetCharCount: 2500,
+    effectiveTargetCharCount: 1800,
+    engine: overrides.engine || "fallback",
+    llmJudge: overrides.llmJudge
+  });
+
+const badQualityFixtures = [
+  "bad-restaurant-generic",
+  "bad-meta-guidance",
+  "bad-unsupported-claims",
+  "bad-duplicate-paragraphs"
+].map(loadBlogQualityFixture);
+
+for (const fixture of badQualityFixtures) {
+  const result = evaluateBlogQualityFixture(fixture);
+  assert.ok(
+    result.score <= fixture.expectedMaxScore,
+    `${fixture.name} expected <= ${fixture.expectedMaxScore}, got ${result.score}`
+  );
+  assert.equal(result.publishReady, fixture.expectedPublishReady);
+  for (const code of fixture.expectedIssueCodes || []) {
+    assert.ok(result.issues.some((issue) => issue.code === code), `${fixture.name} missing issue ${code}`);
+  }
+}
+
+const sparseHonestFixture = loadBlogQualityFixture("sparse-but-honest");
+const sparseHonestQuality = evaluateBlogQualityFixture(sparseHonestFixture);
+assert.ok(sparseHonestQuality.score >= sparseHonestFixture.expectedMinScore);
+assert.equal(sparseHonestQuality.publishReady, false);
+assert.equal(sparseHonestQuality.judgeEngine, "deterministic");
+assert.ok(sparseHonestQuality.score <= 89);
+
+const highQualityFixtures = [
+  "high-quality-restaurant",
+  "high-quality-product",
+  "high-quality-education"
+].map(loadBlogQualityFixture);
+for (const fixture of highQualityFixtures) {
+  const deterministicOnly = evaluateBlogQualityFixture(fixture, { engine: "llm" });
+  assert.equal(deterministicOnly.judgeEngine, "deterministic");
+  assert.ok(deterministicOnly.score <= 89);
+  assert.equal(deterministicOnly.publishReady, false);
+
+  const withLlmJudge = evaluateBlogQualityFixture(fixture, {
+    engine: "llm",
+    llmJudge: fixture.llmJudge
+  });
+  assert.equal(withLlmJudge.judgeEngine, "llm");
+  assert.ok(withLlmJudge.score >= fixture.expectedMinScore, `${fixture.name} score ${withLlmJudge.score}`);
+  assert.equal(withLlmJudge.publishReady, fixture.expectedPublishReady);
+}
+
+const badYukjjamFixture = loadBlogQualityFixture("bad-restaurant-generic");
+const badYukjjamQuality = evaluateBlogQualityFixture(badYukjjamFixture);
+assert.ok(badYukjjamQuality.score <= 75);
+assert.equal(badYukjjamQuality.publishReady, false);
+assert.ok(badYukjjamQuality.issues.some((issue) => issue.code === "GENERIC_FILLER"));
+assert.ok(badYukjjamQuality.issues.some((issue) => issue.code === "META_GUIDANCE"));
+assert.ok(badYukjjamQuality.issues.some((issue) => issue.code === "TITLE_AWKWARD"));
+
+const bestQualityAttempt = selectBestHumanQualityAttempt([
+  { title: badYukjjamFixture.title, body: badYukjjamFixture.body, mainKeyword: badYukjjamFixture.mainKeyword, category: "restaurant" },
+  {
+    title: highQualityFixtures[0].title,
+    titleCandidates: highQualityFixtures[0].titleCandidates,
+    body: highQualityFixtures[0].body,
+    faq: highQualityFixtures[0].faq,
+    factMap: highQualityFixtures[0].factMap,
+    imageAnalysis: highQualityFixtures[0].factMap.visuallySupported,
+    category: highQualityFixtures[0].category,
+    mainKeyword: highQualityFixtures[0].mainKeyword,
+    subKeywords: highQualityFixtures[0].subKeywords,
+    engine: "llm",
+    llmJudge: highQualityFixtures[0].llmJudge
+  }
+]);
+assert.equal(bestQualityAttempt.humanQuality.publishReady, true);
+assert.ok(bestQualityAttempt.humanQuality.score >= 95);
+
 const routeSampleForm = {
   productName: "육짬 강화도본점 맛집 후기",
   topic: "육짬 강화도본점 맛집 후기",
@@ -1140,6 +1243,159 @@ try {
   assert.equal(routeLlmResult.summary.bodyLength, routeLlmResult.bodyLength);
   assert.ok(routeLlmResult.contentPackage.blogWriterQuality.score >= 95);
   assert.ok(!JSON.stringify(routeLlmResult).includes("unit-test-key"));
+
+  let judgeFetchCount = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    judgeFetchCount += 1;
+    assert.equal(url, "https://api.openai.com/v1/chat/completions");
+    const requestBody = JSON.parse(init.body);
+    assert.equal(requestBody.model, "unit-model");
+    assert.ok(String(init.headers.authorization).includes("unit-test-key"));
+    assert.ok(!JSON.stringify(requestBody).includes("OPENAI_API_KEY"));
+
+    const content =
+      judgeFetchCount === 1
+        ? {
+            finalTitle: routeFallbackDraft.finalTitle,
+            titleCandidates: routeFallbackDraft.titleCandidates,
+            mainKeyword: routeFallbackDraft.mainKeyword,
+            subKeywords: routeFallbackDraft.contentPackage.subKeywords,
+            body: routeFallbackDraft.body,
+            faqItems: routeFallbackDraft.contentPackage.faqItems,
+            hashtags: routeFallbackDraft.hashtags
+          }
+        : {
+            score: 96,
+            publishReady: true,
+            scores: {
+              titleQuality: 10,
+              openingQuality: 10,
+              factualGrounding: 15,
+              specificity: 14,
+              humanNaturalness: 14,
+              narrativeCoherence: 10,
+              paragraphValue: 10,
+              keywordNaturalness: 5,
+              imageGrounding: 4,
+              readerUtility: 4
+            },
+            issues: [],
+            revisionInstructions: []
+          };
+
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(content)
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  const routeLlmJudgeResult = await readJsonResponse(
+    await createGenerateBlogRequest(routeSampleForm, {
+      BLOG_WRITER_LLM_ENABLED: "true",
+      BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+      OPENAI_API_KEY: "unit-test-key",
+      OPENAI_MODEL: "unit-model"
+    })
+  );
+  assert.equal(judgeFetchCount, 2);
+  assert.equal(routeLlmJudgeResult.judgeEngine, "llm");
+  assert.equal(routeLlmJudgeResult.publishReady, true);
+  assert.ok(routeLlmJudgeResult.qualityScore >= 95);
+  assert.equal(routeLlmJudgeResult.qualityAttempts, 1);
+  assert.equal(routeLlmJudgeResult.llm.judgeUsed, true);
+  assert.equal(routeLlmJudgeResult.contentPackage.humanQuality.judgeEngine, "llm");
+
+  let revisionFetchCount = 0;
+  const highRestaurantFixture = loadBlogQualityFixture("high-quality-restaurant");
+  globalThis.fetch = async (url, init = {}) => {
+    revisionFetchCount += 1;
+    assert.equal(url, "https://api.openai.com/v1/chat/completions");
+    const contentByCall = [
+      {
+        finalTitle: badYukjjamFixture.title,
+        titleCandidates: badYukjjamFixture.titleCandidates,
+        mainKeyword: routeFallbackDraft.mainKeyword,
+        subKeywords: routeFallbackDraft.contentPackage.subKeywords,
+        body: badYukjjamFixture.body,
+        faqItems: badYukjjamFixture.faq,
+        hashtags: routeFallbackDraft.hashtags
+      },
+      {
+        score: 72,
+        publishReady: false,
+        scores: {
+          titleQuality: 4,
+          openingQuality: 5,
+          factualGrounding: 12,
+          specificity: 5,
+          humanNaturalness: 5,
+          narrativeCoherence: 6,
+          paragraphValue: 4,
+          keywordNaturalness: 3,
+          imageGrounding: 2,
+          readerUtility: 3
+        },
+        issues: [{ code: "GENERIC_FILLER", severity: "high", evidence: "식사 후보", message: "일반론 반복", revisionInstruction: "구체적인 방문 상황으로 바꾸세요." }],
+        revisionInstructions: ["일반론을 줄이고 사진 정보를 구체화하세요."]
+      },
+      {
+        finalTitle: highRestaurantFixture.title,
+        titleCandidates: highRestaurantFixture.titleCandidates,
+        mainKeyword: routeFallbackDraft.mainKeyword,
+        subKeywords: routeFallbackDraft.contentPackage.subKeywords,
+        body: highRestaurantFixture.body,
+        faqItems: highRestaurantFixture.faq,
+        hashtags: routeFallbackDraft.hashtags
+      },
+      {
+        score: 97,
+        publishReady: true,
+        scores: highRestaurantFixture.llmJudge.scores,
+        issues: [],
+        revisionInstructions: []
+      }
+    ];
+
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(contentByCall[revisionFetchCount - 1])
+            }
+          }
+        ]
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      }
+    );
+  };
+  const routeLlmRevisionResult = await readJsonResponse(
+    await createGenerateBlogRequest(routeSampleForm, {
+      BLOG_WRITER_LLM_ENABLED: "true",
+      BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+      BLOG_WRITER_LLM_REVISION_ENABLED: "true",
+      OPENAI_API_KEY: "unit-test-key",
+      OPENAI_MODEL: "unit-model"
+    })
+  );
+  assert.equal(revisionFetchCount, 4);
+  assert.equal(routeLlmRevisionResult.qualityAttempts, 2);
+  assert.equal(routeLlmRevisionResult.publishReady, true);
+  assert.ok(routeLlmRevisionResult.qualityScore >= 95);
+  assert.equal(routeLlmRevisionResult.finalTitle, highRestaurantFixture.title);
 
   globalThis.fetch = async () => {
     throw new Error("network unavailable");

@@ -1,0 +1,18 @@
+{
+  "name": "bad-unsupported-claims",
+  "category": "restaurant",
+  "mainKeyword": "테스트 식당",
+  "subKeywords": ["지역맛집"],
+  "title": "테스트 식당 방문 후기",
+  "titleCandidates": ["테스트 식당 방문 후기"],
+  "body": "테스트 식당은 가족과 방문하기 좋은 곳이었어요.\n\n좋았던 점\n\n직원 친절이 기억에 남았고 주차가 편했어요. 양이 많아서 가격도 만족스러웠고 웨이팅 없음이라 편하게 먹었어요.\n\n마무리\n\n다시 가고 싶은 곳으로 남았습니다.",
+  "faq": [],
+  "factMap": {
+    "supported": ["테스트 식당", "지역맛집"],
+    "memoText": "메뉴가 궁금했음",
+    "visitStatus": "unknown"
+  },
+  "expectedMaxScore": 55,
+  "expectedPublishReady": false,
+  "expectedIssueCodes": ["UNSUPPORTED_CLAIM"]
+}

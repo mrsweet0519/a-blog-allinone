@@ -1,0 +1,17 @@
+{
+  "name": "bad-duplicate-paragraphs",
+  "category": "restaurant",
+  "mainKeyword": "반복 식당",
+  "subKeywords": ["지역맛집"],
+  "title": "반복 식당 가족 식사 후기",
+  "titleCandidates": ["반복 식당 가족 식사 후기"],
+  "body": "반복 식당은 가족 식사로 들른 곳이에요.\n\n가족 식사 기준\n\n대표 메뉴가 분명하면 가족이 함께 고르기 쉬워요. 식사 시간이 부담스럽지 않은지도 함께 보게 돼요.\n\n가족 식사 기준\n\n대표 메뉴가 분명하면 가족이 함께 고르기 쉬워요. 식사 시간이 부담스럽지 않은지도 함께 보게 돼요.\n\n마무리\n\n가족 식사로 참고하기 좋았습니다.",
+  "faq": [],
+  "factMap": {
+    "supported": ["반복 식당", "지역맛집", "가족 식사"],
+    "visitStatus": "visited"
+  },
+  "expectedMaxScore": 70,
+  "expectedPublishReady": false,
+  "expectedIssueCodes": ["DUPLICATE_PARAGRAPH"]
+}

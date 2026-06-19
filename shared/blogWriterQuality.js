@@ -1,3 +1,5 @@
+import { createHumanQualityFactMap, evaluateHumanQuality } from "./blogWriterHumanQuality.js";
+
 const text = (value) => String(value ?? "").trim();
 
 const compact = (value) =>
@@ -280,6 +282,22 @@ export const evaluateBlogWriterQuality = ({
   const issues = checks.filter((check) => !check.passed);
   const score = Math.max(0, Math.min(100, 100 - issues.reduce((total, check) => total + check.penalty, 0)));
   const criticalFailed = issues.some((check) => check.critical);
+  const humanQuality = evaluateHumanQuality({
+    title: selectedTitle,
+    titleCandidates: titles,
+    body: normalizedBody,
+    faq: faqItems,
+    hashtags,
+    factMap: createHumanQualityFactMap(form),
+    imageAnalysis: form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
+    category,
+    visitStatus: createHumanQualityFactMap(form).visitStatus,
+    mainKeyword,
+    subKeywords,
+    requestedTargetCharCount: form.requestedTargetCharCount || form.targetCharCount || targetCharCount,
+    effectiveTargetCharCount: targetCharCount,
+    engine: form.engine || "fallback"
+  });
 
   return {
     score,
@@ -289,6 +307,7 @@ export const evaluateBlogWriterQuality = ({
     duplicateParagraphs,
     keywordCount,
     firstParagraph,
-    firstSentence
+    firstSentence,
+    humanQuality
   };
 };

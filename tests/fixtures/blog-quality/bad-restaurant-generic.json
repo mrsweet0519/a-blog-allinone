@@ -1,0 +1,26 @@
+{
+  "name": "bad-restaurant-generic",
+  "category": "restaurant",
+  "mainKeyword": "육짬 강화도본점",
+  "subKeywords": ["강화도맛집", "갈낙짬뽕"],
+  "title": "육짬 강화도본점 갈낙짬뽕 후기 식사하며 들른 곳 기록",
+  "titleCandidates": [
+    "육짬 강화도본점 갈낙짬뽕 후기 식사하며 들른 곳 기록",
+    "육짬 강화도본점 식사로 본 점",
+    "육짬 강화도본점 정보 정리",
+    "육짬 강화도본점 후보로 본 점",
+    "육짬 강화도본점 이용 전 확인할 점"
+  ],
+  "body": "육짬 강화도본점은 식사 후보로 보기 좋은 곳이에요. 그런 흐름에서 한 번 살펴볼 만했어요.\n\n식사 흐름\n\n식사 장소를 고를 때는 이런 기준이 중요해요. 대표 메뉴가 분명하면 고르기 쉬워요.\n\n식사 후보 기준\n\n식사 자리 흐름 안에서 부담 없이 떠올려보기 좋았어요. 메뉴가 분명하면 같이 간 사람이 편한지도 보게 돼요.\n\n사진 삽입\n\n글을 읽는 사람도 메뉴 구성을 자연스럽게 떠올릴 수 있어요.\n\n마무리\n\n광고처럼 밀어붙이는 글보다 편하게 정리되는 느낌이었어요.",
+  "faq": [
+    { "question": "방문 전 무엇을 확인하나요?", "answer": "방문 전 확인이 필요합니다." }
+  ],
+  "factMap": {
+    "supported": ["육짬 강화도본점", "강화도맛집", "갈낙짬뽕"],
+    "memoText": "강화도 가족여행중 다녀와서 좋았음 갈낙짬뽕이 궁금했음",
+    "visitStatus": "visited"
+  },
+  "expectedMaxScore": 75,
+  "expectedPublishReady": false,
+  "expectedIssueCodes": ["TITLE_AWKWARD", "META_GUIDANCE", "GENERIC_FILLER"]
+}

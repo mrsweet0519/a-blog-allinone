@@ -3790,7 +3790,8 @@ const assessBlogWriterQuality = ({
     score,
     issues,
     checks,
-    blogWriterQuality
+    blogWriterQuality,
+    humanQuality: blogWriterQuality.humanQuality
   };
 };
 
@@ -4728,6 +4729,10 @@ const createProductReviewContentPackage = ({
   qualityIssues = [],
   qualityChecks = [],
   blogWriterQuality = null,
+  humanQuality = null,
+  publishReady = false,
+  judgeEngine = "deterministic",
+  qualityAttempts = 1,
   generationId = ""
 } = {}) => {
   const mainKeyword = getMainKeyword(form);
@@ -4778,6 +4783,10 @@ const createProductReviewContentPackage = ({
     qualityIssues,
     qualityChecks,
     blogWriterQuality,
+    humanQuality,
+    publishReady,
+    judgeEngine,
+    qualityAttempts,
     searchKeywords,
     sponsorshipCheck: getDetectedSponsorshipType(form) || ""
   };
@@ -7007,6 +7016,7 @@ export function createProductReviewDraft(form = {}) {
   }
 
   const closingParagraph = extractClosingParagraph(baseBody);
+  const humanQuality = quality.humanQuality || quality.blogWriterQuality?.humanQuality || null;
   const contentPackage = createProductReviewContentPackage({
     form,
     category,
@@ -7025,6 +7035,10 @@ export function createProductReviewDraft(form = {}) {
     qualityIssues: quality.issues,
     qualityChecks: quality.checks,
     blogWriterQuality: quality.blogWriterQuality,
+    humanQuality,
+    publishReady: Boolean(humanQuality?.publishReady),
+    judgeEngine: humanQuality?.judgeEngine || "deterministic",
+    qualityAttempts: 1,
     generationId
   });
   const titleCandidates = contentPackage.titleCandidates || titles.slice(0, 5);
@@ -7051,6 +7065,10 @@ export function createProductReviewDraft(form = {}) {
     qualityIssues: quality.issues,
     qualityChecks: quality.checks,
     blogWriterQuality: quality.blogWriterQuality,
+    humanQuality,
+    publishReady: Boolean(humanQuality?.publishReady),
+    judgeEngine: humanQuality?.judgeEngine || "deterministic",
+    qualityAttempts: 1,
     bodyLength: body.replace(/\s+/g, "").length,
     summary: {
       engine: "fallback",

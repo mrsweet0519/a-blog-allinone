@@ -1,0 +1,42 @@
+{
+  "name": "high-quality-product",
+  "category": "product",
+  "mainKeyword": "에어젤 드라이샴푸",
+  "subKeywords": ["운동 후", "앞머리", "휴대"],
+  "title": "에어젤 드라이샴푸 후기 운동 후 앞머리 정리에 쓴 제품",
+  "titleCandidates": [
+    "에어젤 드라이샴푸 후기 운동 후 앞머리 정리에 쓴 제품",
+    "운동 후 쓰기 좋았던 에어젤 드라이샴푸 사용 후기",
+    "에어젤 드라이샴푸 휴대하며 써본 앞머리 관리 후기",
+    "에어젤 드라이샴푸 보송한 사용감이 궁금했던 이유",
+    "에어젤 드라이샴푸 구매 전 사용 상황별로 본 후기"
+  ],
+  "body": "에어젤 드라이샴푸는 운동 후 앞머리와 정수리가 신경 쓰일 때 써본 제품이에요. 머리를 바로 감기 어려운 날에 가볍게 정리할 수 있는지 궁금했고, 휴대가 편한지도 같이 보게 됐습니다.\n\n사용한 상황\n\n운동이 끝난 뒤에는 앞머리 쪽이 먼저 가라앉아 보여요. 이때 에어젤 드라이샴푸를 꺼내 쓰면 물 없이 정리하는 제품인지 바로 이해하기 쉬웠습니다.\n\n느껴진 점\n\n사용감은 무겁게 남는 쪽보다 빠르게 정리하는 보조 제품에 가까웠어요. 향은 강하게 남는다는 느낌보다 무난하게 지나가는 쪽으로 기억했습니다.\n\n휴대성\n\n가방에 넣어두고 필요한 순간 꺼내 쓰는 상황과 잘 맞았습니다. 매일 긴 시간을 들이는 제품이라기보다 운동 후나 외출 중 짧게 정리하고 싶을 때 떠올리기 좋았어요.\n\n마무리\n\n에어젤 드라이샴푸는 효과를 과장하기보다 사용 상황이 분명한 제품으로 보는 편이 맞았습니다. 운동 후 앞머리와 정수리 정리가 고민인 날에 참고하기 좋은 후기입니다.",
+  "faq": [
+    { "question": "어떤 상황에서 썼나요?", "answer": "운동 후 앞머리와 정수리가 신경 쓰일 때 사용했습니다." }
+  ],
+  "factMap": {
+    "supported": ["운동 후 사용", "앞머리와 정수리 보송", "휴대 편함", "향 무난함"],
+    "memoText": "운동 후 사용 앞머리와 정수리 보송 휴대 편함 향 무난함",
+    "visitStatus": "used"
+  },
+  "llmJudge": {
+    "score": 97,
+    "publishReady": true,
+    "scores": {
+      "titleQuality": 10,
+      "openingQuality": 10,
+      "factualGrounding": 15,
+      "specificity": 14,
+      "humanNaturalness": 15,
+      "narrativeCoherence": 9,
+      "paragraphValue": 10,
+      "keywordNaturalness": 5,
+      "imageGrounding": 4,
+      "readerUtility": 5
+    },
+    "issues": []
+  },
+  "expectedMinScore": 95,
+  "expectedPublishReady": true
+}
