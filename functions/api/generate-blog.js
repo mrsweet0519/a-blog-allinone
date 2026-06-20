@@ -55,7 +55,7 @@ const compact = (value = "") =>
 
 const detectPrimaryMenu = (form = {}, subKeywords = []) => {
   const source = `${form.productName || form.topic || ""} ${form.experienceMemo || form.memory || form.memo || ""} ${subKeywords.join(" ")}`;
-  return source.match(/갈낙짬뽕|짬뽕|탕수육|파스타|스테이크|커피|브런치|디저트/u)?.[0] || "";
+  return source.match(/[가-힣A-Za-z0-9]+(?:짬뽕|탕|국밥|파스타|스테이크|커피|브런치|디저트|냉면|칼국수|라멘|초밥|피자|버거)/u)?.[0] || "";
 };
 
 const normalizeList = (value, fallback = []) => {
@@ -368,6 +368,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
 
   const contentPackage = {
     ...fallbackPackage,
+    standardInput: pipelineContext.standardInput,
     primaryEntity: pipelineContext.primaryEntity,
     finalRecommendedTitle: finalTitle,
     titleCandidates,
@@ -383,9 +384,11 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     blogBody: body,
     engine: "llm",
     actualBodyLength: bodyLength,
+    actualBodyCharCount: Array.from(String(body || "")).length,
     summary: {
       engine: "llm",
       bodyLength,
+      actualBodyCharCount: Array.from(String(body || "")).length,
       targetCharCount,
       informationSufficiency: pipelineContext.informationSufficiency?.level || null
     },
@@ -410,6 +413,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     titles: titleCandidates,
     body,
     bodyLength,
+    actualBodyCharCount: Array.from(String(body || "")).length,
     primaryEntity: contentPackage.primaryEntity,
     mainKeyword,
     subKeywords,
@@ -426,6 +430,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     summary: {
       engine: "llm",
       bodyLength,
+      actualBodyCharCount: Array.from(String(body || "")).length,
       targetCharCount,
       informationSufficiency: pipelineContext.informationSufficiency?.level || null
     },
@@ -452,6 +457,7 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
       ...(decorated.summary || {}),
       engine: "fallback",
       bodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
+      actualBodyCharCount: Array.from(String(decorated.body || "")).length,
       targetCharCount: decorated.contentPackage?.targetLengthRange?.target || decorated.contentPackage?.targetCharCount || null,
       judgeEngine: humanQuality.judgeEngine,
       publishReady: humanQuality.publishReady
@@ -461,10 +467,12 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
           ...decorated.contentPackage,
           engine: "fallback",
           actualBodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
+          actualBodyCharCount: Array.from(String(decorated.body || "")).length,
           summary: {
             ...(decorated.contentPackage.summary || {}),
             engine: "fallback",
             bodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
+            actualBodyCharCount: Array.from(String(decorated.body || "")).length,
             targetCharCount: decorated.contentPackage.targetLengthRange?.target || decorated.contentPackage.targetCharCount || null,
             judgeEngine: humanQuality.judgeEngine,
             publishReady: humanQuality.publishReady

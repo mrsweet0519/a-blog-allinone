@@ -5,6 +5,15 @@ const compact = (value) =>
     .replace(/\s+/g, "")
     .replace(/[^\p{L}\p{N}_-]/gu, "");
 
+const hasFinalConsonant = (value = "") => {
+  const chars = Array.from(compact(value));
+  const last = chars.at(-1);
+  if (!last) return false;
+  const code = last.charCodeAt(0);
+  if (code < 0xac00 || code > 0xd7a3) return /[0-9]/u.test(last);
+  return (code - 0xac00) % 28 !== 0;
+};
+
 const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const countOccurrences = (value = "", needle = "") => {
@@ -116,6 +125,8 @@ const UNSUPPORTED_CLAIM_PATTERNS = [
 ];
 
 const VISIT_CUE_PATTERN = /다녀|방문|먹어|먹었|갔다|갔|들렀|들른|사용|써봤|수강|듣고|좋았|느꼈|기억/u;
+const PLACEHOLDER_PATTERN =
+  /해당\s*(?:제품|서비스|업체|장소|메뉴|상품)|대표\s*메뉴(?![가-힣A-Za-z0-9]*(?:\s*사진|\s*메뉴|인|으로|가|는|를|을))|사용자\s*메모|제공된\s*정보|확인\s*필요로\s*남깁/u;
 
 const normalizeFactMap = (factMap = {}, fallbackText = "") => {
   const factValues = [].concat(factMap.facts || []).map((fact) =>
@@ -242,6 +253,7 @@ export const evaluateHumanQuality = ({
   const genericCount = countGenericParagraphs(contentParagraphs);
   const genericRatio = contentParagraphs.length > 0 ? genericCount / contentParagraphs.length : 0;
   const guideLeak = HUMAN_GUIDE_PATTERN.test(`${normalizedTitle}\n${normalizedBody}`);
+  const placeholderLeak = PLACEHOLDER_PATTERN.test(`${normalizedTitle}\n${normalizedBody}`);
   const awkwardTitle = AWKWARD_TITLE_PATTERN.test(normalizedTitle) || titles.some((item) => AWKWARD_TITLE_PATTERN.test(item));
   const awkwardOpening = AWKWARD_OPENING_PATTERN.test(firstParagraph);
   const repeatedNgramRatio = getRepeatedNgramRatio(normalizedBody);
@@ -257,6 +269,15 @@ export const evaluateHumanQuality = ({
   const fakeVisualClaim = !hasImageInput && photoMarkers > 0 && /사진에서는|사진에서\s*보|가까이\s*찍힌|또렷하게\s*보/u.test(normalizedBody) && !/note|라벨/u.test(String(imageAnalysis || ""));
   const allFaqCheckOnly =
     faqList.length > 0 && faqList.every((item) => /확인\s*필요|\[확인 필요\]|확인해야/u.test(`${item.question || ""} ${item.answer || ""}`));
+  const primaryEntityMissing = Boolean(mainKeyword && (!normalizedTitle.includes(mainKeyword) || !normalizedBody.includes(mainKeyword)));
+  const josaError = (() => {
+    if (!mainKeyword) return false;
+    const escaped = escapeRegExp(mainKeyword);
+    const badPatterns = hasFinalConsonant(mainKeyword)
+      ? [`${escaped}는`, `${escaped}를`, `${escaped}와`, `${escaped}로(?!써)`]
+      : [`${escaped}은`, `${escaped}을`, `${escaped}과`, `${escaped}으로`];
+    return badPatterns.some((pattern) => new RegExp(pattern, "u").test(normalizedBody));
+  })();
 
   let titlePenalty = 0;
   if (!normalizedTitle || (mainKeyword && !normalizedTitle.includes(mainKeyword))) titlePenalty += 4;
@@ -357,6 +378,26 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "내부 평가나 작성 지시 표현을 실제 후기 문장으로 바꾸세요."
     });
   }
+  if (placeholderLeak) {
+    caps.push({ score: 50, code: "PLACEHOLDER_LEAK" });
+    issues.push({
+      code: "PLACEHOLDER_LEAK",
+      severity: "critical",
+      evidence: (PLACEHOLDER_PATTERN.exec(`${normalizedTitle}\n${normalizedBody}`) || [])[0] || "",
+      message: "자리표시자나 내부 안내 표현이 최종 원고에 노출됐습니다.",
+      revisionInstruction: "자리표시자는 삭제하고 확인된 사실 문장으로만 다시 쓰세요."
+    });
+  }
+  if (primaryEntityMissing) {
+    caps.push({ score: 55, code: "PRIMARY_ENTITY_MISSING" });
+    issues.push({
+      code: "PRIMARY_ENTITY_MISSING",
+      severity: "critical",
+      evidence: mainKeyword,
+      message: "대표 엔티티가 제목 또는 본문에서 누락됐습니다.",
+      revisionInstruction: "첫 문장, 제목 후보, 본문 중심을 대표 엔티티로 다시 맞추세요."
+    });
+  }
   if (unsupportedClaims.length > 0 || visitContradiction) {
     caps.push({ score: 55, code: "UNSUPPORTED_CLAIM" });
     addIssue(issues, {
@@ -381,7 +422,7 @@ export const evaluateHumanQuality = ({
     caps.push({ score: 70, code: "REPEATED_HEADING" });
   }
   if (genericRatio >= 0.5) caps.push({ score: 70, code: "GENERIC_FILLER_50" });
-  else if (genericRatio >= 0.4) caps.push({ score: 80, code: "GENERIC_FILLER_40" });
+  else if (genericRatio >= 0.4) caps.push({ score: 75, code: "GENERIC_FILLER_40" });
   else if (genericRatio >= 0.3) caps.push({ score: 90, code: "GENERIC_FILLER_30" });
   if (mainKeyword && exactKeywordCount > keywordRange.hardMax) {
     caps.push({ score: 80, code: "KEYWORD_STUFFING" });
@@ -401,6 +442,16 @@ export const evaluateHumanQuality = ({
       evidence: "사진 시각 정보 단정",
       message: "실제 이미지 분석 없이 구체적인 시각 사실을 단정했습니다.",
       revisionInstruction: "이미지 분석 결과나 사용자가 제공한 사진 메모에 있는 시각 정보만 사용하세요."
+    });
+  }
+  if (josaError) {
+    caps.push({ score: 75, code: "JOSA_ERROR" });
+    issues.push({
+      code: "JOSA_ERROR",
+      severity: "high",
+      evidence: mainKeyword,
+      message: "대표 엔티티 뒤 한국어 조사가 어색합니다.",
+      revisionInstruction: "엔티티의 받침 여부에 맞게 은/는, 이/가, 을/를, 과/와, 으로/로 조사를 고치세요."
     });
   }
   if (allFaqCheckOnly) caps.push({ score: 85, code: "FAQ_CHECK_ONLY" });
@@ -426,6 +477,9 @@ export const evaluateHumanQuality = ({
     hasLlmJudge &&
     !hardFail &&
     !guideLeak &&
+    !placeholderLeak &&
+    !josaError &&
+    !primaryEntityMissing &&
     unsupportedClaims.length === 0 &&
     duplicateSignals.duplicates.length === 0 &&
     !awkwardTitle &&

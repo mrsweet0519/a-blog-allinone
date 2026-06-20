@@ -33,24 +33,29 @@ const REVIEW_TAIL_PATTERN =
 const ENTITY_SUFFIX_PATTERN = /본점|지점|분점|점|센터|거래소|강의|학원|매장|식당|카페|본사|브랜드/u;
 const BROAD_SEARCH_PATTERN =
   /맛집|카페|추천|근처|가볼만한|갈만한|후기|리뷰|정리|방법|정보|비교|체크|아이랑|가족|여행|지역|메뉴|강의|수업/u;
-const RESTAURANT_MENU_PATTERN = /갈낙짬뽕|짬뽕|탕수육|짜장|국물|파스타|스테이크|커피|브런치|디저트/u;
+const RESTAURANT_MENU_PATTERN =
+  /[가-힣A-Za-z0-9]+(?:짬뽕|탕|국밥|파스타|스테이크|커피|브런치|디저트|냉면|칼국수|라멘|초밥|피자|버거)|짬뽕|탕수육|짜장|국물/u;
+const LOCAL_SEARCH_PATTERN =
+  /([가-힣A-Za-z0-9]+(?:도|시|군|구|동|역|해변|공항|터미널|대교|시장|단지|거리|로|길)\s*(?:근처\s*)?(?:맛집|카페|숙소|병원|학원|매장|여행|가볼만한곳))/u;
 
 export const BLOG_WRITER_CATEGORIES = [
   "restaurant",
   "cafe",
+  "accommodation",
+  "travel",
   "kids-place",
   "product",
+  "beauty",
+  "fashion",
   "experience",
   "store",
   "education",
   "hospital",
   "service",
-  "travel",
   "information",
   "comparison",
-  "place",
+  "other",
   "seasonal",
-  "fashion",
   "flowers"
 ];
 
@@ -134,21 +139,23 @@ export const inferBlogWriterCategory = (form = {}) => {
 
   if (/비교|추천|고르는\s*법|구매\s*전|장단점|체크포인트|선택\s*기준/u.test(source)) return "comparison";
   if (/병원|의원|피부관리|시술|진료|치과|한의원|피부과|검진/u.test(source)) return "hospital";
+  if (/숙소|호텔|펜션|리조트|모텔|게스트하우스|체크인|객실|1박|숙박|묵었/u.test(source)) return "accommodation";
   if (/여행|숙소|호텔|펜션|리조트|조식|체크인|객실|코스|바다|관광/u.test(source)) return "travel";
   if (/서비스|신청|예약|견적|설치|수리|청소|대행|렌탈|컨설팅/u.test(source)) return "service";
   if (/강의|수업|커리큘럼|입찰|공매|교육|강사/u.test(source)) return "education";
   if (/맛집|식당|짬뽕|탕수육|파스타|스테이크|식사|외식|회식/u.test(source)) return "restaurant";
   if (/카페|커피|디저트|브런치/u.test(source)) return "cafe";
   if (/아이|키즈|체험관|놀이터|실내체험|가족/u.test(source)) return "kids-place";
-  if (/드라이샴푸|샴푸|화장품|텀블러|제품|사용|휴대|패키지/u.test(source)) return "product";
+  if (/화장품|크림|세럼|앰플|패드|팩|샴푸|드라이샴푸|피부|보습|향/u.test(source)) return "beauty";
+  if (/패션|의류|신발|가방|착용|자켓|셔츠|원피스|니트/u.test(source)) return "fashion";
+  if (/텀블러|제품|사용|휴대|패키지|가전|용품/u.test(source)) return "product";
   if (/꽃|꽃집|화분|플라워/u.test(source)) return "flowers";
-  if (/패션|의류|신발|가방|착용/u.test(source)) return "fashion";
   if (/시즌|계절|명절|여름|겨울|봄|가을/u.test(source)) return "seasonal";
   if (/매입|거래소|매장|상담|사장님/u.test(source)) return "store";
   if (/방법|정보|체크|처음|초보/u.test(source)) return "information";
   if (/체험|방문|참여/u.test(source)) return "experience";
 
-  return "lifestyleProduct";
+  return "other";
 };
 
 export const collectBlogSubKeywords = (form = {}, resolvedMainKeyword = "") => {
@@ -160,9 +167,9 @@ export const collectBlogSubKeywords = (form = {}, resolvedMainKeyword = "") => {
     ...splitCommaList(form.subKeywords, 8)
   ]);
 
+  const localSearchKeyword = text(`${topicText} ${memoText}`).match(LOCAL_SEARCH_PATTERN)?.[1] || "";
   const contextual = [
-    /강화/u.test(`${topicText} ${memoText}`) ? "강화도맛집" : "",
-    /초지대교/u.test(`${topicText} ${memoText}`) ? "초지대교 맛집" : "",
+    localSearchKeyword,
     /여행/u.test(`${topicText} ${memoText}`) ? "가족여행" : /외식/u.test(memoText) ? "가족 외식" : /가족/u.test(memoText) ? "가족 식사" : "",
     /아이/u.test(memoText) ? "아이랑" : "",
     RESTAURANT_MENU_PATTERN.test(`${topicText} ${memoText}`)

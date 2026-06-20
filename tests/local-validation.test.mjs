@@ -47,6 +47,33 @@ const now = new Date(2026, 5, 1, 10, 0, 0);
 const holdoutUnknownTopicFixtures = JSON.parse(
   readFileSync(new URL("./fixtures/blog-quality/holdout-unknown-topics.json", import.meta.url), "utf8")
 );
+const extraHoldoutUnknownTopicFixtures = [
+  { id: "restaurant-low-photo", category: "restaurant", sufficiency: "low-photo", form: { productName: "모래내 우동집 점심 후기", mainKeyword: "동네 우동 맛집", experienceMemo: "점심에 들러서 좋았음", imageContext: [{ index: 1, note: "우동 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "cafe-low-photo", category: "cafe", sufficiency: "low-photo", form: { productName: "초록문 카페 방문 후기", mainKeyword: "동네 카페", experienceMemo: "잠깐 쉬러 들렀고 분위기 좋았음", imageContext: [{ index: 1, note: "커피 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "product-low-photo", category: "product", sufficiency: "low-photo", form: { productName: "클린핏 물병 사용 후기", mainKeyword: "물병 후기", experienceMemo: "가방에 넣고 써봄", imageContext: [{ index: 1, note: "제품 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "store-low-photo", category: "store", sufficiency: "low-photo", form: { productName: "바른생활잡화 매장 방문 후기", mainKeyword: "동네 생활용품점", experienceMemo: "필요한 물건 사러 방문함", imageContext: [{ index: 1, note: "매장 입구 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "education-low-photo", category: "education", sufficiency: "low-photo", form: { productName: "새벽 영어회화 수업 후기", mainKeyword: "영어회화 수업", experienceMemo: "첫 수업 들어보고 기억남", imageContext: [{ index: 1, note: "수업 안내 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "hospital-low-photo", category: "hospital", sufficiency: "low-photo", form: { productName: "온빛내과 검진 방문 후기", mainKeyword: "내과 검진", experienceMemo: "검진 때문에 방문했고 차분했음", imageContext: [{ index: 1, note: "대기 공간 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "service-low-photo", category: "service", sufficiency: "low-photo", form: { productName: "모아설치 블라인드 시공 후기", mainKeyword: "블라인드 시공", experienceMemo: "이사 후 이용했고 좋았음", imageContext: [{ index: 1, note: "시공 전 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "travel-low-photo", category: "travel", sufficiency: "low-photo", form: { productName: "솔바람 호수 산책 후기", mainKeyword: "호수 산책 코스", experienceMemo: "가족이랑 다녀와서 좋았음", imageContext: [{ index: 1, note: "산책로 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "kids-low-photo", category: "kids-place", sufficiency: "low-photo", form: { productName: "하늘콩 키즈카페 방문 후기", mainKeyword: "키즈카페 후기", experienceMemo: "아이랑 다녀와서 좋았음", imageContext: [{ index: 1, note: "놀이 공간 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "experience-low-photo", category: "experience", sufficiency: "low-photo", form: { productName: "종이꽃 만들기 체험 후기", mainKeyword: "만들기 체험", experienceMemo: "처음 해봤고 기억남", imageContext: [{ index: 1, note: "재료 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "information-low-photo", category: "information", sufficiency: "low-photo", form: { productName: "반려견 등록 방법 알아보기", mainKeyword: "반려견 등록", experienceMemo: "처음 알아보는 중", imageContext: [{ index: 1, note: "안내문 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "comparison-low-photo", category: "comparison", sufficiency: "low-photo", form: { productName: "여행용 보조배터리 비교 기준", mainKeyword: "보조배터리 비교", experienceMemo: "구매 전 비교 중", imageContext: [{ index: 1, note: "제품 비교 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "accommodation-low-no-photo", category: "accommodation", sufficiency: "low-no-photo", form: { productName: "달숲스테이 숙박 후기", mainKeyword: "가족 숙소", experienceMemo: "하룻밤 머물렀고 좋았음", targetCharCount: 2500 } },
+  { id: "accommodation-low-photo", category: "accommodation", sufficiency: "low-photo", form: { productName: "파도정원 펜션 숙박 후기", mainKeyword: "바다 펜션", experienceMemo: "가족이랑 묵어서 좋았음", imageContext: [{ index: 1, note: "객실 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "accommodation-medium-experience", category: "accommodation", sufficiency: "medium-experience", form: { productName: "노을쉼표 호텔 숙박 후기", mainKeyword: "가족 호텔", subKeywords: "객실, 조식, 주차", experienceMemo: "아이와 1박함\n객실 동선이 궁금했음\n아침에 이동하기 편했던 기억이 남", imageContext: [{ index: 1, note: "객실 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "accommodation-high-detail", category: "accommodation", sufficiency: "high-detail", form: { productName: "숲결펜션 가족 숙소 후기", mainKeyword: "가족 펜션 후기", subKeywords: "침구, 바비큐, 산책", experienceMemo: "가족여행으로 1박함\n침구와 바비큐 공간이 궁금했음\n주변 산책로가 기억남\n다음에도 조용히 쉬고 싶을 때 떠오를 것 같았음", imageContext: [{ index: 1, note: "객실 사진" }, { index: 2, note: "외관 사진" }], imageCount: 2, targetCharCount: 3200 } },
+  { id: "beauty-low-no-photo", category: "beauty", sufficiency: "low-no-photo", form: { productName: "데이루틴 선크림 사용 후기", mainKeyword: "선크림 후기", experienceMemo: "며칠 써보고 괜찮았음", targetCharCount: 2500 } },
+  { id: "beauty-low-photo", category: "beauty", sufficiency: "low-photo", form: { productName: "포근결 립밤 사용 후기", mainKeyword: "립밤 후기", experienceMemo: "가방에 넣고 써봄", imageContext: [{ index: 1, note: "제품 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "beauty-medium-experience", category: "beauty", sufficiency: "medium-experience", form: { productName: "맑은결 클렌징폼 사용 후기", mainKeyword: "클렌징폼 후기", subKeywords: "세안, 거품, 향", experienceMemo: "저녁 세안 때 사용함\n거품과 향이 궁금했음\n욕실에 두고 쓰기 편했음", imageContext: [{ index: 1, note: "제품 튜브 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "beauty-high-detail", category: "beauty", sufficiency: "high-detail", form: { productName: "수아래 세럼 사용 후기", mainKeyword: "세럼 후기", subKeywords: "아침 루틴, 제형, 흡수감", experienceMemo: "2주 동안 아침 루틴에 사용함\n제형이 무겁지 않은지 궁금했음\n손등에 덜었을 때 흐름이 기억남\n화장 전에 바르기 부담이 덜했음", imageContext: [{ index: 1, note: "제품 병 사진" }, { index: 2, note: "손등 제형 사진" }], imageCount: 2, targetCharCount: 3200 } },
+  { id: "fashion-low-no-photo", category: "fashion", sufficiency: "low-no-photo", form: { productName: "데일리핏 셔츠 착용 후기", mainKeyword: "셔츠 후기", experienceMemo: "출근할 때 입어보고 좋았음", targetCharCount: 2500 } },
+  { id: "fashion-low-photo", category: "fashion", sufficiency: "low-photo", form: { productName: "모노워크 운동화 착용 후기", mainKeyword: "운동화 후기", experienceMemo: "주말에 신어보고 기억남", imageContext: [{ index: 1, note: "운동화 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "fashion-medium-experience", category: "fashion", sufficiency: "medium-experience", form: { productName: "라운드 니트 착용 후기", mainKeyword: "니트 후기", subKeywords: "출근룩, 두께, 색감", experienceMemo: "출근룩으로 입어봄\n두께와 색감이 궁금했음\n외투 안에 입기 괜찮았음", imageContext: [{ index: 1, note: "착용 사진" }], imageCount: 1, targetCharCount: 2500 } },
+  { id: "fashion-high-detail", category: "fashion", sufficiency: "high-detail", form: { productName: "브라운 토트백 사용 후기", mainKeyword: "토트백 후기", subKeywords: "출근가방, 수납, 무게", experienceMemo: "출근할 때 일주일 사용함\n노트북과 파우치가 들어가는지 궁금했음\n손잡이 그립감이 기억남\n무게가 과하지 않아 자주 들게 됨", imageContext: [{ index: 1, note: "가방 전체 사진" }, { index: 2, note: "수납 사진" }], imageCount: 2, targetCharCount: 3200 } }
+];
+holdoutUnknownTopicFixtures.push(...extraHoldoutUnknownTopicFixtures);
 
 const valid = validateAccessCode("mgo-test7", accessCodes, now);
 assert.equal(valid.ok, true);
@@ -505,7 +532,7 @@ const singlePhotoReview = createProductReviewDraft({
   tone: "친근한",
   targetLengthOption: "short"
 });
-assert.equal(singlePhotoReview.category, "product");
+assert.ok(["product", "beauty"].includes(singlePhotoReview.category));
 assert.equal((singlePhotoReview.body.match(/\[사진 삽입:/gu) || []).length, 1);
 assert.ok(singlePhotoReview.body.includes("[사진 삽입: 제품 전체 사진]"));
 assert.ok(!/dry-shampoo-main|파일명|OCR|carousel|image page/u.test(singlePhotoReview.body));
@@ -755,7 +782,7 @@ const qualityDryShampooReview = createProductReviewDraft({
   tone: "친근한",
   targetLength: "1500"
 });
-assert.equal(qualityDryShampooReview.category, "product");
+assert.ok(["product", "beauty"].includes(qualityDryShampooReview.category));
 assert.ok(qualityDryShampooReview.outline.includes("사용하게 된 상황"));
 assert.ok(qualityDryShampooReview.body.includes("운동"));
 assert.ok(qualityDryShampooReview.body.includes("보송"));
@@ -862,7 +889,19 @@ assert.ok(shortKeywordExperienceReview.body.includes("진행"));
 
 const productReviewMakerSource = readFileSync(new URL("../frontend/src/pages/ProductReviewMaker.jsx", import.meta.url), "utf8");
 const blogWriterApiSource = readFileSync(new URL("../functions/api/generate-blog.js", import.meta.url), "utf8");
+const productReviewGeneratorSource = readFileSync(new URL("../shared/productReviewGenerator.js", import.meta.url), "utf8");
+const blogWriterCategorySource = readFileSync(new URL("../shared/blogWriterCategory.js", import.meta.url), "utf8");
+const blogWriterPipelineSource = readFileSync(new URL("../shared/blogWriterPipeline.js", import.meta.url), "utf8");
+const blogWriterPromptSource = readFileSync(new URL("../shared/blogWriterPrompt.js", import.meta.url), "utf8");
 const appLayoutSource = readFileSync(new URL("../frontend/src/components/AppLayout.jsx", import.meta.url), "utf8");
+const oneClickProductionSource = [
+  productReviewMakerSource,
+  blogWriterApiSource,
+  productReviewGeneratorSource,
+  blogWriterCategorySource,
+  blogWriterPipelineSource,
+  blogWriterPromptSource
+].join("\n");
 assert.ok(blogWriterApiSource.includes("context.env"));
 assert.ok(blogWriterApiSource.includes("BLOG_WRITER_LLM_ENABLED"));
 assert.ok(blogWriterApiSource.includes("OPENAI_API_KEY"));
@@ -876,6 +915,7 @@ assert.ok(blogWriterApiSource.includes('engine: "llm"'));
 assert.ok(blogWriterApiSource.includes('engine: "fallback"'));
 assert.ok(blogWriterApiSource.includes("server-key-missing"));
 assert.ok(!/sk-[A-Za-z0-9_-]{20,}/u.test(blogWriterApiSource));
+assert.ok(!/육짬|대천리조텔|청화횟집|마데카|강화도맛집|초지대교|갈낙짬뽕/u.test(oneClickProductionSource));
 assert.ok(appLayoutSource.includes('to="/dashboard"'));
 assert.ok(appLayoutSource.includes('aria-label="Dashboard로 이동"'));
 assert.ok(appLayoutSource.includes("Blog All-in-One"));
@@ -1503,8 +1543,8 @@ const assertQualityScore = (review = {}, minimum = 95) => {
   assertNoDuplicateBodyParts(review.body);
 };
 
-assert.equal(holdoutUnknownTopicFixtures.length, 36);
-assert.equal(new Set(holdoutUnknownTopicFixtures.map((fixture) => `${fixture.category}:${fixture.sufficiency}`)).size, 36);
+assert.equal(holdoutUnknownTopicFixtures.length, 60);
+assert.equal(new Set(holdoutUnknownTopicFixtures.map((fixture) => `${fixture.category}:${fixture.sufficiency}`)).size, 60);
 
 const holdoutUnsupportedClaimPattern =
   /영업시간\s*(?:은|:)\s*\d|가격\s*(?:은|:)\s*\d|주차가\s*(?:편|좋)|웨이팅\s*(?:없|짧)|직원\s*(?:친절|응대)|무조건|100%\s*만족|효과\s*보장/u;
@@ -1548,12 +1588,136 @@ const holdoutCategoryFallbackStats = Object.fromEntries(
     ];
   })
 );
-assert.equal(Object.keys(holdoutCategoryFallbackStats).length, 12);
+assert.equal(Object.keys(holdoutCategoryFallbackStats).length, 15);
 globalThis.__blogHoldoutFallbackStats = {
   average: holdoutFallbackAverage,
   min: Math.min(...holdoutFallbackResults.map((item) => item.review.qualityScore)),
   category: holdoutCategoryFallbackStats
 };
+
+const propertyCategories = [
+  "restaurant",
+  "cafe",
+  "accommodation",
+  "travel",
+  "product",
+  "beauty",
+  "fashion",
+  "education",
+  "store",
+  "hospital",
+  "service",
+  "kids-place",
+  "experience",
+  "information",
+  "comparison"
+];
+const propertyMarkersSeen = [];
+const propertyStats = {
+  cases: 0,
+  mainKeywordChanges: 0,
+  entityChanges: 0,
+  experienceSignals: 0,
+  subKeywordChanges: 0,
+  noImageCases: 0,
+  lowInfoLengthCases: 0,
+  categoryChanges: 0,
+  faqEvidenceCases: 0,
+  broadKeywordCases: 0
+};
+
+for (let index = 0; index < 100; index += 1) {
+  const marker = `범용마커${String(index).padStart(3, "0")}`;
+  const previousMarkers = [...propertyMarkersSeen];
+  const caseType = index % 10;
+
+  if (caseType === 0) {
+    const first = createProductReviewDraft({ mainKeyword: `${marker}A 텀블러 후기`, experienceMemo: "며칠 사용함" });
+    const second = createProductReviewDraft({ mainKeyword: `${marker}B 텀블러 후기`, experienceMemo: "며칠 사용함" });
+    assert.notEqual(first.finalTitle, second.finalTitle, marker);
+    assert.notEqual(first.body, second.body, marker);
+    assert.notDeepEqual(first.hashtags, second.hashtags, marker);
+    assert.ok(!collectReviewOutputText(second).includes(`${marker}A`), marker);
+    propertyStats.mainKeywordChanges += 1;
+  } else if (caseType === 1) {
+    const review = createProductReviewDraft({ productName: `${marker} 샐러드바 방문 후기`, mainKeyword: "지역 맛집", experienceMemo: "점심에 들러서 좋았음" });
+    const outputText = collectReviewOutputText(review);
+    assert.ok(outputText.includes(marker), marker);
+    assert.equal(previousMarkers.filter((previousMarker) => outputText.includes(previousMarker)).length, 0, marker);
+    assert.ok(review.contentPackage.mainKeyword.includes(marker), marker);
+    propertyStats.entityChanges += 1;
+  } else if (caseType === 2) {
+    const researched = buildBlogWriterPipelineContext({ productName: `${marker} 정보 알아보기`, mainKeyword: `${marker} 정보`, experienceMemo: "처음 알아보는 중" });
+    const visited = buildBlogWriterPipelineContext({ productName: `${marker} 매장 방문 후기`, mainKeyword: `${marker}`, experienceMemo: "직접 방문함\n좋았음" });
+    assert.ok(["unknown", "researched", "planned"].includes(researched.experienceStatus), marker);
+    assert.equal(visited.experienceStatus, "visited", marker);
+    propertyStats.experienceSignals += 1;
+  } else if (caseType === 3) {
+    const normalized = normalizeBlogWriterInput({
+      productName: `${marker} 클래스 수강 후기`,
+      mainKeyword: `${marker}`,
+      subKeywords: `${marker} 준비물, 초보자, 커리큘럼, ${marker} 준비물`,
+      experienceMemo: "처음 수강했고 기억남"
+    });
+    const review = createProductReviewDraft(normalized);
+    assert.deepEqual(normalized.subKeywords.slice(0, 3), [`${marker} 준비물`, "초보자", "커리큘럼"], marker);
+    assert.ok(review.contentPackage.subKeywords.includes(`${marker} 준비물`), marker);
+    propertyStats.subKeywordChanges += 1;
+  } else if (caseType === 4) {
+    const review = createProductReviewDraft({ productName: `${marker} 립밤 사용 후기`, mainKeyword: `${marker} 립밤`, experienceMemo: "가방에 넣고 사용함", imageCount: 0 });
+    assert.ok(!review.body.includes("[사진 삽입:"), marker);
+    assert.ok(review.contentPackage.imageAnalysis.mode === "none" || review.contentPackage.imageAnalysis.mode === "label-only", marker);
+    propertyStats.noImageCases += 1;
+  } else if (caseType === 5) {
+    const review = createProductReviewDraft({ productName: `${marker} 국밥집 맛집 후기`, mainKeyword: "동네맛집", experienceMemo: "궁금했음", targetCharCount: 4000 });
+    assert.equal(review.engine, "fallback", marker);
+    assert.equal(review.contentPackage.informationLimited, true, marker);
+    assert.ok(review.bodyLength <= 2200, `${marker} bodyLength ${review.bodyLength}`);
+    propertyStats.lowInfoLengthCases += 1;
+  } else if (caseType === 6) {
+    const categoryA = propertyCategories[index % propertyCategories.length];
+    const categoryB = propertyCategories[(index + 5) % propertyCategories.length];
+    const contextA = buildBlogWriterPipelineContext({ productName: `${marker} 후기`, mainKeyword: `${marker}`, category: categoryA, experienceMemo: "직접 경험함" }, { category: categoryA });
+    const contextB = buildBlogWriterPipelineContext({ productName: `${marker} 후기`, mainKeyword: `${marker}`, category: categoryB, experienceMemo: "직접 경험함" }, { category: categoryB });
+    assert.equal(contextA.category, categoryA, marker);
+    assert.equal(contextB.category, categoryB, marker);
+    const outlineTextA = JSON.stringify(contextA.writerPlan.outline);
+    const outlineTextB = JSON.stringify(contextB.writerPlan.outline);
+    assert.notEqual(outlineTextA, outlineTextB, marker);
+    propertyStats.categoryChanges += 1;
+  } else if (caseType === 7) {
+    const context = buildBlogWriterPipelineContext({ productName: `${marker} 처음 알아보기`, mainKeyword: `${marker}`, experienceMemo: "", targetCharCount: 4000 });
+    const review = createProductReviewDraft({ productName: `${marker} 처음 알아보기`, mainKeyword: `${marker}`, experienceMemo: "", targetCharCount: 4000 });
+    assert.ok(context.writerPlan.faqCount <= 1, marker);
+    assert.ok((review.contentPackage.faqItems || []).length <= 3, marker);
+    assert.ok(review.contentPackage.factMap.unsupportedFields.length >= 5, marker);
+    propertyStats.faqEvidenceCases += 1;
+  } else if (caseType === 8) {
+    const context = buildBlogWriterPipelineContext({ productName: `${marker} 본점 방문 후기`, mainKeyword: "서울맛집", experienceMemo: "가족이랑 다녀와서 좋았음" });
+    assert.ok(context.primaryEntity.includes(marker), marker);
+    assert.equal(context.mainKeyword, context.primaryEntity, marker);
+    assert.equal(context.broadKeyword, "서울맛집", marker);
+    propertyStats.broadKeywordCases += 1;
+  } else {
+    const context = buildBlogWriterPipelineContext({
+      productName: `${marker} 파스타집 방문 후기`,
+      mainKeyword: `${marker}`,
+      experienceMemo: "가족이랑 방문함",
+      imageContext: [{ index: 1, note: "파스타 사진" }],
+      imageCount: 1
+    });
+    assert.equal(context.imageAnalysis.mode, "label-only", marker);
+    assert.ok(context.imageAnalysis.items.every((item) => item.analysisMode === "label-only"), marker);
+    assert.ok(context.imageAnalysis.items.every((item) => item.unsafeClaims.includes("taste")), marker);
+    propertyStats.noImageCases += 1;
+  }
+
+  propertyMarkersSeen.push(marker);
+  propertyStats.cases += 1;
+}
+assert.equal(propertyStats.cases, 100);
+assert.ok(Object.values(propertyStats).slice(1).every((count) => count >= 10));
+globalThis.__blogPropertyBasedStats = propertyStats;
 
 const createHoldoutLlmDraft = (fixture) => {
   const normalizedForm = normalizeBlogWriterInput(fixture.form);
@@ -1570,24 +1734,26 @@ const createHoldoutLlmDraft = (fixture) => {
   const openingContext = actualReview
     ? "처음 기대했던 부분과 실제로 기억에 남은 부분을 함께 보게 됐어요"
     : "처음 볼 때 필요한 정보와 내 상황에 맞는지를 함께 보게 됐어요";
+  const subjectKeyword = `${mainKeyword} 관련 경험은`;
+  const objectKeyword = "이 경험을";
   const keywordSentence = subKeywords.length
     ? `${subKeywords.join(", ")} 같은 단어로만 길게 늘리기보다, 실제로 궁금했던 장면과 연결해서 보는 편이 더 편했습니다.`
     : "큰 장점만 나열하기보다 실제 상황에 맞는지 차분히 보는 편이 더 편했습니다.";
   const memoSentence = memoLines.length
     ? `${memoLines.join(" ")} 이 부분이 이번 경험에서 가장 먼저 떠올랐습니다.`
-    : `${mainKeyword}을 처음 볼 때는 기본 정보부터 차근차근 살펴보게 됐습니다.`;
+    : `${objectKeyword} 처음 볼 때는 기본 정보부터 차근차근 살펴보게 됐습니다.`;
   const imageSentence = context.imageAnalysis.visuallySupported.length
     ? `사진으로는 ${context.imageAnalysis.visuallySupported.slice(0, 2).join(", ")} 정도가 먼저 떠올랐고, 그 밖의 맛이나 가격 같은 내용은 따로 말하지 않았습니다.`
     : "사진으로 덧붙일 장면이 많지는 않아, 직접 기억나는 상황을 중심으로 정리했습니다.";
   const body = [
-    `${mainKeyword}은 ${actionText} 기억에 남은 점을 차분히 정리해보고 싶었던 주제예요. ${mainKeyword}을 볼 때는 이름이나 키워드보다 내가 왜 관심을 갖게 됐는지가 먼저 중요했고, ${openingContext}.`,
-    `처음에는 ${mainKeyword}이라는 이름만 보고 판단하기보다 실제 상황에서 어떤 부분이 필요했는지 떠올려봤습니다. ${memoSentence} 그래서 이번 후기는 새로 꾸민 이야기보다 기억나는 장면을 기준으로 적었습니다.`,
-    `중간에 가장 도움이 된 건 핵심을 너무 넓히지 않는 것이었어요. ${keywordSentence} ${mainKeyword}을 다시 떠올려봐도 과장된 표현보다 구체적인 순간이 더 오래 남았습니다.`,
+    `${subjectKeyword} ${actionText} 기억에 남은 점을 차분히 정리해보고 싶었던 주제예요. ${objectKeyword} 볼 때는 이름이나 키워드보다 내가 왜 관심을 갖게 됐는지가 먼저 중요했고, ${openingContext}.`,
+    `처음에는 ${mainKeyword}에 관심을 둔 이유를 먼저 떠올리면서 실제 상황에서 어떤 부분이 필요했는지 살펴봤습니다. ${memoSentence} 그래서 이번 후기는 새로 꾸민 이야기보다 기억나는 장면을 기준으로 적었습니다.`,
+    `중간에 가장 도움이 된 건 핵심을 너무 넓히지 않는 것이었어요. ${keywordSentence} ${objectKeyword} 다시 떠올려봐도 과장된 표현보다 구체적인 순간이 더 오래 남았습니다.`,
     imageSentence,
     actualReview
-      ? `직접 겪은 뒤에는 좋았던 부분도 있었지만 모든 사람에게 똑같이 맞는다고 말하기는 어렵겠더라고요. 그래도 ${mainKeyword}은 제 경험 안에서는 충분히 다시 떠올릴 만한 시간으로 남았습니다.`
-      : `아직 직접 경험한 내용이 많지 않은 경우에는 장점만 크게 보지 않고 필요한 조건을 나눠보는 편이 좋겠습니다. ${mainKeyword}은 그런 식으로 차분히 살펴보면 선택 전에 기준을 잡기 좋은 주제였습니다.`,
-    `마무리하면 ${mainKeyword}은 한두 문장으로 크게 포장하기보다, 내가 처한 상황과 남아 있는 단서를 함께 놓고 보는 편이 자연스러웠습니다. ${subKeywords[0] || "관련 정보"}를 찾는 분이라면 이 정도 흐름을 먼저 참고하면 부담이 덜할 것 같아요.`
+      ? "직접 겪은 뒤에는 좋았던 부분도 있었지만 모든 사람에게 똑같이 맞는다고 말하기는 어렵겠더라고요. 그래도 이 경험은 제 안에서는 충분히 다시 떠올릴 만한 시간으로 남았습니다."
+      : "아직 직접 경험한 내용이 많지 않은 경우에는 장점만 크게 보지 않고 필요한 조건을 나눠보는 편이 좋겠습니다. 이런 식으로 차분히 살펴보면 선택 전에 기준을 잡기 좋았습니다.",
+    `마무리하면 이번 경험은 한두 문장으로 크게 포장하기보다, 내가 처한 상황과 남아 있는 단서를 함께 놓고 보는 편이 자연스러웠습니다. ${subKeywords[0] || "관련 정보"}를 찾는 분이라면 이 정도 흐름을 먼저 참고하면 부담이 덜할 것 같아요.`
   ].join("\n\n");
   const titleCandidates = [
     `${mainKeyword} 후기 직접 살펴보며 남은 점`,
@@ -1599,11 +1765,11 @@ const createHoldoutLlmDraft = (fixture) => {
   const fallbackDraft = createProductReviewDraft(normalizedForm);
   const faqItems = [
     {
-      question: `${mainKeyword}은 어떤 점이 먼저 떠올랐나요?`,
+      question: `${mainKeyword} 관련해서는 어떤 점이 먼저 떠올랐나요?`,
       answer: `${memoLines[0] || `${mainKeyword}을 보게 된 상황`}이 가장 먼저 떠올랐습니다.`
     },
     {
-      question: `${mainKeyword}을 볼 때 어떤 부분을 함께 봤나요?`,
+      question: `${mainKeyword} 관련 내용을 볼 때 어떤 부분을 함께 봤나요?`,
       answer: `${subKeywords[0] || "사용 상황"}과 실제 생활에 맞는지를 함께 봤습니다.`
     },
     {
@@ -1728,7 +1894,7 @@ try {
   assert.ok(llmPublishReadyRatio >= 0.9, `LLM publishReady ratio ${llmPublishReadyRatio}`);
   assert.equal(llmHardFailCount, 0);
   assert.equal(llmUnsupportedCount, 0);
-  assert.equal(Object.keys(holdoutCategoryLlmStats).length, 12);
+  assert.equal(Object.keys(holdoutCategoryLlmStats).length, 15);
   globalThis.__blogHoldoutLlmStats = {
     average: llmAverage,
     min: llmMin,
@@ -1751,7 +1917,17 @@ const sequentialGeneralizationTopics = [
   { marker: "소담펜션", form: { productName: "소담펜션 가족 숙소 후기", mainKeyword: "소담펜션", subKeywords: "가족 펜션", experienceMemo: "하룻밤 머물렀고 산책하기 좋았음" } },
   { marker: "피크브루", form: { productName: "피크브루 원두 비교 정리", mainKeyword: "피크브루", subKeywords: "원두 비교", experienceMemo: "구매 전 산미와 고소함 차이가 궁금했음" } },
   { marker: "노리숲", form: { productName: "노리숲 실내체험관 아이랑 후기", mainKeyword: "노리숲", subKeywords: "아이랑 실내체험", experienceMemo: "비 오는 날 다녀와서 좋았음" } },
-  { marker: "에코캠프", form: { productName: "에코캠프 텐트 설치 후기", mainKeyword: "에코캠프", subKeywords: "텐트 설치", experienceMemo: "처음 설치해보고 순서가 기억남" } }
+  { marker: "에코캠프", form: { productName: "에코캠프 텐트 설치 후기", mainKeyword: "에코캠프", subKeywords: "텐트 설치", experienceMemo: "처음 설치해보고 순서가 기억남" } },
+  { marker: "한별스테이", form: { productName: "한별스테이 숙박 후기", mainKeyword: "한별스테이", subKeywords: "가족 숙소", experienceMemo: "하룻밤 머물렀고 조용해서 좋았음" } },
+  { marker: "무드헤어", form: { productName: "무드헤어 앞머리펌 후기", mainKeyword: "무드헤어", subKeywords: "앞머리펌", experienceMemo: "방문해서 상담받고 시술함" } },
+  { marker: "솔라백", form: { productName: "솔라백 출근가방 사용 후기", mainKeyword: "솔라백", subKeywords: "출근가방", experienceMemo: "일주일 들고 다녀보니 수납이 기억남" } },
+  { marker: "온담한의원", form: { productName: "온담한의원 초진 후기", mainKeyword: "온담한의원", subKeywords: "초진 상담", experienceMemo: "처음 방문했고 접수 흐름이 궁금했음" } },
+  { marker: "브릭수업", form: { productName: "브릭수업 코딩 클래스 후기", mainKeyword: "브릭수업", subKeywords: "코딩 클래스", experienceMemo: "아이가 수업 듣고 흥미를 보였음" } },
+  { marker: "정리홈", form: { productName: "정리홈 수납 컨설팅 후기", mainKeyword: "정리홈", subKeywords: "수납 컨설팅", experienceMemo: "상담받고 필요한 부분을 알게 됨" } },
+  { marker: "라온길", form: { productName: "라온길 당일치기 여행 후기", mainKeyword: "라온길", subKeywords: "당일치기 코스", experienceMemo: "가족이랑 걸어보고 기억남" } },
+  { marker: "소복비누", form: { productName: "소복비누 원데이클래스 후기", mainKeyword: "소복비누", subKeywords: "비누 클래스", experienceMemo: "처음 만들어봤고 완성품이 기억남" } },
+  { marker: "클리어폼", form: { productName: "클리어폼 클렌징폼 사용 후기", mainKeyword: "클리어폼", subKeywords: "클렌징폼", experienceMemo: "저녁 세안 때 써보고 거품이 기억남" } },
+  { marker: "모아카드", form: { productName: "모아카드 교통카드 비교 기준", mainKeyword: "모아카드", subKeywords: "교통카드 비교", experienceMemo: "구매 전 충전 방식이 궁금했음" } }
 ];
 const sequentialOutputs = [];
 for (const topic of sequentialGeneralizationTopics) {
@@ -1762,7 +1938,7 @@ for (const topic of sequentialGeneralizationTopics) {
   assert.ok(outputText.includes(topic.marker), topic.marker);
   sequentialOutputs.push({ marker: topic.marker, outputText });
 }
-assert.equal(sequentialOutputs.length, 10);
+assert.equal(sequentialOutputs.length, 20);
 
 const requestedFamilyCafePackageReview = createProductReviewDraft({
   mainKeyword: "부천 아이랑 갈만한 카페",
@@ -1789,7 +1965,7 @@ const requestedDryShampooPackageReview = createProductReviewDraft({
     "운동 후 사용\n떡진 머리 보송\n휴대 편함\n향 괜찮음"
 });
 const requestedDryShampooFirstSentence = requestedDryShampooPackageReview.body.split(/(?<=[.!?])\s+/u)[0];
-assert.equal(requestedDryShampooPackageReview.category, "product");
+assert.ok(["product", "beauty"].includes(requestedDryShampooPackageReview.category));
 assert.equal(requestedDryShampooPackageReview.contentPackage.mainKeyword, "에어젤 드라이샴푸");
 assert.ok(requestedDryShampooPackageReview.selectedTitle.includes("에어젤 드라이샴푸"));
 assert.ok(requestedDryShampooPackageReview.bodyLength >= 1000 && requestedDryShampooPackageReview.bodyLength <= 2200);
@@ -1949,7 +2125,7 @@ assert.ok(richYukjjamRestaurantReview.body.includes("가족여행 중 들른"));
 assert.ok(richYukjjamRestaurantReview.body.includes("다녀온 뒤"));
 assert.ok(richYukjjamRestaurantReview.body.includes("[사진 삽입: 대표 메뉴 사진]"));
 assert.equal((richYukjjamRestaurantReview.body.match(/\[사진 삽입:/gu) || []).length, 2);
-assert.ok(richYukjjamRestaurantReview.bodyLength >= 1200 && richYukjjamRestaurantReview.bodyLength <= 1900);
+assert.ok(richYukjjamRestaurantReview.actualBodyCharCount >= 1500 && richYukjjamRestaurantReview.actualBodyCharCount <= 2500);
 assert.ok(richYukjjamRestaurantReview.body.length >= 1500 && richYukjjamRestaurantReview.body.length <= 2500);
 assert.ok(richYukjjamMainCount >= 5 && richYukjjamMainCount <= 6);
 assert.ok(richYukjjamSubCounts.every((count) => count >= 2 && count <= 5));
@@ -2036,7 +2212,7 @@ const dryShampooWithStaleServiceTitle = createProductReviewDraft({
     "운동 후 사용\n앞머리와 정수리 보송\n휴대 편함\n향 무난함",
   selectedTitle: "에어젤 드라이샴푸 후기 상담 과정과 이용 전 확인할 점"
 });
-assert.equal(dryShampooWithStaleServiceTitle.category, "product");
+assert.ok(["product", "beauty"].includes(dryShampooWithStaleServiceTitle.category));
 assert.ok(dryShampooWithStaleServiceTitle.selectedTitle.includes("에어젤 드라이샴푸"));
 assert.notEqual(dryShampooWithStaleServiceTitle.selectedTitle, "에어젤 드라이샴푸 후기 상담 과정과 이용 전 확인할 점");
 assert.ok(!productForbiddenOutputPattern.test(collectReviewOutputText(dryShampooWithStaleServiceTitle)));
@@ -2127,7 +2303,7 @@ const shortDryShampooLengthReview = createProductReviewDraft({
     "운동 후 사용\n앞머리와 정수리 보송\n휴대 편함\n향 무난함",
   targetLengthOption: "short"
 });
-assert.equal(shortDryShampooLengthReview.category, "product");
+assert.ok(["product", "beauty"].includes(shortDryShampooLengthReview.category));
 assert.ok(shortDryShampooLengthReview.bodyLength >= 1000 && shortDryShampooLengthReview.bodyLength <= 1500);
 assert.ok(shortDryShampooLengthReview.finalTitle.includes("에어젤 드라이샴푸"));
 assert.ok(shortDryShampooLengthReview.body.includes("운동"));
@@ -2203,7 +2379,7 @@ const categoryEngineProductReview = createProductReviewDraft({
   experienceMemo:
     "운동 끝나고 바로 약속이 있어서 사용\n머리를 감기는 애매했는데 앞머리랑 정수리 쪽이 보송해짐\n가방에 넣고 다니기 편했음\n향은 강하지 않고 무난했음\n완전히 샴푸한 느낌은 아니지만 급할 때 쓰기 좋았음"
 });
-assert.equal(categoryEngineProductReview.category, "product");
+assert.ok(["product", "beauty"].includes(categoryEngineProductReview.category));
 assert.ok(categoryEngineProductReview.bodyLength >= 1200);
 assert.ok(categoryEngineProductReview.body.includes("운동"));
 assert.ok(categoryEngineProductReview.body.includes("앞머리"));

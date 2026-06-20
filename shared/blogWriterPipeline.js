@@ -32,6 +32,13 @@ const uniqueTexts = (values = []) => {
   return result;
 };
 
+const isBroadBlogKeyword = (value = "") => {
+  const cleaned = text(value);
+  if (!cleaned) return false;
+  if (/본점|지점|분점|점|센터|거래소|강의|학원|매장|식당|카페|브랜드/u.test(cleaned)) return false;
+  return /맛집|카페|추천|근처|가볼만한|갈만한|후기|리뷰|정리|방법|정보|비교|체크|아이랑|가족|여행|지역|메뉴|강의|수업/u.test(cleaned);
+};
+
 export const BLOG_WRITER_PIPELINE_STEPS = [
   "Input Normalization",
   "Primary Entity Extraction",
@@ -152,7 +159,17 @@ export const analyzeBlogImages = (form = {}) => {
     return {
       mode: existing.mode || existing.analysisMode || "vision",
       analysisMode: existing.mode || existing.analysisMode || "vision",
-      items: Array.isArray(existing.items) ? existing.items : [],
+      items: Array.isArray(existing.items)
+        ? existing.items.map((item, index) => ({
+            photoIndex: Number(item.photoIndex || item.index) || index + 1,
+            analysisMode: item.analysisMode || existing.mode || existing.analysisMode || "vision",
+            category: item.category || "unknown",
+            visibleElements: uniqueTexts(item.visibleElements || item.facts || []),
+            safeDescription: text(item.safeDescription || item.description),
+            unsafeClaims: uniqueTexts(item.unsafeClaims || []),
+            confidence: Number(item.confidence) || 0
+          }))
+        : [],
       visuallySupported: uniqueTexts(existing.visuallySupported || existing.visibleElements || existing.facts || []),
       unsupportedVisualFields: existing.unsupportedVisualFields || [],
       canAssertVisualFacts: true,
@@ -179,9 +196,14 @@ export const analyzeBlogImages = (form = {}) => {
     mode: "label-only",
     analysisMode: "label-only",
     items: items.map((item) => ({
-      index: item.index,
+      photoIndex: item.index,
+      analysisMode: "label-only",
+      category: "unknown",
+      visibleElements: [],
+      safeDescription: item.note || item.ocrText || "",
+      unsafeClaims: ["taste", "price", "quantity", "service", "staff", "businessHours"],
+      confidence: item.note || item.ocrText ? 0.35 : 0,
       source: item.source || "upload",
-      label: item.note || item.ocrText || "",
       hasUserLabel: Boolean(item.note || item.ocrText)
     })),
     visuallySupported: visibleLabels,
@@ -236,10 +258,12 @@ export const inferSearchIntent = ({ category = "experience", analysis = {}, expe
   const broadKeyword = analysis.broadKeyword || "";
   const subKeywords = analysis.subKeywords || [];
   const categoryIntent = {
-    restaurant: "맛집 후기와 대표 메뉴 탐색",
+    restaurant: "맛집 후기와 확인된 메뉴 탐색",
     cafe: "카페 방문 분위기와 메뉴 탐색",
+    accommodation: "숙소 정보와 숙박 후기 탐색",
     product: "상품 사용 후기와 구매 전 비교",
-    lifestyleProduct: "상품 사용 후기와 구매 전 비교",
+    beauty: "뷰티 제품 사용 후기와 구매 전 비교",
+    fashion: "패션 착용 후기와 구매 전 비교",
     store: "매장 방문 후기와 상담 분위기 탐색",
     education: "강의 내용과 수강 전 난이도 탐색",
     hospital: "방문 전 절차와 상담 분위기 탐색",
@@ -249,10 +273,29 @@ export const inferSearchIntent = ({ category = "experience", analysis = {}, expe
     experience: "체험 과정과 준비물 탐색",
     information: "처음 알아보는 주제의 핵심 정리",
     comparison: "구매 전 비교와 선택 기준 탐색",
-    place: "장소 방문 후기와 이용 전 참고"
+    place: "장소 방문 후기와 이용 전 참고",
+    other: "주제 정보와 이용 전 참고"
   };
+  const hasFamilyCue = /가족|아이/u.test(`${analysis.topic || ""} ${analysis.memoText || ""} ${subKeywords.join(" ")}`);
+  const intentType = (() => {
+    if (category === "comparison") return "comparison_guide";
+    if (category === "information") return /방법|하는\s*법|how/u.test(`${analysis.topic || ""} ${analysis.mainKeyword || ""}`) ? "how_to" : "researched_information";
+    if (category === "accommodation") return reviewTone === "actual-review" ? "accommodation_review" : "researched_information";
+    if (category === "product" || category === "beauty" || category === "fashion") {
+      return reviewTone === "actual-review" ? "product_usage_review" : "purchase_consideration";
+    }
+    if (category === "restaurant" || category === "cafe" || category === "kids-place") {
+      if (hasFamilyCue && reviewTone === "actual-review") return "family_visit_review";
+      if (broadKeyword || subKeywords.some((keyword) => /맛집|카페|근처|지역|동|역|시|군|구/u.test(keyword))) return "local_search";
+      return reviewTone === "actual-review" ? "first_person_review" : "pre_visit_guide";
+    }
+    if (reviewTone === "actual-review") return "first_person_review";
+    if (experienceStatus === "planned") return "pre_visit_guide";
+    return "researched_information";
+  })();
 
   return {
+    type: intentType,
     primary: categoryIntent[category] || categoryIntent.experience,
     tone: reviewTone,
     queryFocus: uniqueTexts([mainKeyword, broadKeyword, ...subKeywords]).slice(0, 5),
@@ -263,7 +306,8 @@ export const inferSearchIntent = ({ category = "experience", analysis = {}, expe
   };
 };
 
-const createFact = ({ field, value, source, confidence = 0.85, allowedAsExperience = false } = {}) => ({
+const createFact = ({ id = "", field, value, source, confidence = 0.85, allowedAsExperience = false } = {}) => ({
+  id,
   field,
   value: text(value),
   source,
@@ -274,13 +318,13 @@ const createFact = ({ field, value, source, confidence = 0.85, allowedAsExperien
 export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput(form), imageAnalysis = analyzeBlogImages(form), experienceStatus = detectExperienceStatus(form) } = {}) => {
   const memoText = getMemoText(form);
   const inputSubKeywords = parseSubKeywords(form.subKeywords, analysis.mainKeyword);
-  const facts = [
-    createFact({ field: "topic", value: analysis.topic || form.productName || form.topic, source: "topic", confidence: 0.95 }),
-    createFact({ field: "primaryEntity", value: analysis.primaryEntity, source: "entity-extraction", confidence: 0.9 }),
-    createFact({ field: "mainKeyword", value: analysis.mainKeyword, source: "keyword-normalization", confidence: 0.9 }),
-    createFact({ field: "broadKeyword", value: analysis.broadKeyword, source: "keyword-normalization", confidence: 0.8 }),
+  const rawFacts = [
+    createFact({ field: "topic", value: analysis.topic || form.productName || form.topic, source: "user_topic", confidence: 0.95 }),
+    createFact({ field: "primaryEntity", value: analysis.primaryEntity, source: "primary_entity_extraction", confidence: 0.9 }),
+    createFact({ field: "mainKeyword", value: analysis.mainKeyword, source: "user_main_keyword", confidence: 0.9 }),
+    createFact({ field: "broadKeyword", value: analysis.broadKeyword, source: "user_main_keyword", confidence: 0.8 }),
     ...inputSubKeywords.map((keyword) =>
-      createFact({ field: "subKeyword", value: keyword, source: "user-sub-keyword", confidence: 0.9 })
+      createFact({ field: "subKeyword", value: keyword, source: "user_sub_keyword", confidence: 0.9 })
     ),
     ...memoText
       .split(/\n|(?<=[.!?。])\s+/u)
@@ -291,7 +335,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
         createFact({
           field: "memo",
           value: line,
-          source: "user-memo",
+          source: "user_memory",
           confidence: 0.88,
           allowedAsExperience: getExperienceTone(experienceStatus) === "actual-review"
         })
@@ -300,12 +344,16 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
       createFact({
         field: "visualLabel",
         value,
-        source: imageAnalysis.mode === "vision" ? "vision" : "image-label",
+        source: imageAnalysis.mode === "vision" ? "image_n" : "image_label",
         confidence: imageAnalysis.mode === "vision" ? 0.92 : 0.65,
         allowedAsExperience: false
       })
     )
   ].filter((item) => item.value);
+  const facts = rawFacts.map((fact, index) => ({
+    ...fact,
+    id: fact.id || `f${index + 1}`
+  }));
 
   const supported = uniqueTexts(facts.map((fact) => fact.value));
   const visuallySupported = uniqueTexts(
@@ -347,6 +395,18 @@ const CATEGORY_OUTLINES = {
   product: {
     actual: ["사용하게 된 상황", "처음 써본 느낌", "생활에서 편했던 점", "아쉬운 점과 맞는 사람"],
     reference: ["관심이 간 이유", "구성에서 볼 부분", "구매 전 비교할 점", "맞을 만한 상황"]
+  },
+  beauty: {
+    actual: ["사용하게 된 상황", "처음 써본 느낌", "피부와 생활 루틴에서 본 점", "아쉬운 점과 맞는 사람"],
+    reference: ["관심이 간 이유", "성분과 제형에서 볼 부분", "구매 전 비교할 점", "맞을 만한 상황"]
+  },
+  fashion: {
+    actual: ["입어보게 된 상황", "착용 첫인상", "코디와 활동에서 본 점", "아쉬운 점과 맞는 사람"],
+    reference: ["관심이 간 이유", "사이즈와 소재에서 볼 부분", "구매 전 비교할 점", "어울리는 상황"]
+  },
+  accommodation: {
+    actual: ["숙박하게 된 이유", "객실과 공용공간 첫인상", "머무는 동안 기억난 점", "예약 전 챙길 부분", "과장 없는 마무리"],
+    reference: ["숙소로 알아본 이유", "객실과 시설 정보", "주변 환경에서 볼 부분", "예약 전 살펴볼 점"]
   },
   lifestyleProduct: {
     actual: ["사용하게 된 상황", "처음 써본 느낌", "생활에서 편했던 점", "아쉬운 점과 맞는 사람"],
@@ -424,15 +484,31 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
 
 export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
   const normalizedForm = normalizeBlogWriterInput(form);
+  const standardInput = {
+    topic: text(form.topic || form.productName),
+    userMainKeyword: text(form.mainKeyword || form.keyword),
+    userSubKeywords: parseSubKeywords(form.subKeywords, form.mainKeyword || form.keyword),
+    memory: text(form.memory || form.experienceMemo || form.memo),
+    images: getImageItems(form),
+    categoryOverride: text(form.category),
+    tone: text(form.tone),
+    targetCharCount: Number(form.targetCharCount || form.targetLength || 0) || 0,
+    avoidWords: splitList(form.avoidWords || form.avoid, 20)
+  };
   const analysis = {
     ...analyzeBlogWritingInput(normalizedForm),
     ...(overrides.analysis || {})
   };
   const category = overrides.category || analysis.category;
   const inputSubKeywords = parseSubKeywords(form.subKeywords, analysis.mainKeyword);
+  const inputBroadKeyword =
+    analysis.broadKeyword ||
+    (standardInput.userMainKeyword && compact(standardInput.userMainKeyword) !== compact(analysis.mainKeyword) && isBroadBlogKeyword(standardInput.userMainKeyword)
+      ? standardInput.userMainKeyword
+      : "");
   const subKeywords = uniqueTexts([
     ...inputSubKeywords,
-    ...(analysis.broadKeyword ? [analysis.broadKeyword] : []),
+    ...(inputBroadKeyword ? [inputBroadKeyword] : []),
     ...(analysis.subKeywords || [])
   ]).filter((keyword) => compact(keyword) !== compact(analysis.mainKeyword)).slice(0, 5);
   const imageAnalysis = overrides.imageAnalysis || analyzeBlogImages(form);
@@ -473,10 +549,11 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
 
   return {
     pipelineSteps: BLOG_WRITER_PIPELINE_STEPS,
+    standardInput,
     normalizedInput: normalizedForm,
     primaryEntity: analysis.primaryEntity || analysis.mainKeyword,
     mainKeyword: analysis.mainKeyword,
-    broadKeyword: analysis.broadKeyword || "",
+    broadKeyword: inputBroadKeyword,
     inputMainKeyword: normalizedForm.inputMainKeyword || "",
     inputSubKeywords,
     subKeywords,

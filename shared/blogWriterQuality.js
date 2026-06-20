@@ -62,8 +62,8 @@ export const collectDuplicateParagraphs = (body = "") => {
 const getRestaurantTitleIntentCount = (titles = []) => {
   const joinedTitles = titles.join("\n");
   return [
-    /갈낙짬뽕|짬뽕|탕수육|파스타|대표 메뉴|메뉴/u,
-    /강화도맛집|초지대교|강화도|지역|근처|맛집/u,
+    /[가-힣A-Za-z0-9]+(?:짬뽕|탕|국밥|파스타|스테이크|커피|브런치|디저트|냉면|칼국수|라멘|초밥|피자|버거)|탕수육|메뉴/u,
+    /[가-힣A-Za-z0-9]+(?:도|시|군|구|동|역|로|길|대교|시장)|지역|근처|맛집/u,
     /방문 후기|다녀온|들른|궁금했던|가기 전/u,
     /가족여행|가족 식사|가족|회식|모임|여행/u,
     /후기|위치|근처|식사/u
@@ -133,7 +133,7 @@ export const evaluateBlogWriterQuality = ({
   const photoMarkerCount = (normalizedBody.match(/\[사진 삽입:/gu) || []).length;
   const uniqueHashtags = new Set(hashtags.map((tag) => compact(tag))).size;
   const menuTitleCount = primaryMenu ? titles.filter((title) => title.includes(primaryMenu)).length : 0;
-  const regionTitleCount = titles.filter((title) => /강화도맛집|초지대교|강화도|맛집|근처/u.test(title)).length;
+  const regionTitleCount = titles.filter((title) => /[가-힣A-Za-z0-9]+(?:도|시|군|구|동|역|로|길|대교|시장)|맛집|근처/u.test(title)).length;
   const criterionWordCount = (normalizedBody.match(/기준|후보|확인/gu) || []).length;
   const genericExplanationCount = (normalizedBody.match(RESTAURANT_GENERIC_EXPLANATION_PATTERN) || []).length;
   const restaurantRoleOverlapCount = category === "restaurant" ? countRestaurantRoleOverlaps(paragraphs) : 0;
