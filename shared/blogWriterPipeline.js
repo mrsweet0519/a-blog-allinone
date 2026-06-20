@@ -42,20 +42,24 @@ const isBroadBlogKeyword = (value = "") => {
 export const BLOG_WRITER_PIPELINE_STEPS = [
   "Input Normalization",
   "Primary Entity Extraction",
-  "Keyword Parsing",
-  "Category/Search Intent",
-  "Experience Status",
-  "Information Sufficiency",
-  "Fact Map",
+  "Brand/Product/Place Separation",
+  "Main/Sub Keyword Parsing",
+  "Open-set Category Classification",
+  "Search Intent Classification",
+  "Experience Status Classification",
+  "Information Sufficiency Classification",
+  "Fact Map Construction",
   "Image Vision Analysis",
-  "Writer Brief",
+  "Writer Profile Selection",
+  "Reader Intent Planning",
   "Dynamic Outline",
-  "Title Candidates",
-  "Body",
-  "FAQ/hashtags",
-  "Human Quality",
-  "Revision",
-  "Best Result"
+  "SEO/GEO Title Generation",
+  "Draft Generation",
+  "Deterministic Hard Check",
+  "LLM Human Judge",
+  "Automatic Revision",
+  "Best Candidate Selection",
+  "Result Schema Validation"
 ];
 
 export const parseSubKeywords = (value = "", mainKeyword = "") => {
@@ -226,6 +230,13 @@ export const determineInformationSufficiency = ({ form = {}, analysis = analyzeB
   const sourceLength = getInputSourceText(form).replace(/\s+/g, "").length;
   const visualFactCount = imageAnalysis?.visuallySupported?.length || 0;
   const explicitSubKeywordCount = parseSubKeywords(form.subKeywords, analysis.mainKeyword).length;
+  if (memoLines.length === 0 && visualFactCount <= 1) {
+    return {
+      level: "low",
+      targetLengthRange: { min: 700, max: 1300, target: 1000 },
+      reason: "사용자 메모가 거의 없어 서브 키워드만으로 긴 글을 만들지 않습니다."
+    };
+  }
   const score =
     memoLines.length * 2 +
     Math.min(6, Math.floor(sourceLength / 45)) +
@@ -453,7 +464,7 @@ const createKeywordPlan = ({ targetLengthRange = {}, mainKeyword = "", subKeywor
   const mainRange = target <= 1400 ? [3, 4] : target <= 2400 ? [4, 6] : [6, 8];
   return {
     mainKeyword,
-    subKeywords: subKeywords.slice(0, 5),
+    subKeywords: subKeywords.slice(0, 3),
     mainKeywordRange: { min: mainRange[0], max: mainRange[1] },
     subKeywordRange: { min: 1, max: 3 },
     rule: "키워드는 문장 의미가 살아 있을 때만 넣고 반복으로 분량을 채우지 않습니다."
@@ -463,7 +474,7 @@ const createKeywordPlan = ({ targetLengthRange = {}, mainKeyword = "", subKeywor
 export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput(form), category = analysis.category, searchIntent = null, experienceStatus = detectExperienceStatus(form), informationSufficiency = null, factMap = null } = {}) => {
   const experienceTone = getExperienceTone(experienceStatus);
   const resolvedInformation = informationSufficiency || determineInformationSufficiency({ form, analysis });
-  const subKeywords = uniqueTexts([...(analysis.subKeywords || []), ...parseSubKeywords(form.subKeywords, analysis.mainKeyword)]).slice(0, 5);
+  const subKeywords = uniqueTexts([...(analysis.subKeywords || []), ...parseSubKeywords(form.subKeywords, analysis.mainKeyword)]).slice(0, 3);
   const outline = resolveOutline({ category, experienceTone, informationSufficiency: resolvedInformation });
   const faqCount = resolvedInformation.level === "low" ? 0 : resolvedInformation.level === "medium" ? 2 : 3;
 
@@ -514,7 +525,7 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
     ...inputSubKeywords,
     ...(inputBroadKeyword ? [inputBroadKeyword] : []),
     ...(analysis.subKeywords || [])
-  ]).filter((keyword) => compact(keyword) !== compact(analysis.mainKeyword)).slice(0, 5);
+  ]).filter((keyword) => compact(keyword) !== compact(analysis.mainKeyword)).slice(0, 3);
   const imageAnalysis = overrides.imageAnalysis || analyzeBlogImages(form);
   const experienceStatus = overrides.experienceStatus || detectExperienceStatus(form);
   const informationSufficiency =

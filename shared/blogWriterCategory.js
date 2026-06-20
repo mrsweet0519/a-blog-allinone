@@ -28,7 +28,7 @@ const uniqueText = (values = []) => {
 };
 
 const REVIEW_TAIL_PATTERN =
-  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|방문기|사용기|후기|리뷰|추천|정리|방법)$/u;
+  /\s*(?:내돈내산\s*)?(?:솔직\s*)?(?:방문\s*후기|사용\s*후기|체험\s*후기|구매\s*후기|이용\s*후기|숙박\s*후기|방문기|사용기|후기|리뷰|추천|정리|방법|가이드|알아보기)$/u;
 
 const ENTITY_SUFFIX_PATTERN = /본점|지점|분점|점|센터|거래소|강의|학원|매장|식당|카페|본사|브랜드/u;
 const BROAD_SEARCH_PATTERN =
@@ -69,7 +69,7 @@ export const normalizeBlogKeyword = (value = "") => {
   }
 
   return current
-    .replace(/\s*(?:방문|식사|참여|사용)$/u, "")
+    .replace(/\s*(?:방문|식사|참여|사용|숙박|수강|구매|이용|알아보기|알아본)$/u, "")
     .replace(/\s+/g, " ")
     .trim();
 };
@@ -149,7 +149,7 @@ export const inferBlogWriterCategory = (form = {}) => {
   if (/아이|키즈|체험관|놀이터|실내체험|가족/u.test(source)) return "kids-place";
   if (/화장품|크림|세럼|앰플|패드|팩|샴푸|드라이샴푸|피부|보습|향/u.test(source)) return "beauty";
   if (/패션|의류|신발|가방|착용|자켓|셔츠|원피스|니트/u.test(source)) return "fashion";
-  if (/텀블러|제품|사용|휴대|패키지|가전|용품/u.test(source)) return "product";
+  if (/텀블러|물병|보틀|립밤|가방|제품|사용|휴대|패키지|가전|용품/u.test(source)) return "product";
   if (/꽃|꽃집|화분|플라워/u.test(source)) return "flowers";
   if (/시즌|계절|명절|여름|겨울|봄|가을/u.test(source)) return "seasonal";
   if (/방법|정보|체크|처음|초보/u.test(source)) return "information";

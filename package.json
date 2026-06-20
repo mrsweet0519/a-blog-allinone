@@ -15,5 +15,8 @@
   "workspaces": [
     "frontend",
     "backend"
-  ]
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.61.0"
+  }
 }

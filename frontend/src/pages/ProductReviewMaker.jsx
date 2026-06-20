@@ -49,6 +49,7 @@ const createGenerationId = () => `naver-review-${Date.now()}-${Math.random().toS
 
 const createEmptyResult = (generationId = "") => ({
   generationId,
+  resultMode: "",
   category: "",
   titles: [],
   titleCandidates: [],
@@ -191,6 +192,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
   const qualityChecks = draft.qualityChecks || packageData.qualityChecks || [];
   const blogWriterQuality = draft.blogWriterQuality || packageData.blogWriterQuality || null;
   const engine = draft.engine || packageData.engine || (draft.generationRoute === "llm" ? "llm" : "fallback");
+  const resultMode = draft.resultMode || packageData.resultMode || draft.summary?.resultMode || "";
   const primaryEntity = draft.primaryEntity || packageData.primaryEntity || packageData.blogWriterAnalysis?.primaryEntity || "";
   const subKeywords = draft.subKeywords || packageData.subKeywords || packageData.blogWriterAnalysis?.subKeywords || [];
   const searchIntent = draft.searchIntent || packageData.searchIntent || packageData.blogWriterAnalysis?.searchIntent || null;
@@ -205,6 +207,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
     ...(packageData.summary || {}),
     ...(draft.summary || {}),
     engine,
+    resultMode,
     bodyLength,
     targetCharCount:
       draft.summary?.targetCharCount ||
@@ -218,6 +221,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
     ...draft,
     generationId: nextGenerationId,
     engine,
+    resultMode,
     summary,
     finalTitle,
     selectedTitle: finalTitle,
@@ -249,6 +253,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
           primaryEntity,
           mainKeyword,
           subKeywords,
+          resultMode,
           searchIntent,
           experienceStatus,
           informationSufficiency,
@@ -1048,44 +1053,36 @@ export default function ProductReviewMaker() {
                 className="focus-ring mt-3 min-h-[76px] w-full resize-none rounded-2xl border border-line/40 bg-white px-4 py-3 text-lg font-bold leading-7 text-ink placeholder:text-ink/28"
                 placeholder="예: 제품 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기"
               />
-              <label className="mt-3 block">
-                <div className="flex items-center justify-between gap-2">
-                  <FieldLabel>메인 키워드</FieldLabel>
-                  <span className="shrink-0 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/45">
-                    선택사항
-                  </span>
-                </div>
-                <input
-                  value={form.mainKeyword}
-                  onChange={(event) => updateForm("mainKeyword", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
-                  placeholder="예: 상호명 / 지역명 맛집 / 대표 메뉴"
-                />
-                <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
-                  비워두면 글 주제와 메모에서 자동으로 추출합니다. 구체적인 상호명이나 상품명을 우선합니다.
-                </p>
-              </label>
-              <label className="mt-3 block">
-                <div className="flex items-center justify-between gap-2">
-                  <FieldLabel>서브 키워드</FieldLabel>
-                  <span className="shrink-0 whitespace-nowrap rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-ink/45">
-                    선택사항
-                  </span>
-                </div>
-                <input
-                  value={form.subKeywords}
-                  onChange={(event) => updateForm("subKeywords", event.target.value)}
-                  className="focus-ring mt-2 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
-                  placeholder="예: 지역명 맛집, 대표 메뉴, 가족 외식"
-                />
-                <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
-                  비워두면 글 주제와 메모에서 자동 추천합니다. 최대 3개까지 쉼표로 나눠 입력하세요.
-                </p>
-              </label>
             </section>
 
             <section className="rounded-2xl bg-[#fbfaf6] p-4">
-              <StepLabel number="2" title="기억나는 내용이 있나요?" optional />
+              <StepLabel number="2" title="메인 키워드" optional />
+              <input
+                value={form.mainKeyword}
+                onChange={(event) => updateForm("mainKeyword", event.target.value)}
+                className="focus-ring mt-3 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
+                placeholder="예: 상호명 / 상품명 / 강의명 / 장소명"
+              />
+              <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
+                비워두면 글 주제와 메모에서 중심 키워드를 자동으로 추출합니다.
+              </p>
+            </section>
+
+            <section className="rounded-2xl bg-[#fbfaf6] p-4">
+              <StepLabel number="3" title="서브 키워드" optional />
+              <input
+                value={form.subKeywords}
+                onChange={(event) => updateForm("subKeywords", event.target.value)}
+                className="focus-ring mt-3 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
+                placeholder="예: 지역명 맛집, 대표 메뉴, 가족 외식"
+              />
+              <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
+                비워두면 글 주제와 메모에서 자동 추천합니다. 최대 3개까지 쉼표로 나눠 입력하세요.
+              </p>
+            </section>
+
+            <section className="rounded-2xl bg-[#fbfaf6] p-4">
+              <StepLabel number="4" title="기억나는 내용" optional />
               <textarea
                 value={form.experienceMemo}
                 onChange={(event) => updateForm("experienceMemo", event.target.value)}
@@ -1096,7 +1093,7 @@ export default function ProductReviewMaker() {
             </section>
 
             <section className="rounded-2xl bg-[#fbfaf6] p-4">
-              <StepLabel number="3" title="사진 추가" optional />
+              <StepLabel number="5" title="사진 추가" optional />
               <div
                 ref={pasteAreaRef}
                 role="button"
@@ -1155,12 +1152,7 @@ export default function ProductReviewMaker() {
 
             <details className="rounded-2xl bg-white/70 px-4 py-3 shadow-[inset_0_0_0_1px_rgba(31,36,40,0.045)]">
               <summary className="cursor-pointer list-none">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-bold text-ink/62">고급 옵션</span>
-                  <span className="inline-flex min-h-7 min-w-[74px] shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-[#fbfaf6] px-3 text-[12px] font-bold text-moss">
-                    선택사항
-                  </span>
-                </div>
+                <StepLabel number="6" title="고급 옵션" optional />
               </summary>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -1230,19 +1222,22 @@ export default function ProductReviewMaker() {
               </div>
             </details>
 
-            <button
-              type="button"
-              onClick={() => generateReview()}
-              disabled={!isReady || status === "generating" || isReading}
-              className={`focus-ring inline-flex min-h-[58px] w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-base font-bold transition disabled:cursor-not-allowed disabled:bg-ink/25 disabled:text-white disabled:shadow-none ${
-                isGenerateButtonEmphasized
-                  ? "bg-moss text-white shadow-[0_14px_28px_rgba(73,111,99,0.22)] hover:bg-[#456b61]"
-                  : "bg-white text-moss shadow-[inset_0_0_0_1px_rgba(73,111,99,0.18)] hover:bg-[#fff8e6]"
-              }`}
-            >
-              <WandSparkles size={19} aria-hidden="true" />
-              {generateButtonLabel}
-            </button>
+            <section className="rounded-2xl bg-[#fbfaf6] p-4">
+              <StepLabel number="7" title="블로그 초안 만들기" />
+              <button
+                type="button"
+                onClick={() => generateReview()}
+                disabled={!isReady || status === "generating" || isReading}
+                className={`focus-ring mt-3 inline-flex min-h-[58px] w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-base font-bold transition disabled:cursor-not-allowed disabled:bg-ink/25 disabled:text-white disabled:shadow-none ${
+                  isGenerateButtonEmphasized
+                    ? "bg-moss text-white shadow-[0_14px_28px_rgba(73,111,99,0.22)] hover:bg-[#456b61]"
+                    : "bg-white text-moss shadow-[inset_0_0_0_1px_rgba(73,111,99,0.18)] hover:bg-[#fff8e6]"
+                }`}
+              >
+                <WandSparkles size={19} aria-hidden="true" />
+                {generateButtonLabel}
+              </button>
+            </section>
           </div>
         </section>
 

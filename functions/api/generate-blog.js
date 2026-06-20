@@ -225,6 +225,13 @@ const enrichFormWithVision = async (form = {}, env = {}) => {
 
 const getDraftFaqItems = (draft = {}) => draft.faqItems || draft.contentPackage?.faqItems || [];
 
+const resolveResultMode = (draft = {}, humanQuality = null) => {
+  const engine = draft.engine || draft.contentPackage?.engine || "fallback";
+  if (engine !== "llm") return "fallback_draft";
+  if (humanQuality?.publishReady) return "publish_ready";
+  return "honest_draft";
+};
+
 const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
   {
     role: "system",
@@ -374,9 +381,11 @@ const evaluateDraftHumanQuality = ({ form = {}, draft = {}, engine = "fallback",
 
 const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1) => {
   if (!humanQuality) return draft;
+  const resultMode = resolveResultMode(draft, humanQuality);
   const nextPackage = draft.contentPackage
     ? {
         ...draft.contentPackage,
+        resultMode,
         humanQuality,
         publishReady: humanQuality.publishReady,
         judgeEngine: humanQuality.judgeEngine,
@@ -387,6 +396,7 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
         qualityScore: humanQuality.score,
         summary: {
           ...(draft.contentPackage.summary || {}),
+          resultMode,
           judgeEngine: humanQuality.judgeEngine,
           isMock: humanQuality.isMock,
           rawQualityScore: humanQuality.rawQualityScore ?? draft.contentPackage?.rawQualityScore ?? draft.rawQualityScore,
@@ -398,6 +408,7 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
     : draft.contentPackage;
   return {
     ...draft,
+    resultMode,
     contentPackage: nextPackage,
     humanQuality,
     publishReady: humanQuality.publishReady,
@@ -409,6 +420,7 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
     qualityScore: humanQuality.score,
     summary: {
       ...(draft.summary || {}),
+      resultMode,
       judgeEngine: humanQuality.judgeEngine,
       isMock: humanQuality.isMock,
       rawQualityScore: humanQuality.rawQualityScore ?? draft.rawQualityScore ?? draft.contentPackage?.rawQualityScore,
@@ -445,7 +457,7 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
   let bestDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
   let bestQuality = currentQuality;
 
-  while (shouldUseLlmRevision(env) && attempts < 2 && currentQuality.score < 95) {
+  while (shouldUseLlmRevision(env) && attempts < 3 && currentQuality.score < 95) {
     const revisionDraft = await requestLlmRevision({
       env,
       model,
@@ -540,6 +552,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
 
   const contentPackage = {
     ...fallbackPackage,
+    resultMode: "honest_draft",
     standardInput: pipelineContext.standardInput,
     primaryEntity: pipelineContext.primaryEntity,
     finalRecommendedTitle: finalTitle,
@@ -588,6 +601,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   return {
     ...fallbackDraft,
     ...llmDraft,
+    resultMode: "honest_draft",
     finalTitle,
     selectedTitle: finalTitle,
     titleCandidates,
@@ -609,6 +623,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     hashtags,
     engine: "llm",
     summary: {
+      resultMode: "honest_draft",
       engine: "llm",
       bodyLength,
       actualBodyCharCount: Array.from(String(body || "")).length,
@@ -641,10 +656,12 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
   const decorated = attachHumanQuality(fallbackDraft, humanQuality, 1);
   return {
     ...decorated,
+    resultMode: "fallback_draft",
     generationRoute: "static-fallback",
     engine: "fallback",
     summary: {
       ...(decorated.summary || {}),
+      resultMode: "fallback_draft",
       engine: "fallback",
       bodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
       actualBodyCharCount: Array.from(String(decorated.body || "")).length,
@@ -658,11 +675,13 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
     contentPackage: decorated.contentPackage
       ? {
           ...decorated.contentPackage,
+          resultMode: "fallback_draft",
           engine: "fallback",
           actualBodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
           actualBodyCharCount: Array.from(String(decorated.body || "")).length,
           summary: {
             ...(decorated.contentPackage.summary || {}),
+            resultMode: "fallback_draft",
             engine: "fallback",
             bodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
             actualBodyCharCount: Array.from(String(decorated.body || "")).length,
