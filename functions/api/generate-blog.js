@@ -5,7 +5,11 @@ import { createHumanQualityFactMap, evaluateHumanQuality } from "../../shared/bl
 import { buildBlogWriterPipelineContext, normalizeBlogWriterInput } from "../../shared/blogWriterPipeline.js";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_OPENAI_VISION_MODEL = "gpt-4o-mini";
 const LLM_ENABLED_PATTERN = /^(1|true|yes|on)$/iu;
+const VISION_SUPPORTED_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_VISION_IMAGES = 3;
+const MAX_VISION_DATA_URL_LENGTH = 2_500_000;
 
 const jsonResponse = (body, init = {}) =>
   new Response(JSON.stringify(body), {
@@ -35,6 +39,9 @@ const parseLlmJson = (value = "") => {
 const isLlmEnabled = (env = {}) => LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_LLM_ENABLED || "").trim());
 
 const getOpenAiModel = (env = {}) => env.OPENAI_MODEL || env.BLOG_WRITER_OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+const isMockEnvironment = (env = {}) =>
+  /^(unit-test-key|mock-key|test-key)$/u.test(String(env.OPENAI_API_KEY || "")) ||
+  /^(unit-model|mock-model)$/u.test(String(getOpenAiModel(env) || ""));
 
 const shouldUseLlm = (env = {}) =>
   isLlmEnabled(env) &&
@@ -47,6 +54,13 @@ const shouldUseLlmJudge = (env = {}) =>
 const shouldUseLlmRevision = (env = {}) =>
   shouldUseLlmJudge(env) &&
   LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_LLM_REVISION_ENABLED || "").trim());
+
+const shouldUseVision = (env = {}) =>
+  Boolean(env.OPENAI_API_KEY) &&
+  LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_VISION_ENABLED || "").trim());
+
+const getVisionModel = (env = {}) =>
+  env.OPENAI_VISION_MODEL || env.BLOG_WRITER_OPENAI_VISION_MODEL || env.OPENAI_MODEL || DEFAULT_OPENAI_VISION_MODEL;
 
 const compact = (value = "") =>
   String(value ?? "")
@@ -77,6 +91,136 @@ const normalizeFaqItems = (value, fallback = []) => {
       answer: String(item?.answer || "").trim()
     }))
     .filter((item) => item.question && item.answer);
+};
+
+const getVisionImageItems = (form = {}) => {
+  const source = Array.isArray(form.imageContext)
+    ? form.imageContext
+    : Array.isArray(form.images)
+      ? form.images
+      : Array.isArray(form.photos)
+        ? form.photos
+        : Array.isArray(form.photoMetadata)
+          ? form.photoMetadata
+          : [];
+
+  return source
+    .map((item, index) => {
+      const mediaType = String(item?.mediaType || item?.type || "").trim().toLowerCase();
+      const dataUrl = String(item?.dataUrl || item?.previewDataUrl || "").trim();
+      const base64Data = String(item?.base64Data || item?.base64 || "").trim();
+      const resolvedDataUrl = dataUrl || (mediaType && base64Data ? `data:${mediaType};base64,${base64Data}` : "");
+      return {
+        photoIndex: Number(item?.index || item?.photoIndex) || index + 1,
+        mediaType,
+        dataUrl: resolvedDataUrl,
+        note: String(item?.note || item?.description || "").trim(),
+        ocrText: String(item?.ocrText || "").trim()
+      };
+    })
+    .filter((item) =>
+      item.dataUrl &&
+      VISION_SUPPORTED_MEDIA_TYPES.has(item.mediaType) &&
+      item.dataUrl.length <= MAX_VISION_DATA_URL_LENGTH
+    )
+    .slice(0, MAX_VISION_IMAGES);
+};
+
+const normalizeVisionAnalysis = (value = {}, imageItems = []) => {
+  const rawItems = Array.isArray(value.items) ? value.items : Array.isArray(value.photos) ? value.photos : [];
+  const items = rawItems.map((item, index) => ({
+    photoIndex: Number(item.photoIndex || item.index) || imageItems[index]?.photoIndex || index + 1,
+    analysisMode: "vision",
+    category: String(item.category || "unknown").trim() || "unknown",
+    visibleElements: normalizeList(item.visibleElements || item.facts || []),
+    safeDescription: String(item.safeDescription || item.description || "").trim(),
+    unsafeClaims: normalizeList(item.unsafeClaims || []),
+    confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0))
+  }));
+  const visuallySupported = normalizeList(value.visuallySupported || items.flatMap((item) => item.visibleElements));
+
+  return {
+    mode: "vision",
+    analysisMode: "vision",
+    items,
+    visuallySupported,
+    unsupportedVisualFields: normalizeList(value.unsupportedVisualFields || ["taste", "price", "quantity", "service", "staff", "businessHours"]),
+    canAssertVisualFacts: items.length > 0,
+    source: "openai-vision"
+  };
+};
+
+const requestVisionAnalysis = async ({ env = {}, form = {} } = {}) => {
+  if (!shouldUseVision(env) || form.imageAnalysis) return null;
+  const imageItems = getVisionImageItems(form);
+  if (imageItems.length === 0) return null;
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model: getVisionModel(env),
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "사진에서 시각적으로 보이는 사실만 한국어 JSON으로 요약하세요. 맛, 가격, 양, 직원 응대, 영업시간, 효과처럼 사진만으로 알 수 없는 내용은 unsafeClaims에 넣으세요."
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                outputSchema: {
+                  items: [
+                    {
+                      photoIndex: 1,
+                      analysisMode: "vision",
+                      category: "string",
+                      visibleElements: ["string"],
+                      safeDescription: "string",
+                      unsafeClaims: ["string"],
+                      confidence: 0.9
+                    }
+                  ],
+                  visuallySupported: ["string"],
+                  unsupportedVisualFields: ["taste", "price", "quantity", "service", "staff", "businessHours"]
+                },
+                imageNotes: imageItems.map(({ photoIndex, note, ocrText }) => ({ photoIndex, note, ocrText }))
+              })
+            },
+            ...imageItems.map((item) => ({
+              type: "image_url",
+              image_url: {
+                url: item.dataUrl,
+                detail: "low"
+              }
+            }))
+          ]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) throw new Error(`Vision request failed with ${response.status}`);
+  const payload = await response.json();
+  const content = payload?.choices?.[0]?.message?.content || "";
+  return normalizeVisionAnalysis(parseLlmJson(content), imageItems);
+};
+
+const enrichFormWithVision = async (form = {}, env = {}) => {
+  try {
+    const imageAnalysis = await requestVisionAnalysis({ env, form });
+    return imageAnalysis ? { ...form, imageAnalysis } : form;
+  } catch {
+    return form;
+  }
 };
 
 const getDraftFaqItems = (draft = {}) => draft.faqItems || draft.contentPackage?.faqItems || [];
@@ -219,6 +363,7 @@ const evaluateDraftHumanQuality = ({ form = {}, draft = {}, engine = "fallback",
     category: draft.category || packageData.blogWriterAnalysis?.category || "",
     visitStatus: packageData.experienceStatus || packageData.blogWriterAnalysis?.visitStatus || "",
     mainKeyword: draft.mainKeyword || packageData.mainKeyword || "",
+    primaryEntity: draft.primaryEntity || packageData.primaryEntity || packageData.blogWriterAnalysis?.primaryEntity || draft.mainKeyword || packageData.mainKeyword || "",
     subKeywords: packageData.subKeywords || [],
     requestedTargetCharCount: packageData.requestedTargetCharCount || form.targetCharCount || form.targetLength || 2500,
     effectiveTargetCharCount: packageData.targetLengthRange?.target || packageData.targetCharCount || form.targetCharCount || 2500,
@@ -235,8 +380,19 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
         humanQuality,
         publishReady: humanQuality.publishReady,
         judgeEngine: humanQuality.judgeEngine,
+        isMock: humanQuality.isMock,
         qualityAttempts,
+        rawQualityScore: humanQuality.rawQualityScore ?? draft.contentPackage?.rawQualityScore ?? draft.rawQualityScore,
+        cappedScore: humanQuality.score,
         qualityScore: humanQuality.score,
+        summary: {
+          ...(draft.contentPackage.summary || {}),
+          judgeEngine: humanQuality.judgeEngine,
+          isMock: humanQuality.isMock,
+          rawQualityScore: humanQuality.rawQualityScore ?? draft.contentPackage?.rawQualityScore ?? draft.rawQualityScore,
+          cappedScore: humanQuality.score,
+          publishReady: humanQuality.publishReady
+        },
         qualityIssues: humanQuality.issues?.map((issue) => `${issue.code}: ${issue.message}`) || []
       }
     : draft.contentPackage;
@@ -246,8 +402,19 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
     humanQuality,
     publishReady: humanQuality.publishReady,
     judgeEngine: humanQuality.judgeEngine,
+    isMock: humanQuality.isMock,
     qualityAttempts,
+    rawQualityScore: humanQuality.rawQualityScore ?? draft.rawQualityScore ?? draft.contentPackage?.rawQualityScore,
+    cappedScore: humanQuality.score,
     qualityScore: humanQuality.score,
+    summary: {
+      ...(draft.summary || {}),
+      judgeEngine: humanQuality.judgeEngine,
+      isMock: humanQuality.isMock,
+      rawQualityScore: humanQuality.rawQualityScore ?? draft.rawQualityScore ?? draft.contentPackage?.rawQualityScore,
+      cappedScore: humanQuality.score,
+      publishReady: humanQuality.publishReady
+    },
     qualityIssues: humanQuality.issues?.map((issue) => `${issue.code}: ${issue.message}`) || []
   };
 };
@@ -259,6 +426,10 @@ const judgeDraft = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, d
     form,
     draft
   });
+  if (llmJudge) {
+    llmJudge.isMock = isMockEnvironment(env);
+    llmJudge.model = model;
+  }
   return evaluateDraftHumanQuality({
     form,
     draft,
@@ -333,7 +504,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     primaryMenu: detectPrimaryMenu(form, subKeywords)
   });
 
-  const qualityScore = blogWriterQuality.score;
+  const rawQualityScore = blogWriterQuality.score;
   const qualityIssues = blogWriterQuality.issues;
   const qualityChecks = blogWriterQuality.checks;
   const deterministicHumanQuality = evaluateHumanQuality({
@@ -346,6 +517,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     imageAnalysis: form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
     category: fallbackDraft.category,
     mainKeyword,
+    primaryEntity: fallbackPackage.primaryEntity || fallbackPackage.blogWriterAnalysis?.primaryEntity || fallbackDraft.primaryEntity || mainKeyword,
     subKeywords,
     requestedTargetCharCount: fallbackPackage.requestedTargetCharCount || form.targetCharCount || targetCharCount,
     effectiveTargetCharCount: targetCharCount,
@@ -390,17 +562,26 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       bodyLength,
       actualBodyCharCount: Array.from(String(body || "")).length,
       targetCharCount,
-      informationSufficiency: pipelineContext.informationSufficiency?.level || null
+      informationSufficiency: pipelineContext.informationSufficiency?.level || null,
+      rawQualityScore,
+      cappedScore: deterministicHumanQuality.score,
+      judgeEngine: deterministicHumanQuality.judgeEngine,
+      isMock: deterministicHumanQuality.isMock,
+      publishReady: deterministicHumanQuality.publishReady
     },
     faqItems,
     hashtags,
-    qualityScore,
+    rawQualityScore,
+    legacyQualityScore: rawQualityScore,
+    cappedScore: deterministicHumanQuality.score,
+    qualityScore: deterministicHumanQuality.score,
     qualityIssues,
     qualityChecks,
     blogWriterQuality,
     humanQuality: deterministicHumanQuality,
     publishReady: deterministicHumanQuality.publishReady,
     judgeEngine: deterministicHumanQuality.judgeEngine,
+    isMock: deterministicHumanQuality.isMock,
     qualityAttempts: 1
   };
 
@@ -432,16 +613,25 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       bodyLength,
       actualBodyCharCount: Array.from(String(body || "")).length,
       targetCharCount,
-      informationSufficiency: pipelineContext.informationSufficiency?.level || null
+      informationSufficiency: pipelineContext.informationSufficiency?.level || null,
+      rawQualityScore,
+      cappedScore: deterministicHumanQuality.score,
+      judgeEngine: deterministicHumanQuality.judgeEngine,
+      isMock: deterministicHumanQuality.isMock,
+      publishReady: deterministicHumanQuality.publishReady
     },
     contentPackage,
-    qualityScore,
+    rawQualityScore,
+    legacyQualityScore: rawQualityScore,
+    cappedScore: deterministicHumanQuality.score,
+    qualityScore: deterministicHumanQuality.score,
     qualityIssues,
     qualityChecks,
     blogWriterQuality,
     humanQuality: deterministicHumanQuality,
     publishReady: deterministicHumanQuality.publishReady,
     judgeEngine: deterministicHumanQuality.judgeEngine,
+    isMock: deterministicHumanQuality.isMock,
     qualityAttempts: 1
   };
 };
@@ -460,6 +650,9 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
       actualBodyCharCount: Array.from(String(decorated.body || "")).length,
       targetCharCount: decorated.contentPackage?.targetLengthRange?.target || decorated.contentPackage?.targetCharCount || null,
       judgeEngine: humanQuality.judgeEngine,
+      isMock: humanQuality.isMock,
+      rawQualityScore: decorated.rawQualityScore ?? decorated.contentPackage?.rawQualityScore ?? humanQuality.rawQualityScore,
+      cappedScore: humanQuality.score,
       publishReady: humanQuality.publishReady
     },
     contentPackage: decorated.contentPackage
@@ -475,6 +668,9 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
             actualBodyCharCount: Array.from(String(decorated.body || "")).length,
             targetCharCount: decorated.contentPackage.targetLengthRange?.target || decorated.contentPackage.targetCharCount || null,
             judgeEngine: humanQuality.judgeEngine,
+            isMock: humanQuality.isMock,
+            rawQualityScore: decorated.rawQualityScore ?? decorated.contentPackage?.rawQualityScore ?? humanQuality.rawQualityScore,
+            cappedScore: humanQuality.score,
             publishReady: humanQuality.publishReady
           }
         }
@@ -491,7 +687,9 @@ const hasUsableLlmDraft = (draft = {}) =>
   Boolean(String(draft.finalTitle || draft.selectedTitle || "").trim() || normalizeList(draft.titleCandidates || draft.titles).length > 0);
 
 export async function onRequestPost(context) {
-  const form = normalizeBlogWriterInput(await parseJsonRequest(context.request));
+  const rawForm = await parseJsonRequest(context.request);
+  const visionForm = await enrichFormWithVision(rawForm, context.env);
+  const form = normalizeBlogWriterInput(visionForm);
   const fallbackDraft = createProductReviewDraft(form);
   const promptPayload = buildBlogWriterPromptPayload({
     form,
@@ -562,10 +760,12 @@ export async function onRequestPost(context) {
       ...acceptedDraft,
       generationRoute: "llm",
       engine: "llm",
+      isMock: Boolean(acceptedDraft.isMock || isMockEnvironment(context.env)),
       llm: {
         used: true,
         accepted: true,
         model,
+        isMock: Boolean(acceptedDraft.isMock || isMockEnvironment(context.env)),
         judgeUsed: acceptedDraft.judgeEngine === "llm"
       }
     });

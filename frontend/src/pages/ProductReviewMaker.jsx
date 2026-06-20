@@ -97,6 +97,8 @@ const reviewCategoryOptions = [
 const MIN_TARGET_CHAR_COUNT = 800;
 const MAX_TARGET_CHAR_COUNT = 4000;
 const MAX_REVIEW_IMAGES = 10;
+const MAX_VISION_IMAGES = 3;
+const MAX_VISION_IMAGE_BYTES = 1_600_000;
 const supportedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 const fieldLabels = [
@@ -337,6 +339,19 @@ const createImageItem = (file, source = "upload") => ({
   message: "",
   warnings: []
 });
+
+const readImageAsDataUrl = (file) =>
+  new Promise((resolve) => {
+    if (!file || !supportedImageTypes.has(file.type) || file.size > MAX_VISION_IMAGE_BYTES) {
+      resolve("");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => resolve("");
+    reader.readAsDataURL(file);
+  });
 
 const mergeTextBlocks = (...blocks) =>
   Array.from(
@@ -641,23 +656,34 @@ export default function ProductReviewMaker() {
     };
   };
 
-  const getImageContext = () =>
-    images.map((item, index) => ({
+  const getImageContext = async () => {
+    const visionDataUrls = await Promise.all(
+      images.slice(0, MAX_VISION_IMAGES).map((item) => readImageAsDataUrl(item.file))
+    );
+
+    return images.map((item, index) => ({
       index: index + 1,
       name: item.name,
       source: item.source,
       note: item.note,
-      ocrText: item.ocrText
+      ocrText: item.ocrText,
+      mediaType: item.file?.type || "",
+      size: item.file?.size || 0,
+      dataUrl: index < MAX_VISION_IMAGES ? visionDataUrls[index] || "" : ""
     }));
+  };
 
-  const createReviewPayload = ({ selectedTitle = "", generationId = result.generationId } = {}) => {
-    const imageContext = getImageContext();
+  const createReviewPayload = async ({ selectedTitle = "", generationId = result.generationId } = {}) => {
+    const imageContext = await getImageContext();
     const photoMetadata = imageContext.map((item) => ({
       index: item.index,
       name: item.name,
       source: item.source,
       note: item.note,
-      ocrText: item.ocrText
+      ocrText: item.ocrText,
+      mediaType: item.mediaType,
+      size: item.size,
+      dataUrl: item.dataUrl
     }));
     const imageText = mergeTextBlocks(
       ...imageContext.map((item) =>
@@ -811,7 +837,7 @@ export default function ProductReviewMaker() {
     }
   };
 
-  const generateReview = () => {
+  const generateReview = async () => {
     if (!isReady) return;
 
     const generationId = createGenerationId();
@@ -824,7 +850,7 @@ export default function ProductReviewMaker() {
     setDraftId("");
     setDraftMessage("");
 
-    const payload = createReviewPayload({ selectedTitle: "", generationId });
+    const payload = await createReviewPayload({ selectedTitle: "", generationId });
     window.setTimeout(async () => {
       if (activeGenerationIdRef.current !== generationId) return;
 
@@ -859,12 +885,12 @@ export default function ProductReviewMaker() {
     setDraftMessage("");
   };
 
-  const regenerateTitles = () => {
+  const regenerateTitles = async () => {
     if (!hasResult) return;
 
     const currentBlogBody = getResultBody(result);
     const nextTitleVariantSeed = Number(result.contentPackage?.titleVariantSeed || 0) + 1;
-    const basePayload = result.sourcePayload || createReviewPayload({ selectedTitle: "", generationId: result.generationId });
+    const basePayload = result.sourcePayload || (await createReviewPayload({ selectedTitle: "", generationId: result.generationId }));
     const draft = normalizeReviewResult(createProductReviewDraft({
       ...basePayload,
       selectedTitle: "",
@@ -905,12 +931,12 @@ export default function ProductReviewMaker() {
     setDraftMessage("");
   };
 
-  const saveCurrentDraft = () => {
+  const saveCurrentDraft = async () => {
     if (!hasResult) return;
 
     const saved = saveDraft(
       {
-        ...createReviewPayload({ selectedTitle: getResultFinalTitle(result), generationId: result.generationId }),
+        ...(await createReviewPayload({ selectedTitle: getResultFinalTitle(result), generationId: result.generationId })),
         keyword: resolvedMainKeyword || reviewTopic,
         targetCharCount: getPayloadTargetCharCount(form.targetCharCount)
       },
@@ -1288,6 +1314,7 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
   const hashtags = packageData.hashtags || result.hashtags || [];
   const mainKeyword = getResultMainKeyword(result);
   const bodyLength = blogBody.replace(/\s+/g, "").length;
+  const lowInformationNotice = packageData.informationSufficiency?.level === "low";
 
   const updateSelectedTitle = (title) => {
     setResult((current) => ({
@@ -1369,6 +1396,16 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
             <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">본문 {bodyLength}자</span>
             <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">해시태그 {hashtags.length}개</span>
           </div>
+          {lowInformationNotice && (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-950">
+              <p>입력 정보가 적어 확인 가능한 내용을 중심으로 짧은 초안을 만들었습니다. 실제 경험이나 세부 정보를 더하면 더 풍성한 글로 다시 만들 수 있습니다.</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-amber-900">
+                <li>실제 방문·사용 여부</li>
+                <li>가장 좋았던 점 또는 아쉬웠던 점</li>
+                <li>가격·주차·메뉴·시설 등 확인한 정보</li>
+              </ul>
+            </div>
+          )}
         </header>
 
         <ResultDetailSection title="제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
