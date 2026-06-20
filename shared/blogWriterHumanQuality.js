@@ -102,7 +102,7 @@ export const HUMAN_QUALITY_WEIGHTS = {
 };
 
 export const HUMAN_GUIDE_PATTERN =
-  /글을\s*읽는\s*사람|글\s*안에서|본문에서|광고처럼|작성하면|제공된\s*정보|메모에|단정하지\s*않고|자연스럽게\s*정리되는\s*느낌|글의\s*흐름|글이\s*구체적으로\s*완성|확인\s*필요|안전합니다|안전해요|해당\s*표현|식사\s*후보|판단\s*기준|작성\s*가이드|최종\s*검수표/u;
+  /글을\s*읽는\s*사람|글\s*안에서|본문에서|광고처럼|작성하면|제공된\s*정보|메모에|단정하지\s*않고|자연스럽게\s*정리되는\s*느낌|글의\s*흐름|글이\s*구체적으로\s*완성|확인\s*필요|안전합니다|안전해요|해당\s*표현|식사\s*후보|작성\s*가이드|최종\s*검수표/u;
 
 const AWKWARD_TITLE_PATTERN =
   /식사하며\s*들른\s*곳\s*기록|식사로\s*본\s*점|정보\s*정리|체험\s*흐름|이용\s*전\s*확인할\s*점|후보로\s*본\s*점|기준\s*정리|체크\s*포인트까지\s*정리/u;
@@ -116,7 +116,7 @@ const GENERIC_FILLER_PATTERN =
 const UNSUPPORTED_CLAIM_PATTERNS = [
   { pattern: /직원\s*(?:응대|친절)|사장님\s*친절/u, label: "직원 친절" },
   { pattern: /주차가\s*(?:편|좋|가능)|주차\s*편/u, label: "주차 편함" },
-  { pattern: /양이\s*(?:많|넉넉|푸짐)|푸짐했/u, label: "양 많음" },
+  { pattern: /양(?:이|은)?[^.\n]{0,12}(?:많|넉넉|푸짐)|푸짐했/u, label: "양 많음" },
   { pattern: /웨이팅\s*(?:없|짧)|대기\s*없/u, label: "웨이팅 없음" },
   { pattern: /가격\s*(?:만족|괜찮|저렴)|가성비/u, label: "가격 만족" },
   { pattern: /재방문(?:\s*의사|하고\s*싶)|다시\s*가고\s*싶/u, label: "재방문 의사" },
@@ -191,6 +191,8 @@ const getKeywordRange = (length = 1500) => {
   return { min: 6, max: 8, hardMax: 10 };
 };
 
+import { getEntityCoverage } from "./blogWriterEntity.js";
+
 const scoreFromPenalty = (max, penalty) => Math.max(0, max - penalty);
 
 const getGrade = (score) => {
@@ -231,7 +233,8 @@ export const evaluateHumanQuality = ({
   requestedTargetCharCount = 2500,
   effectiveTargetCharCount = 2500,
   engine = "fallback",
-  llmJudge = null
+  llmJudge = null,
+  primaryEntity = ""
 } = {}) => {
   const normalizedTitle = text(title || titleCandidates[0] || "");
   const titles = unique(titleCandidates.length > 0 ? titleCandidates : [normalizedTitle]);
@@ -269,7 +272,17 @@ export const evaluateHumanQuality = ({
   const fakeVisualClaim = !hasImageInput && photoMarkers > 0 && /사진에서는|사진에서\s*보|가까이\s*찍힌|또렷하게\s*보/u.test(normalizedBody) && !/note|라벨/u.test(String(imageAnalysis || ""));
   const allFaqCheckOnly =
     faqList.length > 0 && faqList.every((item) => /확인\s*필요|\[확인 필요\]|확인해야/u.test(`${item.question || ""} ${item.answer || ""}`));
-  const primaryEntityMissing = Boolean(mainKeyword && (!normalizedTitle.includes(mainKeyword) || !normalizedBody.includes(mainKeyword)));
+  const entityForCoverage = primaryEntity || mainKeyword;
+  const entityCoverage = getEntityCoverage({
+    primaryEntity: entityForCoverage,
+    title: normalizedTitle,
+    titleCandidates: titles,
+    body: normalizedBody
+  });
+  const primaryEntityMissing = Boolean(
+    entityForCoverage &&
+      (!entityCoverage.finalTitle || !entityCoverage.openingSentence || !entityCoverage.body)
+  );
   const josaError = (() => {
     if (!mainKeyword) return false;
     const escaped = escapeRegExp(mainKeyword);
@@ -388,14 +401,34 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "자리표시자는 삭제하고 확인된 사실 문장으로만 다시 쓰세요."
     });
   }
-  if (primaryEntityMissing) {
-    caps.push({ score: 55, code: "PRIMARY_ENTITY_MISSING" });
+  if (entityForCoverage && !entityCoverage.finalTitle) {
+    caps.push({ score: 55, code: "PRIMARY_ENTITY_TITLE_MISSING" });
     issues.push({
-      code: "PRIMARY_ENTITY_MISSING",
+      code: "PRIMARY_ENTITY_TITLE_MISSING",
       severity: "critical",
-      evidence: mainKeyword,
-      message: "대표 엔티티가 제목 또는 본문에서 누락됐습니다.",
-      revisionInstruction: "첫 문장, 제목 후보, 본문 중심을 대표 엔티티로 다시 맞추세요."
+      evidence: entityForCoverage,
+      message: "대표 엔티티가 최종 제목에서 누락됐습니다.",
+      revisionInstruction: "최종 제목과 제목 후보를 대표 엔티티 중심으로 다시 맞추세요."
+    });
+  }
+  if (entityForCoverage && !entityCoverage.openingSentence) {
+    caps.push({ score: 75, code: "PRIMARY_ENTITY_OPENING_MISSING" });
+    issues.push({
+      code: "PRIMARY_ENTITY_OPENING_MISSING",
+      severity: "high",
+      evidence: entityForCoverage,
+      message: "대표 엔티티가 첫 문장에서 누락됐습니다.",
+      revisionInstruction: "첫 문장에 원형 대표 엔티티를 자연스럽게 포함하세요."
+    });
+  }
+  if (entityForCoverage && !entityCoverage.body) {
+    caps.push({ score: 55, code: "PRIMARY_ENTITY_BODY_MISSING" });
+    issues.push({
+      code: "PRIMARY_ENTITY_BODY_MISSING",
+      severity: "critical",
+      evidence: entityForCoverage,
+      message: "대표 엔티티가 본문에서 누락됐습니다.",
+      revisionInstruction: "본문 중심 문단에 대표 엔티티를 다시 반영하세요."
     });
   }
   if (unsupportedClaims.length > 0 || visitContradiction) {
@@ -457,14 +490,19 @@ export const evaluateHumanQuality = ({
   if (allFaqCheckOnly) caps.push({ score: 85, code: "FAQ_CHECK_ONLY" });
 
   const llmScores = llmJudge?.scores || llmJudge?.breakdown || null;
+  const isMock = Boolean(llmJudge?.isMock || llmJudge?.mock || llmJudge?.model === "mock-model" || llmJudge?.model === "unit-model");
   const hasLlmJudge = Boolean(llmJudge && Number.isFinite(Number(llmJudge.score)));
   const breakdown = mergeScores(deterministicBreakdown, llmScores);
   let score = hasLlmJudge
     ? Math.round(sumBreakdown(deterministicBreakdown) * 0.4 + Number(llmJudge.score) * 0.6)
     : sumBreakdown(breakdown);
+  const rawQualityScore = clamp(score);
 
   if (!hasLlmJudge) {
-    caps.push({ score: 89, code: "DETERMINISTIC_ONLY" });
+    caps.push({ score: 89, code: "DETERMINISTIC_ONLY_MAX_89" });
+  }
+  if (hasLlmJudge && isMock) {
+    caps.push({ score: 89, code: "MOCK_LLM_NOT_ACTUAL_QUALITY" });
   }
   caps.forEach((cap) => {
     score = Math.min(score, cap.score);
@@ -475,6 +513,7 @@ export const evaluateHumanQuality = ({
   const publishReady =
     score >= 95 &&
     hasLlmJudge &&
+    !isMock &&
     !hardFail &&
     !guideLeak &&
     !placeholderLeak &&
@@ -497,8 +536,10 @@ export const evaluateHumanQuality = ({
     publishReady,
     hardFail,
     judgeEngine: hasLlmJudge ? "llm" : "deterministic",
+    isMock,
     confidence: hasLlmJudge ? 0.91 : 0.74,
     breakdown,
+    rawQualityScore,
     deterministicScore: clamp(sumBreakdown(deterministicBreakdown)),
     llmJudgeScore: hasLlmJudge ? clamp(llmJudge.score) : null,
     issues: [...issues, ...(Array.isArray(llmJudge?.issues) ? llmJudge.issues.map(toIssue) : [])],
@@ -511,7 +552,8 @@ export const evaluateHumanQuality = ({
       keywordCount: exactKeywordCount,
       duplicateParagraphs: duplicateSignals.duplicates,
       repeatedHeadingCount: duplicateSignals.repeatedHeadingCount,
-      repeatedNgramRatio: Number(repeatedNgramRatio.toFixed(3))
+      repeatedNgramRatio: Number(repeatedNgramRatio.toFixed(3)),
+      entityCoverage
     },
     requestedTargetCharCount,
     effectiveTargetCharCount,

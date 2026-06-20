@@ -149,7 +149,11 @@ const getImageItems = (form = {}) => {
     name: text(item?.name),
     source: text(item?.source),
     note: text(item?.note || item?.description || item?.alt),
-    ocrText: text(item?.ocrText)
+    ocrText: text(item?.ocrText),
+    mediaType: text(item?.mediaType || item?.type),
+    size: Number(item?.size) || 0,
+    dataUrl: text(item?.dataUrl || item?.previewDataUrl),
+    base64Data: text(item?.base64Data || item?.base64)
   }));
 };
 

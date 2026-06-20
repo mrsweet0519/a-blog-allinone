@@ -1,4 +1,5 @@
 import { createHumanQualityFactMap, evaluateHumanQuality } from "./blogWriterHumanQuality.js";
+import { analyzeBlogWritingInput } from "./blogWriterCategory.js";
 
 const text = (value) => String(value ?? "").trim();
 
@@ -282,6 +283,7 @@ export const evaluateBlogWriterQuality = ({
   const issues = checks.filter((check) => !check.passed);
   const score = Math.max(0, Math.min(100, 100 - issues.reduce((total, check) => total + check.penalty, 0)));
   const criticalFailed = issues.some((check) => check.critical);
+  const blogInputAnalysis = analyzeBlogWritingInput(form);
   const humanQuality = evaluateHumanQuality({
     title: selectedTitle,
     titleCandidates: titles,
@@ -293,6 +295,7 @@ export const evaluateBlogWriterQuality = ({
     category,
     visitStatus: createHumanQualityFactMap(form).visitStatus,
     mainKeyword,
+    primaryEntity: form.primaryEntity || blogInputAnalysis.primaryEntity || mainKeyword,
     subKeywords,
     requestedTargetCharCount: form.requestedTargetCharCount || form.targetCharCount || targetCharCount,
     effectiveTargetCharCount: targetCharCount,
