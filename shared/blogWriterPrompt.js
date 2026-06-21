@@ -1,7 +1,15 @@
 import { analyzeBlogWritingInput } from "./blogWriterCategory.js";
 import { buildBlogWriterPipelineContext } from "./blogWriterPipeline.js";
+import {
+  ANEUNYEOJA_WRITER_PROFILE,
+  ANEUNYEOJA_WRITER_PROFILE_ID,
+  ANEUNYEOJA_WRITER_PROFILE_VERSION,
+  buildAneunyeojaWriterProfileInstruction
+} from "./writerProfiles/aneunyeoja.js";
 
-export const BLOG_WRITER_SYSTEM_PROMPT = `
+export const BLOG_WRITER_PROMPT_VERSION = ANEUNYEOJA_WRITER_PROFILE_VERSION;
+
+const BLOG_WRITER_CORE_SYSTEM_PROMPT = `
 당신은 네이버 블로그에 실제로 올릴 수 있는 한국어 사실 근거형 블로그 원고를 쓰는 편집자입니다.
 독자는 방문, 구매, 수강, 비교, 정보 확인 전에 실제 입력 근거 안에서 판단하고 싶은 사람입니다.
 
@@ -24,28 +32,23 @@ export const BLOG_WRITER_SYSTEM_PROMPT = `
 최종 원고의 각 주장에는 Fact Map, Context Facts, Image Analysis 중 하나 이상의 근거가 있거나 안전한 일반화여야 합니다. unsupported, contradictory, metaGuidance, placeholder 유형의 문장은 최종 원고에 남기지 않습니다.
 `.trim();
 
+export const BLOG_WRITER_SYSTEM_PROMPT = [
+  buildAneunyeojaWriterProfileInstruction(),
+  BLOG_WRITER_CORE_SYSTEM_PROMPT
+].join("\n\n").trim();
+
 export const BLOG_WRITER_OUTPUT_SCHEMA = {
-  primaryEntity: "string",
-  finalTitle: "string",
   titleCandidates: ["string"],
-  mainKeyword: "string",
-  subKeywords: ["string"],
-  category: "string",
-  searchIntent: "object",
-  experienceStatus: "visited|stayed|used|eaten|attended|purchased|researched|planned|unknown",
-  contextFacts: {
-    companions: { value: "solo|family|children|friends|colleagues|group|unknown", evidenceIds: ["string"] },
-    occasion: { value: "travel|business|daily|event|study|unknown", evidenceIds: ["string"] },
-    visitPurpose: { value: "string", evidenceIds: ["string"] }
-  },
-  informationSufficiency: "low|medium|high",
-  writerPlan: "object",
-  titleCandidateEvaluations: [{ title: "string", score: "number", categoryFit: "number", experienceFit: "number" }],
-  body: "string",
-  faqItems: [{ question: "string", answer: "string" }],
-  hashtags: ["string"],
-  claimLedger: [{ text: "string", claimType: "supported|visuallySupported|safeGeneralization|unsupported|contradictory|metaGuidance|placeholder", evidenceIds: ["string"] }],
-  qualityNotes: ["string"]
+  finalTitle: "string",
+  sections: [
+    {
+      heading: "string",
+      paragraphs: ["string"],
+      imageRefs: ["string"]
+    }
+  ],
+  faq: [{ question: "string", answer: "string" }],
+  hashtags: ["string"]
 };
 
 const toJsonBlock = (value) => JSON.stringify(value, null, 2);
@@ -57,6 +60,13 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
   });
   const payload = {
     task: "네이버 블로그 publishable draft 생성",
+    promptVersion: BLOG_WRITER_PROMPT_VERSION,
+    writerProfile: {
+      id: ANEUNYEOJA_WRITER_PROFILE_ID,
+      version: ANEUNYEOJA_WRITER_PROFILE_VERSION,
+      displayName: ANEUNYEOJA_WRITER_PROFILE.displayName,
+      scope: "문체와 관점만 제공하며 경험·동행·가족 정보를 만들지 않음"
+    },
     pipelineSteps: pipelineContext.pipelineSteps,
     standardInputSchema: pipelineContext.standardInputSchema,
     standardInput: pipelineContext.standardInput,
@@ -108,7 +118,8 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "제목 후보 5개는 SEO/GEO Title Candidate Generation 단계로 만들고 categoryFit, experienceFit 관점으로 평가하세요. 정보 정리, 체험 흐름, 식사 후보, 해당 제품, 대표 메뉴 같은 기계적 표현을 쓰지 마세요.",
     "사용자 메모에 방문·숙박·사용·수강 신호가 있으면 실제 경험형 문장을 쓰고, 신호가 없으면 경험한 척하지 마세요.",
     "경험 주장은 experienceEvidence, 가족·아이·동행 주장은 contextEvidence, 사진 주장은 imageEvidence가 있을 때만 쓰세요.",
-    "최종 JSON에는 claimLedger를 포함하고 unsupported, contradictory, metaGuidance, placeholder 항목이 남지 않게 수정하세요.",
+    "unsupported, contradictory, metaGuidance, placeholder 문장이 최종 섹션에 남지 않게 스스로 검토하세요. Claim Ledger는 서버가 최종 본문 기준으로 다시 만듭니다.",
+    "writer 출력은 titleCandidates, finalTitle, sections, faq, hashtags 중심의 최소 구조를 우선하세요. body가 필요하면 sections를 그대로 이어 붙인 내용만 넣고, 별도 후처리용 문장은 만들지 마세요.",
     "최종 본문에는 내부 writerPlan에서나 쓸 메타 표현을 넣지 마세요.",
     "정보가 부족하면 억지로 길게 쓰지 말고 실제 본문 길이에 맞춰 자연스럽게 마무리하세요.",
     "사진이 있으면 본문 흐름 안에 [사진 삽입: 설명] 마커를 넣되 파일명은 쓰지 마세요.",
@@ -122,6 +133,8 @@ export const buildBlogWriterPromptPayload = ({ form = {}, analysis = null, fallb
 
   return {
     mode: "llm-preferred-with-static-fallback",
+    promptVersion: BLOG_WRITER_PROMPT_VERSION,
+    writerProfile: ANEUNYEOJA_WRITER_PROFILE_ID,
     keyPolicy: "Use server-side environment variables only. Never expose API keys to the browser.",
     messages: [
       {

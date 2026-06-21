@@ -1,4 +1,8 @@
 import { analyzeBlogWritingInput } from "./blogWriterCategory.js";
+import {
+  ANEUNYEOJA_WRITER_PROFILE_ID,
+  ANEUNYEOJA_WRITER_PROFILE_VERSION
+} from "./writerProfiles/aneunyeoja.js";
 
 const text = (value) => String(value ?? "").trim();
 
@@ -808,6 +812,10 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
     });
 
   return {
+    writerProfile: {
+      id: ANEUNYEOJA_WRITER_PROFILE_ID,
+      version: ANEUNYEOJA_WRITER_PROFILE_VERSION
+    },
     pipelineSteps: BLOG_WRITER_PIPELINE_STEPS,
     standardInputSchema: STANDARD_INPUT_SCHEMA,
     standardInput,

@@ -1,5 +1,6 @@
 import { evaluateBlogWriterQuality } from "./blogWriterQuality.js";
 import { evaluateHumanQuality } from "./blogWriterHumanQuality.js";
+import { createBlogWriterTrace, summarizeResultDiff } from "./blogWriterTrace.js";
 import {
   buildBlogWriterPipelineContext,
   createClaimLedger,
@@ -7,6 +8,10 @@ import {
   parseSubKeywords,
   summarizeClaimLedger
 } from "./blogWriterPipeline.js";
+import {
+  ANEUNYEOJA_WRITER_PROFILE_ID,
+  ANEUNYEOJA_WRITER_PROFILE_VERSION
+} from "./writerProfiles/aneunyeoja.js";
 
 const DEFAULT_TARGET_CHAR_COUNT = 1800;
 const MIN_TARGET_CHAR_COUNT = 700;
@@ -700,10 +705,32 @@ export function createProductReviewDraft(form = {}) {
       : [];
   const bodyLength = body.replace(/\s+/gu, "").length;
   const actualBodyCharCount = Array.from(body).length;
+  const postProcessingSteps = ["schema-validation", "duplicate-normalization", "claim-ledger", "quality-gate"];
+  const trace = createBlogWriterTrace({
+    engine: "fallback",
+    judgeEngine: "deterministic",
+    isMock: false,
+    promptVersion: ANEUNYEOJA_WRITER_PROFILE_VERSION,
+    writerProfile: ANEUNYEOJA_WRITER_PROFILE_ID,
+    imageAnalysis: context.imageAnalysis,
+    factMap: context.factMap,
+    postProcessingSteps,
+    qualityScore,
+    publishReady: false
+  });
+  const rawFinalDiff = summarizeResultDiff({
+    rawResult: { body },
+    finalResult: { body },
+    postProcessingSteps
+  });
 
   const contentPackage = {
     generationId,
     resultMode,
+    writerProfile: {
+      id: ANEUNYEOJA_WRITER_PROFILE_ID,
+      version: ANEUNYEOJA_WRITER_PROFILE_VERSION
+    },
     standardInputSchema: context.standardInputSchema,
     standardInput: context.standardInput,
     pipelineSteps: context.pipelineSteps,
@@ -751,6 +778,10 @@ export function createProductReviewDraft(form = {}) {
     qualityChecks: rawQuality.checks,
     blogWriterQuality: rawQuality,
     humanQuality,
+    trace,
+    diagnostics: {
+      rawFinalDiff
+    },
     actualBodyLength: bodyLength,
     actualBodyCharCount,
     summary: {
@@ -820,6 +851,8 @@ export function createProductReviewDraft(form = {}) {
     qualityChecks: rawQuality.checks,
     blogWriterQuality: rawQuality,
     humanQuality,
+    trace,
+    diagnostics: contentPackage.diagnostics,
     publishReady: false,
     judgeEngine: "deterministic",
     isMock: false,

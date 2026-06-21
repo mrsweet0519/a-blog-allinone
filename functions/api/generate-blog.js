@@ -1,13 +1,15 @@
 import { createProductReviewDraft } from "../../shared/productReviewGenerator.js";
-import { buildBlogWriterPromptPayload } from "../../shared/blogWriterPrompt.js";
+import { BLOG_WRITER_PROMPT_VERSION, buildBlogWriterPromptPayload } from "../../shared/blogWriterPrompt.js";
 import { evaluateBlogWriterQuality } from "../../shared/blogWriterQuality.js";
 import { createHumanQualityFactMap, evaluateHumanQuality } from "../../shared/blogWriterHumanQuality.js";
+import { createBlogWriterTrace, summarizeResultDiff } from "../../shared/blogWriterTrace.js";
 import {
   buildBlogWriterPipelineContext,
   createClaimLedger,
   normalizeBlogWriterInput,
   summarizeClaimLedger
 } from "../../shared/blogWriterPipeline.js";
+import { ANEUNYEOJA_WRITER_PROFILE_ID } from "../../shared/writerProfiles/aneunyeoja.js";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const DEFAULT_OPENAI_VISION_MODEL = "gpt-4o-mini";
@@ -91,12 +93,53 @@ const normalizeList = (value, fallback = []) => {
 const normalizeFaqItems = (value, fallback = []) => {
   if (!Array.isArray(value)) return fallback;
   return value
-    .map((item) => ({
-      question: String(item?.question || "").trim(),
-      answer: String(item?.answer || "").trim()
-    }))
+    .map((item) => {
+      if (typeof item === "string") {
+        return {
+          question: "",
+          answer: item.trim()
+        };
+      }
+      return {
+        question: String(item?.question || "").trim(),
+        answer: String(item?.answer || "").trim()
+      };
+    })
     .filter((item) => item.question && item.answer);
 };
+
+const normalizeSections = (sections = []) => {
+  if (!Array.isArray(sections)) return [];
+  return sections
+    .map((section) => ({
+      heading: String(section?.heading || "").trim(),
+      paragraphs: Array.isArray(section?.paragraphs)
+        ? section.paragraphs.map((paragraph) => String(paragraph || "").trim()).filter(Boolean)
+        : [],
+      imageRefs: normalizeList(section?.imageRefs || [])
+    }))
+    .filter((section) => section.heading || section.paragraphs.length > 0);
+};
+
+const bodyFromSections = (sections = []) =>
+  normalizeSections(sections)
+    .map((section) => [section.heading, ...section.paragraphs].filter(Boolean).join("\n\n"))
+    .filter(Boolean)
+    .join("\n\n");
+
+const getDraftBody = (draft = {}) =>
+  String(draft.body || draft.blogBody || bodyFromSections(draft.sections) || "").trim();
+
+const getPostProcessingSteps = (llmDraft = {}) =>
+  [
+    "schema-validation",
+    Array.isArray(llmDraft.sections) ? "sections-to-body" : "",
+    "title-candidate-normalization",
+    "faq-normalization",
+    "hashtag-deduplication",
+    "claim-ledger",
+    "quality-gate"
+  ].filter(Boolean);
 
 const getVisionImageItems = (form = {}) => {
   const source = Array.isArray(form.imageContext)
@@ -403,6 +446,15 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
     ...(draft.contentPackage?.qualityIssues || draft.qualityIssues || []),
     ...(humanQuality.issues?.map((issue) => `${issue.code}: ${issue.message}`) || [])
   ].filter(Boolean);
+  const nextTrace = draft.contentPackage?.trace
+    ? {
+        ...draft.contentPackage.trace,
+        judgeEngine: humanQuality.judgeEngine,
+        isMock: humanQuality.isMock,
+        qualityScore: attachedScore,
+        publishReady
+      }
+    : null;
   const nextPackage = draft.contentPackage
     ? {
         ...draft.contentPackage,
@@ -415,6 +467,7 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
         rawQualityScore: humanQuality.rawQualityScore ?? draft.contentPackage?.rawQualityScore ?? draft.rawQualityScore,
         cappedScore: attachedScore,
         qualityScore: attachedScore,
+        trace: nextTrace || draft.contentPackage.trace,
         summary: {
           ...(draft.contentPackage.summary || {}),
           resultMode,
@@ -439,6 +492,7 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
     rawQualityScore: humanQuality.rawQualityScore ?? draft.rawQualityScore ?? draft.contentPackage?.rawQualityScore,
     cappedScore: attachedScore,
     qualityScore: attachedScore,
+    trace: nextTrace || draft.trace,
     summary: {
       ...(draft.summary || {}),
       resultMode,
@@ -507,7 +561,9 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   const fallbackPackage = fallbackDraft.contentPackage || {};
   const titleCandidates = normalizeList(llmDraft.titleCandidates || llmDraft.titles, fallbackDraft.titleCandidates || fallbackPackage.titleCandidates || []);
   const finalTitle = String(llmDraft.finalTitle || llmDraft.selectedTitle || titleCandidates[0] || fallbackDraft.finalTitle || "").trim();
-  const body = String(llmDraft.body || llmDraft.blogBody || fallbackDraft.body || "").trim();
+  const llmSections = normalizeSections(llmDraft.sections);
+  const rawLlmBody = getDraftBody(llmDraft);
+  const body = rawLlmBody || String(fallbackDraft.body || "").trim();
   const hashtags = normalizeList(llmDraft.hashtags, fallbackDraft.hashtags || fallbackPackage.hashtags || []);
   const faqItems = normalizeFaqItems(llmDraft.faqItems || llmDraft.faq, fallbackPackage.faqItems || []);
   const fallbackMainKeyword = String(fallbackDraft.mainKeyword || fallbackPackage.mainKeyword || "").trim();
@@ -521,6 +577,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     ? fallbackPackage.targetLengthRange?.target || fallbackPackage.targetCharCount || 1700
     : form.targetCharCount || form.targetLength || fallbackPackage.targetLengthRange?.target || 2500;
   const bodyLength = body.replace(/\s+/g, "").length;
+  const postProcessingSteps = getPostProcessingSteps(llmDraft);
   const blogWriterQuality = evaluateBlogWriterQuality({
     form: { ...form, engine: "llm" },
     category: fallbackDraft.category,
@@ -587,10 +644,32 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   );
   const cappedHumanScore = Math.min(deterministicHumanQuality.score, claimLedgerSummary.hardFail ? 55 : 100);
   const mergedQualityIssues = [...qualityIssues, ...claimLedgerIssues];
+  const publishReady = deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail;
+  const trace = createBlogWriterTrace({
+    engine: "llm",
+    judgeEngine: deterministicHumanQuality.judgeEngine,
+    isMock: deterministicHumanQuality.isMock,
+    promptVersion: BLOG_WRITER_PROMPT_VERSION,
+    writerProfile: ANEUNYEOJA_WRITER_PROFILE_ID,
+    imageAnalysis: pipelineContext.imageAnalysis,
+    factMap: pipelineContext.factMap,
+    postProcessingSteps,
+    qualityScore: cappedHumanScore,
+    publishReady
+  });
+  const rawFinalDiff = summarizeResultDiff({
+    rawResult: llmDraft,
+    finalResult: { body, sections: llmSections },
+    postProcessingSteps
+  });
 
   const contentPackage = {
     ...fallbackPackage,
     resultMode: "honest_draft",
+    writerProfile: {
+      id: ANEUNYEOJA_WRITER_PROFILE_ID,
+      version: BLOG_WRITER_PROMPT_VERSION
+    },
     standardInputSchema: pipelineContext.standardInputSchema,
     standardInput: pipelineContext.standardInput,
     primaryEntity: pipelineContext.primaryEntity,
@@ -606,6 +685,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     factMap: pipelineContext.factMap,
     imageAnalysis: pipelineContext.imageAnalysis,
     writerPlan: pipelineContext.writerPlan,
+    sections: llmSections,
     blogBody: body,
     claimLedger,
     claimLedgerSummary,
@@ -622,7 +702,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       cappedScore: cappedHumanScore,
       judgeEngine: deterministicHumanQuality.judgeEngine,
       isMock: deterministicHumanQuality.isMock,
-      publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail
+      publishReady
     },
     faqItems,
     hashtags,
@@ -634,7 +714,12 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     qualityChecks,
     blogWriterQuality,
     humanQuality: deterministicHumanQuality,
-    publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail,
+    trace,
+    diagnostics: {
+      ...(fallbackPackage.diagnostics || {}),
+      rawFinalDiff
+    },
+    publishReady,
     judgeEngine: deterministicHumanQuality.judgeEngine,
     isMock: deterministicHumanQuality.isMock,
     qualityAttempts: 1
@@ -662,6 +747,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     factMap: contentPackage.factMap,
     imageAnalysis: contentPackage.imageAnalysis,
     writerPlan: contentPackage.writerPlan,
+    sections: llmSections,
     faq: faqItems,
     hashtags,
     claimLedger,
@@ -678,7 +764,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       cappedScore: cappedHumanScore,
       judgeEngine: deterministicHumanQuality.judgeEngine,
       isMock: deterministicHumanQuality.isMock,
-      publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail
+      publishReady
     },
     contentPackage,
     rawQualityScore,
@@ -689,7 +775,9 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     qualityChecks,
     blogWriterQuality,
     humanQuality: deterministicHumanQuality,
-    publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail,
+    trace,
+    diagnostics: contentPackage.diagnostics,
+    publishReady,
     judgeEngine: deterministicHumanQuality.judgeEngine,
     isMock: deterministicHumanQuality.isMock,
     qualityAttempts: 1
@@ -747,7 +835,7 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
 };
 
 const hasUsableLlmDraft = (draft = {}) =>
-  Boolean(String(draft.body || draft.blogBody || "").trim()) &&
+  Boolean(getDraftBody(draft)) &&
   Boolean(String(draft.finalTitle || draft.selectedTitle || "").trim() || normalizeList(draft.titleCandidates || draft.titles).length > 0);
 
 export async function onRequestPost(context) {

@@ -10,6 +10,12 @@ import {
   createProductReviewDraft,
   extractProductInfoFieldsWithMetaFromText
 } from "../shared/productReviewGenerator.js";
+import { buildBlogWriterPromptPayload } from "../shared/blogWriterPrompt.js";
+import { compareBlogWriterResults } from "../shared/blogWriterComparison.js";
+import {
+  ANEUNYEOJA_WRITER_PROFILE_ID,
+  ANEUNYEOJA_WRITER_PROFILE_VERSION
+} from "../shared/writerProfiles/aneunyeoja.js";
 import { onRequestPost as generateBlogOnRequestPost } from "../functions/api/generate-blog.js";
 
 const ROOT = new URL("../", import.meta.url);
@@ -22,7 +28,10 @@ const productionSource = [
   "shared/blogWriterPipeline.js",
   "shared/blogWriterPrompt.js",
   "shared/blogWriterQuality.js",
-  "shared/blogWriterHumanQuality.js"
+  "shared/blogWriterHumanQuality.js",
+  "shared/blogWriterTrace.js",
+  "shared/blogWriterComparison.js",
+  "shared/writerProfiles/aneunyeoja.js"
 ]
   .map((path) => readFileSync(new URL(path, ROOT), "utf8"))
   .join("\n");
@@ -66,6 +75,13 @@ const assertDraftContract = (review, form = {}) => {
   assert.ok(!forbiddenMetaPattern.test(bodyText(review)));
   assert.ok(!oldFixturePattern.test(bodyText(review)));
   assert.ok(review.contentPackage?.standardInputSchema);
+  assert.equal(review.contentPackage?.writerProfile?.id, ANEUNYEOJA_WRITER_PROFILE_ID);
+  assert.equal(review.contentPackage?.writerProfile?.version, ANEUNYEOJA_WRITER_PROFILE_VERSION);
+  assert.equal(review.trace?.engine, "fallback");
+  assert.equal(review.trace?.judgeEngine, "deterministic");
+  assert.equal(review.trace?.writerProfile, ANEUNYEOJA_WRITER_PROFILE_ID);
+  assert.equal(review.trace?.promptVersion, ANEUNYEOJA_WRITER_PROFILE_VERSION);
+  assert.equal(review.contentPackage?.diagnostics?.rawFinalDiff?.changedCharacterRatio, 0);
   assert.ok(review.contextFacts);
   assert.ok(review.contextFacts.companions);
   assert.ok(review.contextFacts.occasion);
@@ -172,6 +188,7 @@ assert.ok(!oldFixturePattern.test(productionSource));
 assert.ok(!/sk-[A-Za-z0-9_-]{20,}/u.test(productionSource));
 
 const pipeline = buildBlogWriterPipelineContext(makeForm(0, categories[0]));
+assert.equal(pipeline.writerProfile.id, ANEUNYEOJA_WRITER_PROFILE_ID);
 assert.deepEqual(pipeline.pipelineSteps, [
   "Input Normalization",
   "Primary Entity Extraction",
@@ -194,6 +211,35 @@ assert.deepEqual(pipeline.pipelineSteps, [
   "Automatic Revision",
   "Best Candidate Selection"
 ]);
+
+const promptPayload = buildBlogWriterPromptPayload({
+  form: makeForm(1, categories[1])
+});
+assert.equal(promptPayload.promptVersion, ANEUNYEOJA_WRITER_PROFILE_VERSION);
+assert.equal(promptPayload.writerProfile, ANEUNYEOJA_WRITER_PROFILE_ID);
+assert.ok(promptPayload.messages[0].content.includes("Canonical Writer Profile"));
+assert.ok(promptPayload.messages[0].content.includes("아는여자"));
+
+const comparison = compareBlogWriterResults({
+  rawLlmResult: {
+    finalTitle: "라온커피랩 라떼가 궁금했던 방문 후기",
+    body: "라온커피랩은 라떼가 궁금해서 살펴본 곳이에요.\n\n창가 자리와 메뉴판 사진이 기억에 남았어요.\n\n다시 볼 때도 라떼와 공간 동선을 먼저 보게 될 것 같아요."
+  },
+  finalDisplayedResult: {
+    finalTitle: "라온커피랩 라떼가 궁금했던 방문 후기",
+    body: "라온커피랩은 라떼가 궁금해서 살펴본 곳이에요.\n\n창가 자리와 메뉴판 사진이 기억에 남았어요.\n\n다시 볼 때도 라떼와 공간 동선을 먼저 보게 될 것 같아요."
+  },
+  referenceResult: "라온커피랩은 라떼와 창가 자리 정보가 자연스럽게 이어지는 글이에요.",
+  primaryEntity: "라온커피랩",
+  factMap: {
+    facts: [
+      { value: "라온커피랩" },
+      { value: "라떼" },
+      { value: "창가 자리" }
+    ]
+  }
+});
+assert.equal(comparison.diagnosis, "no-obvious-regression");
 
 const broadKeywordForm = {
   productName: "노을정원 샐러드바 방문 후기",
@@ -336,6 +382,9 @@ assert.equal(apiDraft.resultMode, "fallback_draft");
 assert.equal(apiDraft.engine, "fallback");
 assert.equal(apiDraft.publishReady, false);
 assert.ok(apiDraft.qualityScore <= 89);
+assert.equal(apiDraft.trace.engine, "fallback");
+assert.equal(apiDraft.contentPackage.trace.visionMode, "none");
+assert.equal(apiDraft.contentPackage.diagnostics.rawFinalDiff.rawBodyLength, apiDraft.contentPackage.diagnostics.rawFinalDiff.finalBodyLength);
 assert.ok(!JSON.stringify(apiDraft).includes("sk-test-not-returned-to-client"));
 assertDraftContract(apiDraft);
 
