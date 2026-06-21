@@ -30,7 +30,16 @@ const productionSource = [
 const forbiddenMetaPattern =
   /사용자\s*메모|제공된\s*정보|실제\s*사용\s*메모가\s*없으면|해당\s*(?:제품|서비스|상품|장소|메뉴)|본문에서|글을\s*읽는\s*사람|글을\s*작성할\s*때|확인\s*필요|정보가\s*부족하면|사진은\s*어디|작성\s*가이드|최종\s*검수표/u;
 const oldFixturePattern =
-  /육짬|갈낙짬뽕|대천리조텔|청화횟집|마데카|강화도맛집|초지대교|에어젤|부천금/u;
+  /육짬|갈낙짬뽕|대천리조텔|청화횟집|마데카|강화도맛집|초지대교|에어젤|부천금|세관공매/u;
+const hardClaimTypes = new Set(["unsupported", "contradictory", "metaGuidance", "placeholder"]);
+
+const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const countOccurrences = (source = "", phrase = "") => {
+  if (!phrase) return 0;
+  return [...String(source).matchAll(new RegExp(escapeRegExp(phrase), "gu"))].length;
+};
+
+const firstParagraph = (body = "") => String(body || "").split(/\n{2,}/u).find(Boolean) || "";
 
 const bodyText = (review) => [
   review.finalTitle,
@@ -56,6 +65,25 @@ const assertDraftContract = (review, form = {}) => {
   assert.ok(review.body.includes(review.primaryEntity));
   assert.ok(!forbiddenMetaPattern.test(bodyText(review)));
   assert.ok(!oldFixturePattern.test(bodyText(review)));
+  assert.ok(review.contentPackage?.standardInputSchema);
+  assert.ok(review.contextFacts);
+  assert.ok(review.contextFacts.companions);
+  assert.ok(review.contextFacts.occasion);
+  assert.ok(review.contextFacts.visitPurpose);
+  assert.ok(Array.isArray(review.factMap?.contextEvidence));
+  assert.ok(Array.isArray(review.claimLedger));
+  assert.ok(review.claimLedger.length > 0);
+  assert.equal(review.claimLedgerSummary?.hardFail, false, JSON.stringify(review.claimLedgerSummary?.hardFailures || []));
+  assert.ok(!review.claimLedger.some((item) => hardClaimTypes.has(item.claimType)));
+  assert.ok(Array.isArray(review.writerPlan?.sections));
+  assert.ok(review.writerPlan.sections.every((section) => Array.isArray(section.evidenceIds) && Array.isArray(section.imageRefs)));
+  assert.ok(review.titleCandidateEvaluations?.every((item) => "categoryFit" in item && "experienceFit" in item));
+
+  const opening = firstParagraph(review.body);
+  assert.ok(countOccurrences(opening, review.mainKeyword) <= 2, `${review.mainKeyword}: opening repeats main keyword too much`);
+  if (review.subKeywords[0]) {
+    assert.ok(countOccurrences(opening, review.subKeywords[0]) <= 1, `${review.subKeywords[0]}: opening repeats sub keyword too much`);
+  }
 
   const coverage = getEntityCoverage({
     primaryEntity: review.primaryEntity,
@@ -103,7 +131,7 @@ const makeForm = (index, [category, suffix, mainKeyword, memo], overrides = {}) 
   return {
     productName: `${entity} ${suffix}`,
     mainKeyword,
-    subKeywords: "가족 외식, 주차, 가격, 초과 키워드",
+    subKeywords: "대표 특징, 이용 상황, 가격, 초과 키워드",
     experienceMemo: memo,
     category,
     targetCharCount: 3200,
@@ -137,7 +165,9 @@ assert.equal(extractProductInfoFieldsWithMetaFromText("@@ \n 01 \n hy").summary.
 assert.deepEqual(parseSubKeywords("대표 메뉴, 가족 외식, 대표 메뉴, 주차, 가격", "대표 메뉴"), ["가족 외식", "주차", "가격"]);
 assert.ok(productionSource.includes("메인 키워드"));
 assert.ok(productionSource.includes("예: 상호명 / 상품명 / 강의명 / 장소명"));
+assert.ok(productionSource.includes("예: 지역 키워드, 대표 특징, 이용 상황"));
 assert.ok(productionSource.includes("최대 3개까지 쉼표로 나눠 입력하세요."));
+assert.ok(!productionSource.includes("예: 지역명 맛집, 대표 메뉴, 가족 외식"));
 assert.ok(!oldFixturePattern.test(productionSource));
 assert.ok(!/sk-[A-Za-z0-9_-]{20,}/u.test(productionSource));
 
@@ -150,19 +180,19 @@ assert.deepEqual(pipeline.pipelineSteps, [
   "Open-set Category Classification",
   "Search Intent Classification",
   "Experience Status Classification",
+  "Context Fact Classification",
   "Information Sufficiency Classification",
   "Fact Map Construction",
   "Image Vision Analysis",
   "Writer Profile Selection",
   "Reader Intent Planning",
-  "Dynamic Outline",
-  "SEO/GEO Title Generation",
+  "Dynamic Outline Generation",
+  "SEO/GEO Title Candidate Generation",
   "Draft Generation",
   "Deterministic Hard Check",
   "LLM Human Judge",
   "Automatic Revision",
-  "Best Candidate Selection",
-  "Result Schema Validation"
+  "Best Candidate Selection"
 ]);
 
 const broadKeywordForm = {
@@ -187,7 +217,7 @@ const lowInformationReview = createProductReviewDraft({
 });
 assert.equal(lowInformationReview.informationSufficiency.level, "low");
 assert.equal(lowInformationReview.faq.length, 0);
-assert.ok(lowInformationReview.bodyLength < 1400);
+assert.ok(lowInformationReview.actualBodyCharCount <= 1100);
 assert.ok(!/다녀왔|방문했|써봤|사용해봤|구매했/u.test(lowInformationReview.body));
 assert.ok(lowInformationReview.contentPackage.additionalInfoHints.length <= 3);
 assertDraftContract(lowInformationReview);
@@ -203,6 +233,7 @@ const imageFallbackReview = createProductReviewDraft({
 assert.equal(imageFallbackReview.imageAnalysis.mode, "label-only");
 assert.ok(imageFallbackReview.body.includes("[사진 삽입:"));
 assert.ok(!/맛있|가격이 좋|직원 친절|주차가 편/u.test(imageFallbackReview.body));
+assert.ok(imageFallbackReview.claimLedger.some((item) => item.claimType === "visuallySupported"));
 assertDraftContract(imageFallbackReview);
 
 const actualReview = createProductReviewDraft({
@@ -214,8 +245,33 @@ assert.equal(actualReview.experienceStatus, "used");
 assert.ok(/사용|편했/u.test(actualReview.body));
 assertDraftContract(actualReview);
 
+const travelOnlyReview = createProductReviewDraft({
+  productName: "초록호수 산책 여행 후기",
+  mainKeyword: "산책 코스",
+  subKeywords: "주말 동선, 전망",
+  experienceMemo: "여행 중 들렀음\n산책로가 기억남\n해질녘 풍경이 좋았음",
+  category: "travel"
+});
+assert.equal(travelOnlyReview.contextFacts.occasion.value, "travel");
+assert.notEqual(travelOnlyReview.contextFacts.companions.value, "family");
+assert.notEqual(travelOnlyReview.contextFacts.companions.value, "children");
+assert.ok(!/가족|아이/u.test(travelOnlyReview.body));
+assertDraftContract(travelOnlyReview);
+
+const explicitChildContextReview = createProductReviewDraft({
+  productName: "하늘놀이터 키즈카페 방문 후기",
+  mainKeyword: "아이랑 키즈카페",
+  subKeywords: "놀이 공간, 보호자 대기",
+  experienceMemo: "아이와 방문함\n놀이 공간이 기억남\n보호자 대기 공간이 궁금했음",
+  category: "kids-place"
+});
+assert.equal(explicitChildContextReview.contextFacts.companions.value, "children");
+assert.ok(explicitChildContextReview.contextFacts.companions.evidenceIds.length > 0);
+assert.ok(explicitChildContextReview.factMap.contextEvidence.length > 0);
+assertDraftContract(explicitChildContextReview);
+
 const random = createSeededRandom(95);
-for (let index = 0; index < 200; index += 1) {
+for (let index = 0; index < 300; index += 1) {
   const categoryTuple = pick(random, categories);
   const form = makeForm(index, categoryTuple, {
     subKeywords: `${pick(random, ["가족 외식", "객실", "세척", "위치", "초보자"])}, ${pick(random, ["가격", "산책", "수납", "준비물", "동선"])}`
@@ -227,7 +283,7 @@ for (let index = 0; index < 200; index += 1) {
   assert.ok(!/서비스 신청|견적|발림감|시공 일정|상담 비용/u.test(review.category === "product" ? review.body : ""));
 }
 
-for (let index = 0; index < 120; index += 1) {
+for (let index = 0; index < 150; index += 1) {
   const categoryTuple = categories[index % categories.length];
   const withPhoto = index % 3 === 0;
   const sparse = index % 4 === 0;
@@ -240,7 +296,7 @@ for (let index = 0; index < 120; index += 1) {
   assertDraftContract(review, form);
   if (sparse) {
     assert.equal(review.informationSufficiency.level, "low");
-    assert.ok(review.bodyLength < 1400);
+    assert.ok(review.actualBodyCharCount <= 1100);
   }
   if (withPhoto) {
     assert.ok(["label-only", "vision"].includes(review.imageAnalysis.mode));

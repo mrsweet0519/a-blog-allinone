@@ -66,7 +66,7 @@ test("one-click naver writer keeps keyword flow and generates a grounded draft",
     .getByPlaceholder("예: 제품 후기 / 매장 방문 후기 / 아이와 다녀온 체험 후기")
     .fill("라온비 커피랩 방문 후기");
   await page.getByPlaceholder("예: 상호명 / 상품명 / 강의명 / 장소명").fill("연남동 카페");
-  await page.getByPlaceholder("예: 지역명 맛집, 대표 메뉴, 가족 외식").fill("디저트, 가족 외식");
+  await page.getByPlaceholder("예: 지역 키워드, 대표 특징, 이용 상황").fill("디저트, 창가 자리");
   await page.getByPlaceholder(/좋았던 점/).fill("주말에 들렀음\n커피 향이 기억남");
 
   await page.getByRole("button", { name: "블로그 초안 만들기" }).click();

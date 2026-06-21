@@ -47,19 +47,19 @@ export const BLOG_WRITER_PIPELINE_STEPS = [
   "Open-set Category Classification",
   "Search Intent Classification",
   "Experience Status Classification",
+  "Context Fact Classification",
   "Information Sufficiency Classification",
   "Fact Map Construction",
   "Image Vision Analysis",
   "Writer Profile Selection",
   "Reader Intent Planning",
-  "Dynamic Outline",
-  "SEO/GEO Title Generation",
+  "Dynamic Outline Generation",
+  "SEO/GEO Title Candidate Generation",
   "Draft Generation",
   "Deterministic Hard Check",
   "LLM Human Judge",
   "Automatic Revision",
-  "Best Candidate Selection",
-  "Result Schema Validation"
+  "Best Candidate Selection"
 ];
 
 export const parseSubKeywords = (value = "", mainKeyword = "") => {
@@ -90,6 +90,18 @@ const getInputSourceText = (form = {}) =>
     .map(text)
     .filter(Boolean)
     .join(" ");
+
+const STANDARD_INPUT_SCHEMA = {
+  topic: "string",
+  userMainKeyword: "string",
+  userSubKeywords: ["string"],
+  memory: "string",
+  images: [{ index: "number", name: "string", note: "string", ocrText: "string" }],
+  categoryOverride: "string",
+  tone: "string",
+  targetCharCount: "number",
+  avoidWords: ["string"]
+};
 
 export const normalizeBlogWriterInput = (form = {}) => {
   const analysis = analyzeBlogWritingInput(form);
@@ -233,7 +245,7 @@ export const determineInformationSufficiency = ({ form = {}, analysis = analyzeB
   if (memoLines.length === 0 && visualFactCount <= 1) {
     return {
       level: "low",
-      targetLengthRange: { min: 700, max: 1300, target: 1000 },
+      targetLengthRange: { min: 600, max: 1100, target: 900 },
       reason: "사용자 메모가 거의 없어 서브 키워드만으로 긴 글을 만들지 않습니다."
     };
   }
@@ -247,7 +259,7 @@ export const determineInformationSufficiency = ({ form = {}, analysis = analyzeB
   if (score >= 12) {
     return {
       level: "high",
-      targetLengthRange: { min: 2200, max: 3600, target: 2800 },
+      targetLengthRange: { min: 2000, max: 3600, target: 2800 },
       reason: "메모, 키워드, 이미지 단서가 충분해 긴 글을 구성할 수 있습니다."
     };
   }
@@ -255,14 +267,14 @@ export const determineInformationSufficiency = ({ form = {}, analysis = analyzeB
   if (score >= 6) {
     return {
       level: "medium",
-      targetLengthRange: { min: 1400, max: 2400, target: 1900 },
+      targetLengthRange: { min: 1100, max: 2200, target: 1700 },
       reason: "핵심 상황은 있으나 세부 정보가 제한적이어서 중간 길이가 적합합니다."
     };
   }
 
   return {
     level: "low",
-    targetLengthRange: { min: 800, max: 1400, target: 1200 },
+    targetLengthRange: { min: 600, max: 1100, target: 900 },
     reason: "입력 정보가 적어 억지 확장보다 짧고 구체적인 글이 적합합니다."
   };
 };
@@ -321,6 +333,40 @@ export const inferSearchIntent = ({ category = "experience", analysis = {}, expe
   };
 };
 
+const EXPERIENCE_EVIDENCE_PATTERN =
+  /숙박|묵었|머물렀|체크인|객실|호텔|펜션|리조트|먹어봄|먹어봤|먹었|식사했|마셔봤|마셨|맛봤|사용함|사용해|써봄|써봤|착용|발라봤|이용함|이용해|참석|참여|수강|들었|공연|행사|클래스|구매|주문|결제|배송받|다녀왔|방문|갔다|가봤|들렀|보러/u;
+
+const CONTEXT_COMPANION_RULES = [
+  ["children", /아이|아이와|아이랑|아기|유아|어린이|자녀|키즈|초등|중학생|고등학생/u],
+  ["family", /가족|부모|부모님|엄마|아빠|어머니|아버지|남편|아내|배우자|부부/u],
+  ["friends", /친구|지인|친한\s*사람/u],
+  ["colleagues", /동료|회사|직장|팀원|상사|출장|미팅/u],
+  ["group", /단체|모임|여럿|일행|동행/u],
+  ["solo", /혼자|혼밥|혼술|혼캠|단독|혼자서/u]
+];
+
+const CONTEXT_OCCASION_RULES = [
+  ["business", /출장|업무|미팅|회사|직장|상담|시공|검진/u],
+  ["study", /공부|수업|강의|클래스|수강|시험|스터디/u],
+  ["event", /행사|공연|축제|기념일|생일|모임|체험/u],
+  ["travel", /여행|휴가|나들이|산책|코스|숙박|펜션|호텔|리조트/u],
+  ["daily", /일상|출근|퇴근|점심|저녁|주말|데일리|생활|가방|집/u]
+];
+
+const VISIT_PURPOSE_RULES = [
+  ["식사", /식사|점심|저녁|먹|마시|메뉴|디저트/u],
+  ["휴식", /휴식|쉬러|카페|커피|잠깐/u],
+  ["숙박", /숙박|1박|호텔|펜션|객실|체크인/u],
+  ["산책", /산책|코스|동선|걷/u],
+  ["구매 전 비교", /구매|비교|가격|구성|용량|수납/u],
+  ["사용 확인", /사용|써봄|착용|발라|세척|휴대/u],
+  ["수강", /수강|수업|강의|클래스/u],
+  ["검진", /검진|병원|내과|절차/u],
+  ["시공 상담", /시공|설치|상담|일정/u],
+  ["체험", /체험|참여|만들기|공방/u],
+  ["정보 확인", /방법|정보|절차|준비|알아보/u]
+];
+
 const createFact = ({ id = "", field, value, source, confidence = 0.85, allowedAsExperience = false } = {}) => ({
   id,
   field,
@@ -330,13 +376,66 @@ const createFact = ({ id = "", field, value, source, confidence = 0.85, allowedA
   allowedAsExperience
 });
 
+const evidenceIdsForPattern = (facts = [], pattern = /$^/u) =>
+  uniqueTexts(
+    facts
+      .filter((fact) => pattern.test(fact.value || ""))
+      .map((fact) => fact.id)
+      .filter(Boolean)
+  );
+
+const makeContextFact = (value = "unknown", evidenceIds = []) => ({
+  value,
+  evidenceIds: uniqueTexts(evidenceIds)
+});
+
+export const classifyContextFacts = ({ form = {}, factMap = null } = {}) => {
+  const source = getInputSourceText(form);
+  const facts = factMap?.facts || [];
+  const selectRule = (rules) => rules.find(([, pattern]) => pattern.test(source));
+  const companionRule = selectRule(CONTEXT_COMPANION_RULES);
+  const occasionRule = selectRule(CONTEXT_OCCASION_RULES);
+  const purposeRule = selectRule(VISIT_PURPOSE_RULES);
+
+  return {
+    companions: companionRule
+      ? makeContextFact(companionRule[0], evidenceIdsForPattern(facts, companionRule[1]))
+      : makeContextFact("unknown"),
+    occasion: occasionRule
+      ? makeContextFact(occasionRule[0], evidenceIdsForPattern(facts, occasionRule[1]))
+      : makeContextFact("unknown"),
+    visitPurpose: purposeRule
+      ? makeContextFact(purposeRule[0], evidenceIdsForPattern(facts, purposeRule[1]))
+      : makeContextFact("")
+  };
+};
+
+const collectContextEvidenceIds = (contextFacts = {}) =>
+  uniqueTexts([
+    ...(contextFacts.companions?.evidenceIds || []),
+    ...(contextFacts.occasion?.evidenceIds || []),
+    ...(contextFacts.visitPurpose?.evidenceIds || [])
+  ]);
+
 export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput(form), imageAnalysis = analyzeBlogImages(form), experienceStatus = detectExperienceStatus(form) } = {}) => {
   const memoText = getMemoText(form);
   const inputSubKeywords = parseSubKeywords(form.subKeywords, analysis.mainKeyword);
   const rawFacts = [
-    createFact({ field: "topic", value: analysis.topic || form.productName || form.topic, source: "user_topic", confidence: 0.95 }),
+    createFact({
+      field: "topic",
+      value: analysis.topic || form.productName || form.topic,
+      source: "user_topic",
+      confidence: 0.95,
+      allowedAsExperience: EXPERIENCE_EVIDENCE_PATTERN.test(analysis.topic || form.productName || form.topic || "")
+    }),
     createFact({ field: "primaryEntity", value: analysis.primaryEntity, source: "primary_entity_extraction", confidence: 0.9 }),
-    createFact({ field: "mainKeyword", value: analysis.mainKeyword, source: "user_main_keyword", confidence: 0.9 }),
+    createFact({
+      field: "mainKeyword",
+      value: analysis.mainKeyword,
+      source: "user_main_keyword",
+      confidence: 0.9,
+      allowedAsExperience: EXPERIENCE_EVIDENCE_PATTERN.test(analysis.mainKeyword || "")
+    }),
     createFact({ field: "broadKeyword", value: analysis.broadKeyword, source: "user_main_keyword", confidence: 0.8 }),
     ...inputSubKeywords.map((keyword) =>
       createFact({ field: "subKeyword", value: keyword, source: "user_sub_keyword", confidence: 0.9 })
@@ -374,6 +473,16 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
   const visuallySupported = uniqueTexts(
     facts.filter((fact) => fact.field === "visualLabel").map((fact) => fact.value)
   );
+  const experienceEvidence = uniqueTexts(
+    facts
+      .filter((fact) => fact.allowedAsExperience || EXPERIENCE_EVIDENCE_PATTERN.test(fact.value || ""))
+      .map((fact) => fact.id)
+  );
+  const imageEvidence = uniqueTexts(
+    facts
+      .filter((fact) => fact.field === "visualLabel")
+      .map((fact) => fact.id)
+  );
   const unsupportedFields = uniqueTexts([
     ...(imageAnalysis?.unsupportedVisualFields || []),
     "exactPrice",
@@ -393,6 +502,9 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
     denied: unsupportedFields,
     memoText,
     experienceStatus,
+    experienceEvidence,
+    imageEvidence,
+    contextEvidence: [],
     visitStatus: getExperienceTone(experienceStatus) === "actual-review" ? "visited" : experienceStatus === "planned" ? "previsit" : "unknown",
     confidence: facts.length >= 8 ? 0.86 : facts.length >= 4 ? 0.74 : 0.62
   };
@@ -400,7 +512,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
 
 const CATEGORY_OUTLINES = {
   restaurant: {
-    actual: ["들르게 된 상황", "메뉴가 눈에 들어온 이유", "사진으로 본 첫인상", "가족 식사로 기억난 점", "다녀온 뒤 남은 인상", "과장 없는 마무리"],
+    actual: ["들르게 된 상황", "메뉴가 눈에 들어온 이유", "사진으로 본 첫인상", "식사 상황에서 기억난 점", "다녀온 뒤 남은 인상", "과장 없는 마무리"],
     reference: ["알아보게 된 이유", "메뉴와 위치 맥락", "사진으로 본 첫인상", "방문 전 살펴볼 부분", "어울리는 상황"]
   },
   cafe: {
@@ -436,7 +548,7 @@ const CATEGORY_OUTLINES = {
     reference: ["알아보게 된 이유", "매장 정보에서 볼 부분", "상담 전 준비할 점", "어울리는 상황"]
   },
   travel: {
-    actual: ["여행 중 들른 이유", "현장에서 기억난 장면", "동행자와 보낸 시간", "다음에 챙길 부분"],
+    actual: ["여행 중 들른 이유", "현장에서 기억난 장면", "현장에서 보낸 시간", "다음에 챙길 부분"],
     reference: ["여행지로 알아본 이유", "동선과 분위기", "사진으로 본 장면", "방문 전 살펴볼 부분"]
   },
   experience: {
@@ -461,28 +573,60 @@ const resolveOutline = ({ category = "experience", experienceTone = "neutral", i
 
 const createKeywordPlan = ({ targetLengthRange = {}, mainKeyword = "", subKeywords = [] } = {}) => {
   const target = Number(targetLengthRange.target || 1800);
-  const mainRange = target <= 1400 ? [3, 4] : target <= 2400 ? [4, 6] : [6, 8];
+  const mainRange = target <= 1100 ? [2, 4] : target <= 2200 ? [4, 6] : [6, 8];
   return {
     mainKeyword,
     subKeywords: subKeywords.slice(0, 3),
     mainKeywordRange: { min: mainRange[0], max: mainRange[1] },
     subKeywordRange: { min: 1, max: 3 },
+    openingParagraph: {
+      mainKeywordRange: { min: 1, max: 2 },
+      subKeywordMax: 1
+    },
     rule: "키워드는 문장 의미가 살아 있을 때만 넣고 반복으로 분량을 채우지 않습니다."
   };
 };
 
-export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput(form), category = analysis.category, searchIntent = null, experienceStatus = detectExperienceStatus(form), informationSufficiency = null, factMap = null } = {}) => {
+const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {} } = {}) => {
+  const facts = factMap?.facts || [];
+  const contextEvidence = collectContextEvidenceIds(contextFacts);
+  const imageEvidence = factMap?.imageEvidence || [];
+
+  return outline.map((heading, index) => {
+    const fact = facts[index % Math.max(facts.length, 1)];
+    const evidenceIds = uniqueTexts([
+      fact?.id,
+      ...(index === 0 ? contextEvidence.slice(0, 2) : []),
+      ...(index > 0 && index < 3 ? contextEvidence.slice(0, 1) : [])
+    ].filter(Boolean));
+    const imageRefs = index === 2 || /사진|이미지/u.test(heading)
+      ? imageEvidence.slice(0, 2)
+      : [];
+
+    return {
+      heading,
+      purpose: index === 0 ? "opening_context" : index === outline.length - 1 ? "closing" : "reader_intent",
+      evidenceIds,
+      imageRefs
+    };
+  });
+};
+
+export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput(form), category = analysis.category, searchIntent = null, experienceStatus = detectExperienceStatus(form), informationSufficiency = null, factMap = null, contextFacts = null } = {}) => {
   const experienceTone = getExperienceTone(experienceStatus);
   const resolvedInformation = informationSufficiency || determineInformationSufficiency({ form, analysis });
   const subKeywords = uniqueTexts([...(analysis.subKeywords || []), ...parseSubKeywords(form.subKeywords, analysis.mainKeyword)]).slice(0, 3);
   const outline = resolveOutline({ category, experienceTone, informationSufficiency: resolvedInformation });
   const faqCount = resolvedInformation.level === "low" ? 0 : resolvedInformation.level === "medium" ? 2 : 3;
+  const sections = createPlanSections({ outline, factMap, contextFacts });
 
   return {
     profilePreset: `${category || "experience"}-${experienceTone}`,
     readerIntent: searchIntent?.primary || "",
     tone: experienceTone,
     outline,
+    dynamicOutline: sections,
+    sections,
     sectionCount: outline.length,
     faqCount,
     keywordPlan: createKeywordPlan({
@@ -493,7 +637,96 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
     factPolicy: {
       useOnly: factMap?.supported || [],
       doNotInvent: factMap?.unsupportedFields || []
-    }
+    },
+    contextFacts: contextFacts || null
+  };
+};
+
+const CLAIM_HARD_FAIL_TYPES = new Set(["unsupported", "contradictory", "metaGuidance", "placeholder"]);
+const META_GUIDANCE_PATTERN =
+  /사용자\s*메모|제공된\s*정보|실제\s*사용\s*메모가\s*없으면|해당\s*(?:제품|서비스|상품|장소|메뉴)|본문에서|글을\s*읽는\s*사람|글을\s*작성할\s*때|확인\s*필요|정보가\s*부족하면|작성\s*가이드|최종\s*검수표|writerPlan|factMap|프롬프트/u;
+const PLACEHOLDER_PATTERN = /TODO|TBD|\{[^}]+\}|\[[^\]]*(?:제목|내용|설명|placeholder)[^\]]*\]|사진은\s*어디/u;
+const EXPERIENCE_CLAIM_PATTERN =
+  /다녀왔|다녀온|방문했|방문함|들렀|갔다|가봤|머물렀|묵었|숙박했|먹었|마셨|써봤|사용해봤|사용함|구매했|수강했|참여했|체험했|이용했|편했|기억남|기억났|남았|좋았/u;
+const CONTEXT_CLAIM_PATTERN =
+  /가족|아이|아이와|아이랑|아기|유아|어린이|자녀|친구|동료|동행|일행|부모|부모님|엄마|아빠|남편|아내|단체|모임/u;
+const IMAGE_CLAIM_PATTERN = /사진|이미지|화면|보이는|보였|눈에\s*보|시각/u;
+
+const splitClaimUnits = ({ title = "", body = "", faq = [], hashtags = [] } = {}) =>
+  uniqueTexts([
+    title,
+    ...String(body || "")
+      .split(/\n+|(?<=[.!?。요])\s+/u)
+      .map((item) => item.trim())
+      .filter(Boolean),
+    ...faq.flatMap((item) => [item?.question, item?.answer]),
+    ...hashtags
+  ]).slice(0, 80);
+
+const evidenceIdsForText = (value = "", factMap = {}) => {
+  const normalized = compact(value);
+  if (!normalized) return [];
+  return uniqueTexts(
+    (factMap.facts || [])
+      .filter((fact) => {
+        const factKey = compact(fact.value || "");
+        return factKey && (normalized.includes(factKey) || factKey.includes(normalized.slice(0, Math.min(10, normalized.length))));
+      })
+      .map((fact) => fact.id)
+      .filter(Boolean)
+  );
+};
+
+const classifyClaim = ({ value = "", factMap = {}, contextFacts = {}, imageAnalysis = {}, experienceStatus = "unknown" } = {}) => {
+  const evidenceIds = evidenceIdsForText(value, factMap);
+  const hasContextEvidence = collectContextEvidenceIds(contextFacts).length > 0 || (factMap.contextEvidence || []).length > 0;
+  const hasExperienceEvidence = (factMap.experienceEvidence || []).length > 0;
+  const hasImageEvidence = (factMap.imageEvidence || []).length > 0 || (imageAnalysis.visuallySupported || []).length > 0;
+  const isActual = getExperienceTone(experienceStatus || factMap.experienceStatus) === "actual-review";
+
+  if (META_GUIDANCE_PATTERN.test(value)) return { claimType: "metaGuidance", evidenceIds: [] };
+  if (PLACEHOLDER_PATTERN.test(value)) return { claimType: "placeholder", evidenceIds: [] };
+  if (CONTEXT_CLAIM_PATTERN.test(value) && !hasContextEvidence) return { claimType: "unsupported", evidenceIds };
+  if (EXPERIENCE_CLAIM_PATTERN.test(value) && !hasExperienceEvidence) {
+    return { claimType: isActual ? "unsupported" : "contradictory", evidenceIds };
+  }
+  if (IMAGE_CLAIM_PATTERN.test(value) && !hasImageEvidence) return { claimType: "unsupported", evidenceIds };
+  if (IMAGE_CLAIM_PATTERN.test(value) && hasImageEvidence) {
+    return { claimType: "visuallySupported", evidenceIds: uniqueTexts([...evidenceIds, ...(factMap.imageEvidence || [])]) };
+  }
+  if (evidenceIds.length > 0) return { claimType: "supported", evidenceIds };
+  return { claimType: "safeGeneralization", evidenceIds: [] };
+};
+
+export const createClaimLedger = ({ title = "", body = "", faq = [], hashtags = [], factMap = {}, contextFacts = {}, imageAnalysis = {}, experienceStatus = "" } = {}) =>
+  splitClaimUnits({ title, body, faq, hashtags }).map((value) => {
+    const classification = classifyClaim({
+      value,
+      factMap,
+      contextFacts,
+      imageAnalysis,
+      experienceStatus
+    });
+
+    return {
+      text: value,
+      claimType: classification.claimType,
+      evidenceIds: classification.evidenceIds
+    };
+  });
+
+export const summarizeClaimLedger = (claimLedger = []) => {
+  const counts = claimLedger.reduce((acc, item) => {
+    acc[item.claimType] = (acc[item.claimType] || 0) + 1;
+    return acc;
+  }, {});
+  const hardFailures = claimLedger.filter((item) => CLAIM_HARD_FAIL_TYPES.has(item.claimType));
+
+  return {
+    total: claimLedger.length,
+    counts,
+    hardFail: hardFailures.length > 0,
+    hardFailures
   };
 };
 
@@ -542,7 +775,7 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
       analysis: { ...analysis, subKeywords },
       experienceStatus
     });
-  const factMap =
+  const baseFactMap =
     overrides.factMap ||
     buildBlogFactMap({
       form,
@@ -550,6 +783,17 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
       imageAnalysis,
       experienceStatus
     });
+  const contextFacts =
+    overrides.contextFacts ||
+    classifyContextFacts({
+      form: normalizedForm,
+      factMap: baseFactMap
+    });
+  const factMap = {
+    ...baseFactMap,
+    contextFacts,
+    contextEvidence: uniqueTexts([...(baseFactMap.contextEvidence || []), ...collectContextEvidenceIds(contextFacts)])
+  };
   const writerPlan =
     overrides.writerPlan ||
     createWriterPlan({
@@ -559,11 +803,13 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
       searchIntent,
       experienceStatus,
       informationSufficiency,
-      factMap
+      factMap,
+      contextFacts
     });
 
   return {
     pipelineSteps: BLOG_WRITER_PIPELINE_STEPS,
+    standardInputSchema: STANDARD_INPUT_SCHEMA,
     standardInput,
     normalizedInput: normalizedForm,
     primaryEntity: analysis.primaryEntity || analysis.mainKeyword,
@@ -575,6 +821,7 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
     category,
     searchIntent,
     experienceStatus,
+    contextFacts,
     experienceTone: getExperienceTone(experienceStatus),
     informationSufficiency,
     factMap,

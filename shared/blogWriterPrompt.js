@@ -2,12 +2,13 @@ import { analyzeBlogWritingInput } from "./blogWriterCategory.js";
 import { buildBlogWriterPipelineContext } from "./blogWriterPipeline.js";
 
 export const BLOG_WRITER_SYSTEM_PROMPT = `
-당신은 네이버 블로그에 실제로 올릴 수 있는 한국어 생활형 후기를 쓰는 가족 라이프스타일 블로거입니다.
-독자는 30~40대 엄마, 가족 단위 방문자, 생활 제품을 직접 찾아보는 사람입니다.
+당신은 네이버 블로그에 실제로 올릴 수 있는 한국어 사실 근거형 블로그 원고를 쓰는 편집자입니다.
+독자는 방문, 구매, 수강, 비교, 정보 확인 전에 실제 입력 근거 안에서 판단하고 싶은 사람입니다.
 
 카테고리는 맛집, 카페, 숙소, 여행, 상품, 뷰티, 패션, 교육, 매장, 병원, 서비스, 아이 동반 장소, 체험, 정보, 비교, 행사, 기타 글을 다룹니다.
 글의 중심은 반드시 상호명, 상품명, 강의명, 장소명 같은 primary entity입니다.
-지역명 맛집, 확인된 메뉴, 가족여행, 근처 검색어 같은 broad keyword는 서브키워드로 자연스럽게 분산합니다.
+지역명 맛집, 확인된 메뉴, 가족여행, 근처 검색어 같은 broad keyword는 중심 주제로 삼지 말고 서브키워드로 자연스럽게 분산합니다.
+가족, 아이, 친구, 동료, 단체 같은 동행자 맥락은 입력에 명시된 경우에만 씁니다. 여행이라는 단어만으로 가족여행이나 아이 동반을 만들지 않습니다.
 
 허위 경험, 가격, 영업시간, 주차, 웨이팅, 메뉴판, 효과, 직원 응대, 재구매 의사는 만들지 않습니다.
 부족한 정보는 본문 전체에서 한 번만 방문 참고 맥락으로 자연스럽게 다룹니다.
@@ -19,7 +20,8 @@ export const BLOG_WRITER_SYSTEM_PROMPT = `
 
 실제 경험 신호가 있으면 경험형 문장을 쓰고, 경험 신호가 없으면 정보형 또는 방문 전 참고형 문장을 씁니다.
 사진 설명은 Vision 결과나 사용자가 직접 적은 사진 메모에 있는 시각 사실만 다루고, 맛, 가격, 양, 직원 응대, 효과는 사진만 보고 단정하지 않습니다.
-입력 정보가 적으면 targetCharCount가 높아도 800~1400자 안에서 자연스럽게 끝냅니다. 같은 기준어를 반복해 길이를 늘리지 않습니다.
+입력 정보가 적으면 targetCharCount가 높아도 600~1100자 안에서 자연스럽게 끝냅니다. 중간 정보는 1100~2200자, 충분한 정보는 2000~3600자를 기준으로 합니다. 같은 기준어를 반복해 길이를 늘리지 않습니다.
+최종 원고의 각 주장에는 Fact Map, Context Facts, Image Analysis 중 하나 이상의 근거가 있거나 안전한 일반화여야 합니다. unsupported, contradictory, metaGuidance, placeholder 유형의 문장은 최종 원고에 남기지 않습니다.
 `.trim();
 
 export const BLOG_WRITER_OUTPUT_SCHEMA = {
@@ -31,11 +33,18 @@ export const BLOG_WRITER_OUTPUT_SCHEMA = {
   category: "string",
   searchIntent: "object",
   experienceStatus: "visited|stayed|used|eaten|attended|purchased|researched|planned|unknown",
+  contextFacts: {
+    companions: { value: "solo|family|children|friends|colleagues|group|unknown", evidenceIds: ["string"] },
+    occasion: { value: "travel|business|daily|event|study|unknown", evidenceIds: ["string"] },
+    visitPurpose: { value: "string", evidenceIds: ["string"] }
+  },
   informationSufficiency: "low|medium|high",
   writerPlan: "object",
+  titleCandidateEvaluations: [{ title: "string", score: "number", categoryFit: "number", experienceFit: "number" }],
   body: "string",
   faqItems: [{ question: "string", answer: "string" }],
   hashtags: ["string"],
+  claimLedger: [{ text: "string", claimType: "supported|visuallySupported|safeGeneralization|unsupported|contradictory|metaGuidance|placeholder", evidenceIds: ["string"] }],
   qualityNotes: ["string"]
 };
 
@@ -49,6 +58,8 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
   const payload = {
     task: "네이버 블로그 publishable draft 생성",
     pipelineSteps: pipelineContext.pipelineSteps,
+    standardInputSchema: pipelineContext.standardInputSchema,
+    standardInput: pipelineContext.standardInput,
     category: pipelineContext.category,
     topic: analysis.topic,
     primaryEntity: pipelineContext.primaryEntity,
@@ -57,6 +68,7 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     subKeywords: pipelineContext.subKeywords,
     searchIntent: pipelineContext.searchIntent,
     experienceStatus: pipelineContext.experienceStatus,
+    contextFacts: pipelineContext.contextFacts,
     informationSufficiency: pipelineContext.informationSufficiency,
     factMap: pipelineContext.factMap,
     imageAnalysis: pipelineContext.imageAnalysis,
@@ -85,15 +97,18 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
 
   return [
     "아래 입력값만 근거로 최종 원고를 작성하세요.",
-    "Input Normalization → Primary Entity Extraction → Brand/Product/Place Separation → Main/Sub Keyword Parsing → Open-set Category Classification → Search Intent Classification → Experience Status Classification → Information Sufficiency Classification → Fact Map Construction → Image Vision Analysis → Writer Profile Selection → Reader Intent Planning → Dynamic Outline → SEO/GEO Title Generation → Draft Generation → Deterministic Hard Check → LLM Human Judge → Automatic Revision → Best Candidate Selection → Result Schema Validation 순서의 writerPlan을 따르세요.",
+    "Input Normalization → Primary Entity Extraction → Brand/Product/Place Separation → Main/Sub Keyword Parsing → Open-set Category Classification → Search Intent Classification → Experience Status Classification → Context Fact Classification → Information Sufficiency Classification → Fact Map Construction → Image Vision Analysis → Writer Profile Selection → Reader Intent Planning → Dynamic Outline Generation → SEO/GEO Title Candidate Generation → Draft Generation → Deterministic Hard Check → LLM Human Judge → Automatic Revision → Best Candidate Selection 순서의 writerPlan을 따르세요.",
     "메인 키워드는 primary entity를 우선하고, broad keyword는 서브키워드로만 자연스럽게 배치하세요.",
+    "contextFacts.companions가 unknown이면 가족, 아이, 친구, 동료, 단체 동행을 추정하지 마세요. 여행 맥락만으로 가족여행을 만들지 마세요.",
     "experienceStatus가 visited/stayed/used/eaten/attended/purchased가 아니면 실제 방문·사용 후기처럼 쓰지 마세요.",
     "imageAnalysis.mode가 label-only이면 라벨과 메모로 알 수 있는 내용만 쓰고, 사진 속 맛·가격·양·직원 응대·영업시간은 만들지 마세요.",
-    "informationSufficiency가 low이면 긴 글자수를 억지로 맞추지 말고 800~1400자 수준의 밀도 있는 원고로 끝내세요.",
-    "첫 문장에는 primaryEntity 또는 mainKeyword를 넣고, 첫 문단에는 검색 의도와 서브키워드 1개 이상을 자연스럽게 연결하세요.",
+    "informationSufficiency가 low이면 긴 글자수를 억지로 맞추지 말고 600~1100자 수준의 밀도 있는 원고로 끝내세요. low는 본문 2~4개 섹션, FAQ 0~1개만 씁니다.",
+    "첫 문장에는 primaryEntity 또는 mainKeyword를 넣고, 첫 문단에는 mainKeyword를 1~2회만, subKeyword는 최대 1개만 자연스럽게 연결하세요.",
     "본문 문단은 readerIntent의 서로 다른 질문에 답하고, 각 문단은 factMap evidenceIds 또는 imageRefs 중 하나 이상과 연결하세요.",
-    "제목 후보 5개는 의도를 분리하고, 정보 정리, 체험 흐름, 식사 후보, 해당 제품, 대표 메뉴 같은 기계적 표현을 쓰지 마세요.",
+    "제목 후보 5개는 SEO/GEO Title Candidate Generation 단계로 만들고 categoryFit, experienceFit 관점으로 평가하세요. 정보 정리, 체험 흐름, 식사 후보, 해당 제품, 대표 메뉴 같은 기계적 표현을 쓰지 마세요.",
     "사용자 메모에 방문·숙박·사용·수강 신호가 있으면 실제 경험형 문장을 쓰고, 신호가 없으면 경험한 척하지 마세요.",
+    "경험 주장은 experienceEvidence, 가족·아이·동행 주장은 contextEvidence, 사진 주장은 imageEvidence가 있을 때만 쓰세요.",
+    "최종 JSON에는 claimLedger를 포함하고 unsupported, contradictory, metaGuidance, placeholder 항목이 남지 않게 수정하세요.",
     "최종 본문에는 내부 writerPlan에서나 쓸 메타 표현을 넣지 마세요.",
     "정보가 부족하면 억지로 길게 쓰지 말고 실제 본문 길이에 맞춰 자연스럽게 마무리하세요.",
     "사진이 있으면 본문 흐름 안에 [사진 삽입: 설명] 마커를 넣되 파일명은 쓰지 마세요.",

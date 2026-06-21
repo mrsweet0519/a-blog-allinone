@@ -2,7 +2,12 @@ import { createProductReviewDraft } from "../../shared/productReviewGenerator.js
 import { buildBlogWriterPromptPayload } from "../../shared/blogWriterPrompt.js";
 import { evaluateBlogWriterQuality } from "../../shared/blogWriterQuality.js";
 import { createHumanQualityFactMap, evaluateHumanQuality } from "../../shared/blogWriterHumanQuality.js";
-import { buildBlogWriterPipelineContext, normalizeBlogWriterInput } from "../../shared/blogWriterPipeline.js";
+import {
+  buildBlogWriterPipelineContext,
+  createClaimLedger,
+  normalizeBlogWriterInput,
+  summarizeClaimLedger
+} from "../../shared/blogWriterPipeline.js";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 const DEFAULT_OPENAI_VISION_MODEL = "gpt-4o-mini";
@@ -266,9 +271,11 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
         memo: form.experienceMemo || form.memory || form.memo || "",
         imageCount: form.imageCount || form.images?.length || form.photos?.length || 0,
         experienceStatus: draft.contentPackage?.experienceStatus || form.experienceStatus || "",
+        contextFacts: draft.contentPackage?.contextFacts || draft.contextFacts || null,
         informationSufficiency: draft.contentPackage?.informationSufficiency || form.informationSufficiency || null,
         factMap: draft.contentPackage?.factMap || null,
-        imageAnalysis: draft.contentPackage?.imageAnalysis || form.imageAnalysis || null
+        imageAnalysis: draft.contentPackage?.imageAnalysis || form.imageAnalysis || null,
+        claimLedger: draft.contentPackage?.claimLedger || draft.claimLedger || []
       },
       draft: {
         title: draft.finalTitle || draft.selectedTitle || "",
@@ -312,8 +319,10 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}
     role: "user",
     content: JSON.stringify({
       factMap: draft.contentPackage?.factMap || createHumanQualityFactMap(form, form.imageAnalysis || form.imageContext || form.images || form.photoMetadata),
+      contextFacts: draft.contentPackage?.contextFacts || draft.contextFacts || null,
       imageAnalysis: draft.contentPackage?.imageAnalysis || form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
       writerPlan: draft.contentPackage?.writerPlan || null,
+      claimLedger: draft.contentPackage?.claimLedger || draft.claimLedger || [],
       currentDraft: {
         finalTitle: draft.finalTitle || draft.selectedTitle || "",
         titleCandidates: draft.titleCandidates || draft.titles || [],
@@ -382,28 +391,40 @@ const evaluateDraftHumanQuality = ({ form = {}, draft = {}, engine = "fallback",
 const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1) => {
   if (!humanQuality) return draft;
   const resultMode = resolveResultMode(draft, humanQuality);
+  const claimLedgerSummary = draft.contentPackage?.claimLedgerSummary || draft.claimLedgerSummary || {};
+  const claimCap = claimLedgerSummary.hardFail ? 55 : 100;
+  const attachedScore = Math.min(
+    humanQuality.score,
+    draft.contentPackage?.qualityScore ?? draft.qualityScore ?? humanQuality.score,
+    claimCap
+  );
+  const publishReady = Boolean(humanQuality.publishReady && !claimLedgerSummary.hardFail);
+  const attachedIssues = [
+    ...(draft.contentPackage?.qualityIssues || draft.qualityIssues || []),
+    ...(humanQuality.issues?.map((issue) => `${issue.code}: ${issue.message}`) || [])
+  ].filter(Boolean);
   const nextPackage = draft.contentPackage
     ? {
         ...draft.contentPackage,
         resultMode,
         humanQuality,
-        publishReady: humanQuality.publishReady,
+        publishReady,
         judgeEngine: humanQuality.judgeEngine,
         isMock: humanQuality.isMock,
         qualityAttempts,
         rawQualityScore: humanQuality.rawQualityScore ?? draft.contentPackage?.rawQualityScore ?? draft.rawQualityScore,
-        cappedScore: humanQuality.score,
-        qualityScore: humanQuality.score,
+        cappedScore: attachedScore,
+        qualityScore: attachedScore,
         summary: {
           ...(draft.contentPackage.summary || {}),
           resultMode,
           judgeEngine: humanQuality.judgeEngine,
           isMock: humanQuality.isMock,
           rawQualityScore: humanQuality.rawQualityScore ?? draft.contentPackage?.rawQualityScore ?? draft.rawQualityScore,
-          cappedScore: humanQuality.score,
-          publishReady: humanQuality.publishReady
+          cappedScore: attachedScore,
+          publishReady
         },
-        qualityIssues: humanQuality.issues?.map((issue) => `${issue.code}: ${issue.message}`) || []
+        qualityIssues: Array.from(new Set(attachedIssues))
       }
     : draft.contentPackage;
   return {
@@ -411,23 +432,23 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
     resultMode,
     contentPackage: nextPackage,
     humanQuality,
-    publishReady: humanQuality.publishReady,
+    publishReady,
     judgeEngine: humanQuality.judgeEngine,
     isMock: humanQuality.isMock,
     qualityAttempts,
     rawQualityScore: humanQuality.rawQualityScore ?? draft.rawQualityScore ?? draft.contentPackage?.rawQualityScore,
-    cappedScore: humanQuality.score,
-    qualityScore: humanQuality.score,
+    cappedScore: attachedScore,
+    qualityScore: attachedScore,
     summary: {
       ...(draft.summary || {}),
       resultMode,
       judgeEngine: humanQuality.judgeEngine,
       isMock: humanQuality.isMock,
       rawQualityScore: humanQuality.rawQualityScore ?? draft.rawQualityScore ?? draft.contentPackage?.rawQualityScore,
-      cappedScore: humanQuality.score,
-      publishReady: humanQuality.publishReady
+      cappedScore: attachedScore,
+      publishReady
     },
-    qualityIssues: humanQuality.issues?.map((issue) => `${issue.code}: ${issue.message}`) || []
+    qualityIssues: Array.from(new Set(attachedIssues))
   };
 };
 
@@ -543,16 +564,34 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       subKeywords
     },
     factMap: fallbackPackage.factMap,
+    contextFacts: fallbackPackage.contextFacts,
     imageAnalysis: fallbackPackage.imageAnalysis,
     experienceStatus: fallbackPackage.experienceStatus,
     informationSufficiency: fallbackPackage.informationSufficiency,
     searchIntent: fallbackPackage.searchIntent,
     writerPlan: fallbackPackage.writerPlan
   });
+  const claimLedger = createClaimLedger({
+    title: finalTitle,
+    body,
+    faq: faqItems,
+    hashtags,
+    factMap: pipelineContext.factMap,
+    contextFacts: pipelineContext.contextFacts,
+    imageAnalysis: pipelineContext.imageAnalysis,
+    experienceStatus: pipelineContext.experienceStatus
+  });
+  const claimLedgerSummary = summarizeClaimLedger(claimLedger);
+  const claimLedgerIssues = claimLedgerSummary.hardFailures.map(
+    (item) => `claimLedger.${item.claimType}: ${item.text}`
+  );
+  const cappedHumanScore = Math.min(deterministicHumanQuality.score, claimLedgerSummary.hardFail ? 55 : 100);
+  const mergedQualityIssues = [...qualityIssues, ...claimLedgerIssues];
 
   const contentPackage = {
     ...fallbackPackage,
     resultMode: "honest_draft",
+    standardInputSchema: pipelineContext.standardInputSchema,
     standardInput: pipelineContext.standardInput,
     primaryEntity: pipelineContext.primaryEntity,
     finalRecommendedTitle: finalTitle,
@@ -562,11 +601,14 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     category: fallbackDraft.category,
     searchIntent: pipelineContext.searchIntent,
     experienceStatus: pipelineContext.experienceStatus,
+    contextFacts: pipelineContext.contextFacts,
     informationSufficiency: pipelineContext.informationSufficiency,
     factMap: pipelineContext.factMap,
     imageAnalysis: pipelineContext.imageAnalysis,
     writerPlan: pipelineContext.writerPlan,
     blogBody: body,
+    claimLedger,
+    claimLedgerSummary,
     engine: "llm",
     actualBodyLength: bodyLength,
     actualBodyCharCount: Array.from(String(body || "")).length,
@@ -577,22 +619,22 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       targetCharCount,
       informationSufficiency: pipelineContext.informationSufficiency?.level || null,
       rawQualityScore,
-      cappedScore: deterministicHumanQuality.score,
+      cappedScore: cappedHumanScore,
       judgeEngine: deterministicHumanQuality.judgeEngine,
       isMock: deterministicHumanQuality.isMock,
-      publishReady: deterministicHumanQuality.publishReady
+      publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail
     },
     faqItems,
     hashtags,
     rawQualityScore,
     legacyQualityScore: rawQualityScore,
-    cappedScore: deterministicHumanQuality.score,
-    qualityScore: deterministicHumanQuality.score,
-    qualityIssues,
+    cappedScore: cappedHumanScore,
+    qualityScore: cappedHumanScore,
+    qualityIssues: mergedQualityIssues,
     qualityChecks,
     blogWriterQuality,
     humanQuality: deterministicHumanQuality,
-    publishReady: deterministicHumanQuality.publishReady,
+    publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail,
     judgeEngine: deterministicHumanQuality.judgeEngine,
     isMock: deterministicHumanQuality.isMock,
     qualityAttempts: 1
@@ -615,12 +657,15 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     category: fallbackDraft.category,
     searchIntent: contentPackage.searchIntent,
     experienceStatus: contentPackage.experienceStatus,
+    contextFacts: contentPackage.contextFacts,
     informationSufficiency: contentPackage.informationSufficiency,
     factMap: contentPackage.factMap,
     imageAnalysis: contentPackage.imageAnalysis,
     writerPlan: contentPackage.writerPlan,
     faq: faqItems,
     hashtags,
+    claimLedger,
+    claimLedgerSummary,
     engine: "llm",
     summary: {
       resultMode: "honest_draft",
@@ -630,21 +675,21 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       targetCharCount,
       informationSufficiency: pipelineContext.informationSufficiency?.level || null,
       rawQualityScore,
-      cappedScore: deterministicHumanQuality.score,
+      cappedScore: cappedHumanScore,
       judgeEngine: deterministicHumanQuality.judgeEngine,
       isMock: deterministicHumanQuality.isMock,
-      publishReady: deterministicHumanQuality.publishReady
+      publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail
     },
     contentPackage,
     rawQualityScore,
     legacyQualityScore: rawQualityScore,
-    cappedScore: deterministicHumanQuality.score,
-    qualityScore: deterministicHumanQuality.score,
-    qualityIssues,
+    cappedScore: cappedHumanScore,
+    qualityScore: cappedHumanScore,
+    qualityIssues: mergedQualityIssues,
     qualityChecks,
     blogWriterQuality,
     humanQuality: deterministicHumanQuality,
-    publishReady: deterministicHumanQuality.publishReady,
+    publishReady: deterministicHumanQuality.publishReady && !claimLedgerSummary.hardFail,
     judgeEngine: deterministicHumanQuality.judgeEngine,
     isMock: deterministicHumanQuality.isMock,
     qualityAttempts: 1

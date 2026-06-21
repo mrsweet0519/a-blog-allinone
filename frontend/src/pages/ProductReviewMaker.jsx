@@ -1074,7 +1074,7 @@ export default function ProductReviewMaker() {
                 value={form.subKeywords}
                 onChange={(event) => updateForm("subKeywords", event.target.value)}
                 className="focus-ring mt-3 min-h-11 w-full rounded-xl border border-line/40 bg-white px-3 text-sm font-semibold text-ink/82 placeholder:text-ink/30"
-                placeholder="예: 지역명 맛집, 대표 메뉴, 가족 외식"
+                placeholder="예: 지역 키워드, 대표 특징, 이용 상황"
               />
               <p className="mt-1.5 text-xs font-semibold leading-5 text-ink/45">
                 비워두면 글 주제와 메모에서 자동 추천합니다. 최대 3개까지 쉼표로 나눠 입력하세요.

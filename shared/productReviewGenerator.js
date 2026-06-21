@@ -2,8 +2,10 @@ import { evaluateBlogWriterQuality } from "./blogWriterQuality.js";
 import { evaluateHumanQuality } from "./blogWriterHumanQuality.js";
 import {
   buildBlogWriterPipelineContext,
+  createClaimLedger,
   normalizeBlogWriterInput,
-  parseSubKeywords
+  parseSubKeywords,
+  summarizeClaimLedger
 } from "./blogWriterPipeline.js";
 
 const DEFAULT_TARGET_CHAR_COUNT = 1800;
@@ -131,14 +133,14 @@ const normalizeTargetCharCount = (form = {}, informationSufficiency = {}) => {
     : DEFAULT_TARGET_CHAR_COUNT;
   const range = informationSufficiency.targetLengthRange || {};
   const level = informationSufficiency.level || "medium";
-  const cap = level === "low" ? 1300 : level === "medium" ? 2300 : MAX_TARGET_CHAR_COUNT;
+  const cap = level === "low" ? 1100 : level === "medium" ? 2200 : MAX_TARGET_CHAR_COUNT;
   const target = Math.min(bounded, cap, range.max || cap);
 
   return {
     requestedTargetCharCount: Number.isFinite(requested) ? bounded : null,
     targetCharCount: target,
     targetLengthRange: {
-      min: range.min || (level === "low" ? 700 : level === "medium" ? 1300 : 2200),
+      min: range.min || (level === "low" ? 600 : level === "medium" ? 1100 : 2000),
       max: range.max || cap,
       target: range.target ? Math.min(range.target, target) : target
     },
@@ -264,6 +266,8 @@ const createTitleCandidates = ({ context = {}, entityParts = {} } = {}) => {
       searchClarity: 0,
       clickReason: 0,
       lengthScore: 0,
+      categoryFit: title.includes(categoryLabel) || title.includes(primary) ? 1 : 0,
+      experienceFit: isActual ? Number(/후기|직접|남은|기준/u.test(title)) : Number(/처음|살펴|볼|필요/u.test(title)),
       awkwardPattern: /정보\s*정리|체험\s*흐름|식사\s*후보|해당\s*제품|대표\s*메뉴/u.test(title),
       similarityToOthers: 0,
       score: scoreTitle({ title, context })
@@ -274,7 +278,11 @@ const createTitleCandidates = ({ context = {}, entityParts = {} } = {}) => {
 const createOpeningParagraph = ({ context = {}, facts = [], subKeywords = [] } = {}) => {
   const primary = context.primaryEntity || context.mainKeyword || "";
   const main = context.mainKeyword || primary;
-  const sub = subKeywords[0] || "";
+  const mainKey = compact(main);
+  const sub = subKeywords.find((keyword) => {
+    const key = compact(keyword);
+    return key && key !== mainKey && !key.includes(mainKey) && !mainKey.includes(key);
+  }) || "";
   const isActual = ACTUAL_EXPERIENCE_STATUSES.has(context.experienceStatus);
   const firstFact = facts[0] || "";
   const firstSentence =
@@ -283,7 +291,9 @@ const createOpeningParagraph = ({ context = {}, facts = [], subKeywords = [] } =
       : `${topicParticle(primary)} ${instrumentalParticle(main)} ${isActual ? "직접 겪은 장면이 있어" : "처음 알아볼 때"} 중심을 잡기 좋은 주제였어요.`;
   const secondSentence = sub
     ? `${sub}${hasFinalConsonant(sub) ? "도" : "도"} 함께 보면 검색하는 사람이 궁금해할 맥락이 더 선명해져요.`
-    : `${subjectParticle(main)} 중심에서 벗어나지 않도록 핵심만 간단히 모았습니다.`;
+    : compact(primary).includes(mainKey) && compact(primary) !== mainKey
+      ? "처음부터 핵심을 좁혀 보면 기준이 더 선명해져요."
+      : `${subjectParticle(main)} 중심에서 벗어나지 않도록 핵심만 간단히 모았습니다.`;
   const thirdSentence = firstFact
     ? toNaturalSentence(firstFact)
     : isActual
@@ -628,6 +638,20 @@ export function createProductReviewDraft(form = {}) {
   const hashtags = createHashtags({ context, entityParts, facts });
   const faqItems = createFaqItems({ context, factMap: context.factMap });
   const photoGuide = createPhotoGuideItems({ context, imageAnalysis: context.imageAnalysis });
+  const claimLedger = createClaimLedger({
+    title: finalTitle,
+    body,
+    faq: faqItems,
+    hashtags,
+    factMap: context.factMap,
+    contextFacts: context.contextFacts,
+    imageAnalysis: context.imageAnalysis,
+    experienceStatus: context.experienceStatus
+  });
+  const claimLedgerSummary = summarizeClaimLedger(claimLedger);
+  const claimLedgerIssues = claimLedgerSummary.hardFailures.map(
+    (item) => `claimLedger.${item.claimType}: ${item.text}`
+  );
   const rawQuality = evaluateBlogWriterQuality({
     form: {
       ...normalizedForm,
@@ -663,7 +687,7 @@ export function createProductReviewDraft(form = {}) {
     effectiveTargetCharCount: lengthSettings.targetCharCount,
     engine: "fallback"
   });
-  const qualityScore = Math.min(89, humanQuality.score, rawQuality.score);
+  const qualityScore = Math.min(89, humanQuality.score, rawQuality.score, claimLedgerSummary.hardFail ? 55 : 89);
   const generationId = text(form.generationId) || `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const resultMode = getResultMode({
     informationSufficiency: context.informationSufficiency,
@@ -680,6 +704,7 @@ export function createProductReviewDraft(form = {}) {
   const contentPackage = {
     generationId,
     resultMode,
+    standardInputSchema: context.standardInputSchema,
     standardInput: context.standardInput,
     pipelineSteps: context.pipelineSteps,
     entityParts,
@@ -693,6 +718,7 @@ export function createProductReviewDraft(form = {}) {
     category: context.category,
     searchIntent: context.searchIntent,
     experienceStatus: context.experienceStatus,
+    contextFacts: context.contextFacts,
     informationSufficiency: context.informationSufficiency,
     factMap: context.factMap,
     imageAnalysis: context.imageAnalysis,
@@ -704,6 +730,8 @@ export function createProductReviewDraft(form = {}) {
     blogBody: body,
     faqItems,
     hashtags,
+    claimLedger,
+    claimLedgerSummary,
     photoGuide,
     targetCharCount: lengthSettings.targetCharCount,
     targetLengthRange: lengthSettings.targetLengthRange,
@@ -719,7 +747,7 @@ export function createProductReviewDraft(form = {}) {
     legacyQualityScore: rawQuality.score,
     cappedScore: qualityScore,
     qualityScore,
-    qualityIssues: uniqueTexts([...(rawQuality.issues || []), ...(humanQuality.issues || []).map((issue) => `${issue.code}: ${issue.message}`)], 12),
+    qualityIssues: uniqueTexts([...(rawQuality.issues || []), ...(humanQuality.issues || []).map((issue) => `${issue.code}: ${issue.message}`), ...claimLedgerIssues], 16),
     qualityChecks: rawQuality.checks,
     blogWriterQuality: rawQuality,
     humanQuality,
@@ -750,6 +778,8 @@ export function createProductReviewDraft(form = {}) {
     engine: "fallback",
     titles: titleCandidates,
     titleCandidates,
+    titleCandidateEvaluations: titleEvaluations,
+    selectedTitleEvaluation: selectedTitleCandidate,
     finalTitle,
     selectedTitle: finalTitle,
     primaryEntity: entityParts.primaryEntity,
@@ -761,6 +791,7 @@ export function createProductReviewDraft(form = {}) {
     subKeywords: context.subKeywords,
     searchIntent: context.searchIntent,
     experienceStatus: context.experienceStatus,
+    contextFacts: context.contextFacts,
     informationSufficiency: context.informationSufficiency,
     factMap: context.factMap,
     imageAnalysis: context.imageAnalysis,
@@ -769,6 +800,8 @@ export function createProductReviewDraft(form = {}) {
     faq: faqItems,
     faqItems,
     hashtags,
+    claimLedger,
+    claimLedgerSummary,
     imageSuggestions: photoGuide,
     outline: createSectionPlans({
       context,
