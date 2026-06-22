@@ -86,6 +86,7 @@ const reviewCategoryOptions = [
   { value: "", label: "자동 추정" },
   { value: "product", label: "상품 후기" },
   { value: "restaurant", label: "맛집 후기" },
+  { value: "underwear", label: "속옷 후기" },
   { value: "store", label: "매장 후기" },
   { value: "education", label: "교육 후기" },
   { value: "hospital", label: "병원 후기" },
@@ -203,6 +204,24 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
   const imageAnalysis = draft.imageAnalysis || packageData.imageAnalysis || null;
   const writerPlan = draft.writerPlan || packageData.writerPlan || null;
   const faq = draft.faq || draft.faqItems || packageData.faqItems || [];
+  const targetLengthContract = draft.targetLengthContract || packageData.targetLengthContract || null;
+  const requestedTargetCharCount =
+    draft.requestedTargetCharCount ||
+    packageData.requestedTargetCharCount ||
+    targetLengthContract?.requestedTargetCharCount ||
+    null;
+  const effectiveTargetCharCount =
+    draft.effectiveTargetCharCount ||
+    packageData.effectiveTargetCharCount ||
+    targetLengthContract?.effectiveTargetCharCount ||
+    packageData.targetLengthRange?.target ||
+    packageData.targetCharCount ||
+    null;
+  const actualCharCount =
+    draft.actualCharCount ||
+    packageData.actualCharCount ||
+    targetLengthContract?.actualCharCount ||
+    Array.from(body).length;
   const summary = {
     ...(packageData.summary || {}),
     ...(draft.summary || {}),
@@ -214,7 +233,20 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
       packageData.summary?.targetCharCount ||
       packageData.targetLengthRange?.target ||
       packageData.targetCharCount ||
-      null
+      effectiveTargetCharCount,
+    requestedTargetCharCount,
+    effectiveTargetCharCount,
+    actualCharCount,
+    targetComplianceRatio:
+      draft.targetComplianceRatio ||
+      packageData.targetComplianceRatio ||
+      targetLengthContract?.targetComplianceRatio ||
+      null,
+    targetAdjustmentReason:
+      draft.targetAdjustmentReason ||
+      packageData.targetAdjustmentReason ||
+      targetLengthContract?.targetAdjustmentReason ||
+      ""
   };
 
   return {
@@ -236,6 +268,12 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
     factMap,
     imageAnalysis,
     writerPlan,
+    targetLengthContract,
+    requestedTargetCharCount,
+    effectiveTargetCharCount,
+    actualCharCount,
+    targetAdjustmentReason: summary.targetAdjustmentReason,
+    targetComplianceRatio: summary.targetComplianceRatio,
     body,
     faq,
     bodyLength,
@@ -260,6 +298,12 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
           factMap,
           imageAnalysis,
           writerPlan,
+          targetLengthContract,
+          requestedTargetCharCount,
+          effectiveTargetCharCount,
+          actualCharCount,
+          targetAdjustmentReason: summary.targetAdjustmentReason,
+          targetComplianceRatio: summary.targetComplianceRatio,
           blogBody: body,
           faqItems: faq,
           engine,
@@ -279,6 +323,7 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
   const finalTitle = getResultFinalTitle(result);
   const body = getResultBody(result);
   const hashtags = packageData.hashtags || result.hashtags || [];
+  const faqItems = packageData.faqItems || [];
 
   if (packageData) {
     return [
@@ -288,9 +333,7 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
       "블로그 본문",
       includeImageMarkers ? body : stripImageMarkers(body),
       "",
-      "FAQ",
-      formatFaqItems(packageData.faqItems || []),
-      "",
+      ...(faqItems.length > 0 ? ["FAQ", formatFaqItems(faqItems), ""] : []),
       "해시태그",
       hashtags.join(" ")
     ]
@@ -383,6 +426,9 @@ const getPayloadTargetCharCount = (value) => {
   const normalized = normalizeTargetCharCountInput(value);
   return normalized ? Number.parseInt(normalized, 10) : undefined;
 };
+
+const formatCharCount = (value) =>
+  Number.isFinite(Number(value)) ? `${Number(value).toLocaleString("ko-KR")}자` : "-";
 
 const normalizeSignatureText = (value = "") => String(value ?? "").trim().replace(/\s+/g, " ");
 
@@ -1308,8 +1354,27 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
   const blogBody = getResultBody(result);
   const hashtags = packageData.hashtags || result.hashtags || [];
   const mainKeyword = getResultMainKeyword(result);
-  const bodyLength = blogBody.replace(/\s+/g, "").length;
-  const lowInformationNotice = packageData.informationSufficiency?.level === "low";
+  const actualCharCount = packageData.actualCharCount || result.actualCharCount || Array.from(blogBody).length;
+  const requestedTargetCharCount =
+    packageData.requestedTargetCharCount ||
+    result.requestedTargetCharCount ||
+    packageData.summary?.requestedTargetCharCount ||
+    null;
+  const effectiveTargetCharCount =
+    packageData.effectiveTargetCharCount ||
+    result.effectiveTargetCharCount ||
+    packageData.summary?.effectiveTargetCharCount ||
+    packageData.targetLengthRange?.target ||
+    packageData.targetCharCount ||
+    null;
+  const targetAdjustmentReason =
+    packageData.targetAdjustmentReason ||
+    result.targetAdjustmentReason ||
+    packageData.summary?.targetAdjustmentReason ||
+    "";
+  const additionalInfoHints = (packageData.additionalInfoHints || []).slice(0, 3);
+  const faqItems = packageData.faqItems || [];
+  const lowInformationNotice = Boolean(targetAdjustmentReason);
 
   const updateSelectedTitle = (title) => {
     setResult((current) => ({
@@ -1349,7 +1414,7 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
         <div>
           <p className="text-xs font-bold text-moss">편집 가능한 원고</p>
           <p className="mt-0.5 text-xs font-semibold text-ink/48">
-            메인 키워드 {mainKeyword || "자동 추출 중"} · 본문 {bodyLength}자 · 해시태그 {hashtags.length}개
+            메인 키워드 {mainKeyword || "자동 추출 중"} · 요청 {formatCharCount(requestedTargetCharCount)} · 현재 {formatCharCount(actualCharCount)}
           </p>
         </div>
         <button
@@ -1388,17 +1453,23 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
             <span className="rounded-full bg-moss/10 px-3 py-1.5 text-moss">
               메인 키워드: {mainKeyword || "자동 추출"}
             </span>
-            <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">본문 {bodyLength}자</span>
+            <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">요청 {formatCharCount(requestedTargetCharCount)}</span>
+            <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">현재 {formatCharCount(actualCharCount)}</span>
+            <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">기준 {formatCharCount(effectiveTargetCharCount)}</span>
             <span className="rounded-full bg-[#fbfaf6] px-3 py-1.5">해시태그 {hashtags.length}개</span>
           </div>
           {lowInformationNotice && (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-950">
-              <p>입력 정보가 적어 확인 가능한 내용을 중심으로 짧은 초안을 만들었습니다. 실제 경험이나 세부 정보를 더하면 더 풍성한 글로 다시 만들 수 있습니다.</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-amber-900">
-                <li>실제 방문·사용 여부</li>
-                <li>가장 좋았던 점 또는 아쉬웠던 점</li>
-                <li>가격·주차·메뉴·시설 등 확인한 정보</li>
-              </ul>
+              <p>
+                목표 {formatCharCount(requestedTargetCharCount)}보다 입력 정보가 적어 확인 가능한 경험을 중심으로 {formatCharCount(actualCharCount)} 초안을 만들었습니다.
+              </p>
+              {additionalInfoHints.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-amber-900">
+                  {additionalInfoHints.map((hint) => (
+                    <li key={hint}>{hint}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </header>
@@ -1467,9 +1538,11 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
           />
         </section>
 
-        <ResultDetailSection title="FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
-          <FaqList items={packageData.faqItems || []} />
-        </ResultDetailSection>
+        {faqItems.length > 0 && (
+          <ResultDetailSection title="FAQ" copyActive={copied === "faq"} onCopy={() => copyText("faq")}>
+            <FaqList items={faqItems} />
+          </ResultDetailSection>
+        )}
 
         <ResultDetailSection title="해시태그" copyActive={copied === "hashtags"} onCopy={() => copyText("hashtags")}>
           <KeywordChips items={hashtags} />

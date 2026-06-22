@@ -47,6 +47,7 @@ export const BLOG_WRITER_CATEGORIES = [
   "product",
   "beauty",
   "fashion",
+  "underwear",
   "experience",
   "store",
   "education",
@@ -147,6 +148,7 @@ export const inferBlogWriterCategory = (form = {}) => {
   if (/맛집|식당|짬뽕|탕수육|파스타|스테이크|식사|외식|회식/u.test(source)) return "restaurant";
   if (/카페|커피|디저트|브런치/u.test(source)) return "cafe";
   if (/아이|키즈|체험관|놀이터|실내체험|가족/u.test(source)) return "kids-place";
+  if (/속옷|언더웨어|이너웨어|브라|브래지어|팬티|보정속옷|보정\s*웨어|심리스|브라렛/u.test(source)) return "underwear";
   if (/화장품|크림|세럼|앰플|패드|팩|샴푸|드라이샴푸|피부|보습|향/u.test(source)) return "beauty";
   if (/패션|의류|신발|가방|착용|자켓|셔츠|원피스|니트/u.test(source)) return "fashion";
   if (/텀블러|물병|보틀|립밤|가방|제품|사용|휴대|패키지|가전|용품/u.test(source)) return "product";
@@ -165,7 +167,7 @@ export const collectBlogSubKeywords = (form = {}, resolvedMainKeyword = "") => {
   const rawKeywords = uniqueText([
     ...splitCommaList(form.mainKeyword || form.keyword, 8),
     ...splitCommaList(form.subKeywords, 8)
-  ]);
+  ]).map(normalizeBlogKeyword).filter(Boolean);
 
   const localSearchKeyword = text(`${topicText} ${memoText}`).match(LOCAL_SEARCH_PATTERN)?.[1] || "";
   const contextual = [

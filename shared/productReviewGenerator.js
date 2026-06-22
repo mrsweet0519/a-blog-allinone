@@ -3,11 +3,14 @@ import { evaluateHumanQuality } from "./blogWriterHumanQuality.js";
 import { createBlogWriterTrace, summarizeResultDiff } from "./blogWriterTrace.js";
 import {
   buildBlogWriterPipelineContext,
+  calculateInputFactCoverage,
   createClaimLedger,
+  evaluateCategoryContamination,
   normalizeBlogWriterInput,
   parseSubKeywords,
   summarizeClaimLedger
 } from "./blogWriterPipeline.js";
+import { normalizeBlogKeyword } from "./blogWriterCategory.js";
 import {
   ANEUNYEOJA_WRITER_PROFILE_ID,
   ANEUNYEOJA_WRITER_PROFILE_VERSION
@@ -115,6 +118,13 @@ const toNaturalSentence = (value = "") => {
   if (!cleaned) return "";
   if (/[.!?。요다]$/u.test(cleaned)) return cleaned;
   const conversational = cleaned
+    .replace(/착용함$/u, "착용했어요")
+    .replace(/크지 않았음$/u, "크지 않았어요")
+    .replace(/않았음$/u, "않았어요")
+    .replace(/궁금했음$/u, "궁금했어요")
+    .replace(/떠올랐음$/u, "떠올랐어요")
+    .replace(/부담스럽지 않았음$/u, "부담스럽지 않았어요")
+    .replace(/강하지 않았음$/u, "강하지 않았어요")
     .replace(/기억남$/u, "기억에 남았어요")
     .replace(/좋았음$/u, "좋았어요")
     .replace(/편했음$/u, "편했어요")
@@ -126,7 +136,7 @@ const toNaturalSentence = (value = "") => {
     .replace(/1박함$/u, "1박했어요");
   if (conversational !== cleaned) return `${conversational}.`;
   if (/(?:했음|좋았음|편했음|남았음|기억남|들렀음|사용함|방문함|숙박함|구매함)$/u.test(cleaned)) {
-    return `${cleaned}이라는 점이 기억에 남아요.`;
+    return `${cleaned.replace(/음$/u, "어요")}.`;
   }
   return `${cleaned}.`;
 };
@@ -161,6 +171,7 @@ const CATEGORY_LABELS = {
   product: "상품",
   beauty: "뷰티",
   fashion: "패션",
+  underwear: "속옷",
   education: "교육",
   store: "매장",
   hospital: "병원",
@@ -198,7 +209,7 @@ const createEntityParts = ({ form = {}, context = {} } = {}) => {
   const primaryEntity = text(context.primaryEntity || context.mainKeyword || form.productName || form.topic);
   const brand = text(form.brandName || form.brand || "");
   const productName =
-    /product|beauty|fashion/u.test(category) ? primaryEntity : text(form.productNameField || form.product || "");
+    /product|beauty|fashion|underwear/u.test(category) ? primaryEntity : text(form.productNameField || form.product || "");
   const placeName =
     /restaurant|cafe|accommodation|travel|store|hospital|kids-place/u.test(category)
       ? primaryEntity
@@ -236,21 +247,29 @@ const normalizeTitleCandidate = (value = "") =>
   text(value)
     .replace(/\s+/gu, " ")
     .replace(/(\S+)\s+\1(?=\s|$)/gu, "$1")
-    .replace(/정보\s*정리|체험\s*흐름|식사\s*후보|해당\s*제품|대표\s*메뉴/gu, "")
+    .replace(/실제\s*후기|사용\s*후기|직접\s*써본\s*후기/gu, "후기")
+    .replace(/후기\s+후기/gu, "후기")
+    .replace(/(후기)(?:\s+[^ \n]{0,12})?\s+\1/gu, "$1")
+    .replace(/정보\s*정리|체험\s*흐름|식사\s*후보|해당\s*제품|대표\s*메뉴|체크\s*포인트까지\s*정리/gu, "")
     .replace(/\s+/gu, " ")
     .trim();
+
+const cleanTitlePart = (value = "") => normalizeBlogKeyword(value).replace(/\s*후기$/u, "").trim();
 
 const createTitleCandidates = ({ context = {}, entityParts = {} } = {}) => {
   const primary = entityParts.primaryEntity || context.primaryEntity || context.mainKeyword || "블로그";
   const main = context.mainKeyword || primary;
   const categoryLabel = CATEGORY_LABELS[context.category] || "리뷰";
-  const subKeywords = context.subKeywords || [];
+  const mainTitlePart = cleanTitlePart(main) || main;
+  const subKeywords = (context.subKeywords || [])
+    .map(cleanTitlePart)
+    .filter((keyword) => keyword && compact(keyword) !== compact(mainTitlePart) && compact(keyword) !== compact(primary));
   const subA = subKeywords[0] || categoryLabel;
   const subB = subKeywords[1] || getExperienceLabel(context.experienceStatus);
   const subC = subKeywords[2] || "처음 볼 부분";
   const isActual = ACTUAL_EXPERIENCE_STATUSES.has(context.experienceStatus);
   const reviewWord = isActual ? "후기" : "";
-  const mainText = compact(main) === compact(primary) ? categoryLabel : main;
+  const mainText = compact(main) === compact(primary) ? categoryLabel : mainTitlePart;
 
   return uniqueTexts(
     [
@@ -290,22 +309,45 @@ const createOpeningParagraph = ({ context = {}, facts = [], subKeywords = [] } =
   }) || "";
   const isActual = ACTUAL_EXPERIENCE_STATUSES.has(context.experienceStatus);
   const firstFact = facts[0] || "";
+  const actionLabel = getReferenceAction(context.category, primary);
   const firstSentence =
     compact(primary) === compact(main)
-      ? `${topicParticle(primary)} ${isActual ? "직접 겪은 장면이 있어" : "처음 알아볼 때"} 중심을 잡기 좋은 주제였어요.`
-      : `${topicParticle(primary)} ${instrumentalParticle(main)} ${isActual ? "직접 겪은 장면이 있어" : "처음 알아볼 때"} 중심을 잡기 좋은 주제였어요.`;
+      ? `${topicParticle(primary)} ${isActual ? `${actionLabel}하며 남은 부분이 있는 주제였어요` : "처음 알아볼 때 먼저 이름과 조건을 좁혀볼 만한 주제였어요"}.`
+      : `${topicParticle(primary)} ${objectParticle(main)} ${isActual ? `${actionLabel}하며 남은 부분을 중심으로 적어봤어요` : "알아볼 때 함께 비교할 조건을 먼저 좁혀봤어요"}.`;
   const secondSentence = sub
-    ? `${sub}${hasFinalConsonant(sub) ? "도" : "도"} 함께 보면 검색하는 사람이 궁금해할 맥락이 더 선명해져요.`
+    ? `${sub}도 함께 떠올라서 이 부분을 따로 살펴봤어요.`
     : compact(primary).includes(mainKey) && compact(primary) !== mainKey
-      ? "처음부터 핵심을 좁혀 보면 기준이 더 선명해져요."
-      : `${subjectParticle(main)} 중심에서 벗어나지 않도록 핵심만 간단히 모았습니다.`;
+      ? "처음부터 조건을 좁혀 보면 볼 부분이 더 선명해져요."
+      : `${subjectParticle(main)} 중심에서 벗어나지 않도록 필요한 내용만 남겼어요.`;
   const thirdSentence = firstFact
     ? toNaturalSentence(firstFact)
     : isActual
-      ? `${getExperienceLabel(context.experienceStatus)} 당시 남은 인상을 기준으로 과장 없이 적었습니다.`
-      : "처음 보는 주제라면 이름, 쓰임, 함께 볼 조건부터 차분히 보면 좋아요.";
+      ? `${getExperienceLabel(context.experienceStatus)} 당시 실제로 떠오른 부분만 과장 없이 적었어요.`
+      : "아직 직접 경험을 전제로 하지는 않고, 정해둔 키워드 안에서 볼 부분을 정리했어요.";
 
   return [firstSentence, secondSentence, thirdSentence].filter(Boolean).join(" ");
+};
+
+const getFactHeading = ({ context = {}, index = 0, subKeywords = [] } = {}) => {
+  const primary = context.primaryEntity || context.mainKeyword || "";
+  const subject = `${primary} ${context.mainKeyword || ""}`;
+  const labelsByCategory = {
+    restaurant: ["들르게 된 상황", "메뉴와 자리에서 남은 점", "식사하며 떠오른 부분", "마지막으로 남은 인상"],
+    cafe: ["들르게 된 상황", "메뉴와 공간에서 본 점", "머무는 동안 남은 부분", "다시 떠오른 장면"],
+    accommodation: ["숙박하게 된 이유", "객실과 동선에서 본 점", "머무는 동안 본 부분", "예약 전에 떠올릴 점"],
+    product: ["사용하게 된 상황", "실제로 써보며 본 점", "생활 속에서 본 부분", "다시 볼 조건"],
+    beauty: ["사용하게 된 상황", "처음 써보며 본 점", "루틴 안에서 남은 부분", "다시 볼 조건"],
+    fashion: ["착용하게 된 상황", "착용하면서 본 점", "활동 중 본 부분", "다시 볼 조건"],
+    underwear: ["착용하게 된 이유", "착용 상황에서 본 점", "몸에 맞는 부분", "아쉬운 부분", "데일리 활용 여부", "계속 볼 조건"],
+    education: ["수강하게 된 이유", "수업에서 남은 점", "초보자 입장에서 본 부분", "다시 볼 조건"],
+    store: ["방문하게 된 이유", "매장에서 본 점", "상담하며 남은 부분", "다시 볼 조건"],
+    service: ["이용하게 된 이유", "진행하며 본 점", "일정에서 남은 부분", "다시 볼 조건"]
+  };
+  if (context.category === "fashion" && /가방|백|토트|숄더|크로스|지갑|모자|벨트/u.test(subject)) {
+    return ["사용하게 된 상황", "사용하며 본 점", "활동 중 본 부분", "다시 볼 조건"][index] || (subKeywords[index] ? `${subKeywords[index]}에서 본 점` : `${primary} 세부 내용 ${index + 1}`);
+  }
+  const categoryLabels = labelsByCategory[context.category] || ["알아본 이유", "먼저 본 부분", "세부적으로 남은 점", "다시 볼 조건"];
+  return categoryLabels[index] || (subKeywords[index] ? `${subKeywords[index]}에서 본 점` : `${primary} 세부 내용 ${index + 1}`);
 };
 
 const createSectionPlans = ({ context = {}, facts = [], imageFacts = [] } = {}) => {
@@ -313,23 +355,31 @@ const createSectionPlans = ({ context = {}, facts = [], imageFacts = [] } = {}) 
   const subKeywords = context.subKeywords || [];
   const isActual = ACTUAL_EXPERIENCE_STATUSES.has(context.experienceStatus);
   const level = context.informationSufficiency?.level || "medium";
-  const base = [
-    {
-      heading: isActual ? `${objectParticle(primary)} 선택한 이유` : `${objectParticle(primary)} 알아본 이유`,
-      purpose: isActual ? "experience_reason" : "research_reason",
-      factIndexes: [0, 1]
-    },
-    {
-      heading: subKeywords[0] ? `${subKeywords[0]} 관점에서 본 부분` : "먼저 눈에 들어온 부분",
-      purpose: "reader_question",
-      factIndexes: [1, 2]
-    },
-    {
-      heading: subKeywords[1] ? `${andParticle(subKeywords[1])} 함께 볼 점` : "기억에 남은 세부 내용",
-      purpose: "specific_detail",
-      factIndexes: [2, 3]
-    }
-  ];
+  const factLimit = level === "low" ? 3 : level === "medium" ? 5 : 8;
+  const base =
+    facts.length > 0
+      ? facts.slice(0, factLimit).map((_, index) => ({
+          heading: getFactHeading({ context, index, subKeywords }),
+          purpose: index === 0 ? (isActual ? "experience_reason" : "research_reason") : "fact_detail",
+          factIndexes: [index]
+        }))
+      : [
+          {
+            heading: isActual ? `${objectParticle(primary)} 선택한 이유` : `${objectParticle(primary)} 알아본 이유`,
+            purpose: isActual ? "experience_reason" : "research_reason",
+            factIndexes: []
+          },
+          {
+            heading: subKeywords[0] ? `${subKeywords[0]} 관점에서 본 부분` : "먼저 눈에 들어온 부분",
+            purpose: "reader_question",
+            factIndexes: []
+          },
+          {
+            heading: subKeywords[1] ? `${andParticle(subKeywords[1])} 함께 볼 점` : "기억에 남은 세부 내용",
+            purpose: "specific_detail",
+            factIndexes: []
+          }
+        ];
 
   if (imageFacts.length > 0) {
     base.push({
@@ -340,11 +390,11 @@ const createSectionPlans = ({ context = {}, facts = [], imageFacts = [] } = {}) 
     });
   }
 
-  if (level !== "low") {
+  if (level !== "low" && facts.length <= 3) {
     base.push({
       heading: isActual ? "다음에 다시 볼 부분" : "결정 전에 볼 부분",
       purpose: "reader_utility",
-      factIndexes: [3, 4]
+      factIndexes: facts[3] ? [3] : []
     });
   }
 
@@ -354,15 +404,45 @@ const createSectionPlans = ({ context = {}, facts = [], imageFacts = [] } = {}) 
     factIndexes: [4, 5]
   });
 
-  const maxCount = level === "low" ? 4 : level === "high" ? 7 : 6;
+  const maxCount = level === "low" ? 4 : level === "high" ? 9 : 7;
   return base.slice(0, maxCount);
+};
+
+const getReferenceAction = (category = "", subject = "") => {
+  if (["restaurant", "cafe", "store", "hospital", "kids-place", "travel", "experience"].includes(category)) return "방문";
+  if (category === "accommodation") return "숙박";
+  if (category === "underwear") return "착용";
+  if (category === "fashion") return /가방|백|토트|숄더|크로스|지갑|모자|벨트/u.test(subject) ? "사용" : "착용";
+  if (category === "education") return "수강";
+  if (category === "service") return "이용";
+  return "사용";
+};
+
+const createFactReflection = ({ fact = "", context = {} } = {}) => {
+  const primary = context.primaryEntity || context.mainKeyword || "";
+  const action = getReferenceAction(context.category, primary);
+  const cleaned = sanitizeDraftText(fact);
+
+  if (!cleaned) return "";
+  if (/궁금|고민|걱정/u.test(cleaned)) {
+    return `이 부분은 단정하기보다 ${action} 전에 다시 볼 기준으로 남겨두는 편이 자연스러웠어요.`;
+  }
+  if (/좋|편|부담스럽지|크지 않|강하지 않|기억/u.test(cleaned)) {
+    return `${objectParticle(primary)} 볼 때 이 사실이 가장 먼저 떠오르는 기준이 됐어요.`;
+  }
+  if (/출근|퇴근|주말|여행|가방|집|회사|일상/u.test(cleaned)) {
+    return `상황이 분명하니 ${objectParticle(primary)} 어떤 때 떠올리면 좋을지도 같이 좁혀졌어요.`;
+  }
+  return `${primary}과 연결해 볼 때 이 사실 하나만으로도 문단의 방향이 분명해졌어요.`;
 };
 
 const createParagraphForPlan = ({ plan = {}, context = {}, facts = [], imageFacts = [] } = {}) => {
   const primary = context.primaryEntity || context.mainKeyword || "";
   const main = context.mainKeyword || primary;
   const isActual = ACTUAL_EXPERIENCE_STATUSES.has(context.experienceStatus);
-  const factSentences = uniqueTexts((plan.factIndexes || []).map((index) => facts[index]).filter(Boolean), 2)
+  const action = getReferenceAction(context.category, primary);
+  const selectedFacts = uniqueTexts((plan.factIndexes || []).map((index) => facts[index]).filter(Boolean), 2);
+  const factSentences = selectedFacts
     .map(toNaturalSentence)
     .filter(Boolean);
   const imageSentences = uniqueTexts((plan.imageIndexes || []).map((index) => imageFacts[index]).filter(Boolean), 2)
@@ -370,9 +450,10 @@ const createParagraphForPlan = ({ plan = {}, context = {}, facts = [], imageFact
     .filter(Boolean);
 
   if (plan.purpose === "closing") {
+    const referenceAction = getReferenceAction(context.category, primary);
     return isActual
-      ? `${topicParticle(primary)} ${objectParticle(main)} 찾는 사람에게 실제로 남은 장면 중심으로 읽히는 글이 가장 자연스러워요. 과장된 결론보다 기억나는 사실을 좁게 남기는 쪽이 발행 후에도 부담이 적었습니다.`
-      : `${topicParticle(primary)} 처음 살펴보는 단계라면 핵심 조건만 남겨도 충분해요. 이후 실제 경험이나 세부 정보가 생기면 더 깊게 비교해볼 수 있습니다.`;
+      ? `${topicParticle(primary)} ${objectParticle(main)} 떠올릴 때는 실제로 남은 장면을 먼저 보게 됐어요. 더 보탤 말보다 기억나는 사실을 좁게 남기는 쪽이 부담이 적었습니다.`
+      : `${topicParticle(primary)} 처음 살펴보는 단계라면 이름, 용도, 비교할 조건만 남겨도 방향을 잡기 쉬워요. 실제 ${referenceAction} 정보가 생기면 그때 경험 중심으로 더 깊게 적을 수 있습니다.`;
   }
 
   if (plan.purpose === "image_grounding") {
@@ -383,29 +464,30 @@ const createParagraphForPlan = ({ plan = {}, context = {}, facts = [], imageFact
   }
 
   if (factSentences.length > 0) {
-    return `${factSentences.join(" ")} ${isActual ? "이런 구체적인 장면이 있어 실제 경험의 결이 더 분명해져요." : "처음 보는 사람도 이 정도 범위라면 핵심을 빠르게 파악할 수 있어요."}`;
+    const reflections = selectedFacts.map((fact) => createFactReflection({ fact, context })).filter(Boolean);
+    return uniqueTexts([...factSentences, ...reflections], 3).join(" ");
   }
 
   if (isActual) {
-    return `${topicParticle(primary)} ${getExperienceLabel(context.experienceStatus)} 경험이 있는 주제라서, 느낌을 넓게 부풀리기보다 실제로 떠오르는 부분을 한 가지씩 나누는 편이 좋아요.`;
+    return `${topicParticle(primary)} ${action}한 상황을 기준으로 보면, 가장 먼저 떠오르는 장면을 하나씩 나누어 적기 좋았어요.`;
   }
 
   if (plan.purpose === "research_reason") {
-    return `${topicParticle(primary)} 이름과 용도를 먼저 잡아두면 검색어가 넓어져도 주제가 흐려지지 않아요.`;
+    return `${topicParticle(primary)} 이름과 용도를 먼저 잡아두면 비교할 항목이 지나치게 넓어지지 않아요. ${objectParticle(main)} 찾는 상황이라면 제품명과 쓰임을 분리해서 보는 편이 더 깔끔합니다. 이렇게 시작하면 뒤에서 세부 조건을 붙여도 중심이 흐려지지 않습니다.`;
   }
   if (plan.purpose === "reader_question") {
     const keyword = (context.subKeywords || [])[0] || main;
-    return `${objectParticle(keyword)} 함께 볼 때는 내 상황에서 실제로 필요한 조건인지부터 생각해보면 좋아요.`;
+    return `${objectParticle(keyword)} 함께 볼 때는 내 상황에서 실제로 필요한 조건인지부터 살펴보면 좋아요. 아직 경험이 적은 상태에서는 장점을 단정하기보다 비교할 항목으로 남기는 편이 자연스럽습니다. 이 기준을 먼저 정해두면 나중에 실제 ${action} 정보가 생겨도 내용이 과해지지 않아요.`;
   }
   if (plan.purpose === "specific_detail") {
     const keyword = (context.subKeywords || [])[1] || primary;
-    return `${topicParticle(keyword)} 세부 내용을 더하면 나중에 비교하거나 다시 볼 때 판단이 쉬워집니다.`;
+    return `${topicParticle(keyword)} 세부 내용을 더하면 나중에 비교하거나 다시 볼 때 판단이 쉬워집니다. 지금 단계에서는 확인된 표현만 남기고, 구체적인 만족도는 직접 경험이 있을 때 덧붙이는 편이 좋습니다. 그래서 장점 단정 대신 다음에 직접 확인할 기준으로 남겼습니다.`;
   }
   if (plan.purpose === "reader_utility") {
-    return `${topicParticle(primary)} 선택 전에 가격, 구성, 위치처럼 바뀔 수 있는 항목은 최신 내용을 따로 살펴보면 좋아요.`;
+    return `${topicParticle(primary)} 선택 전에 가격이나 구성처럼 바뀔 수 있는 항목은 최신 내용을 따로 살펴보면 좋아요.`;
   }
 
-  return `${topicParticle(primary)} 처음 알아볼 때 이름과 목적, 함께 비교할 조건을 나눠 보면 전체 판단이 쉬워집니다.`;
+  return `${topicParticle(primary)} 처음 알아볼 때 이름과 목적, 함께 비교할 조건을 나눠 보면 판단이 쉬워집니다.`;
 };
 
 const createBody = ({ context = {}, factMap = {}, imageAnalysis = {} } = {}) => {
@@ -465,10 +547,12 @@ const createHashtags = ({ context = {}, entityParts = {}, facts = [] } = {}) => 
     categoryLabel,
     `${primary}${categoryLabel}`,
     `${context.mainKeyword}${categoryLabel}`,
+    `${primary}정보`,
+    categoryLabel ? `${categoryLabel}정보` : "",
     isActual ? `${primary}후기` : "",
     isActual ? `${categoryLabel}후기` : "",
-    getExperienceLabel(context.experienceStatus),
-    ...facts.slice(0, 4)
+    isActual ? getExperienceLabel(context.experienceStatus) : "",
+    ...facts.filter((fact) => Array.from(text(fact)).length <= 14).slice(0, 3)
   ];
 
   return uniqueTexts(raw.map(toHashTag).filter(Boolean), 12);
@@ -486,8 +570,10 @@ const createFaqItems = ({ context = {}, factMap = {} } = {}) => {
     3
   );
 
-  return facts.slice(0, level === "high" ? 3 : 2).map((fact, index) => ({
-    question: index === 0 ? `${primary}에서 먼저 볼 점은 무엇인가요?` : `${primary} 글에서 함께 보면 좋은 내용은 무엇인가요?`,
+  if (facts.length < 3) return [];
+
+  return facts.slice(0, level === "high" ? 2 : 1).map((fact, index) => ({
+    question: index === 0 ? `${primary}에서 실제로 남은 점은 무엇인가요?` : `${primary}에서 함께 볼 만한 점은 무엇인가요?`,
     answer: sanitizeDraftText(fact)
   }));
 };
@@ -518,6 +604,71 @@ const getClosingParagraph = (body = "") => {
   const paragraphs = String(body || "").split(/\n{2,}/u).map(text).filter(Boolean);
   return paragraphs.at(-1) || "";
 };
+
+const clampNumber = (value, min, max) => Math.max(min, Math.min(max, Math.round(Number(value) || 0)));
+
+const estimateContentCapacity = ({ context = {}, factMap = {}, imageAnalysis = {} } = {}) => {
+  const level = context.informationSufficiency?.level || "medium";
+  const userFactCount = (factMap.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85).length;
+  const experienceFactCount = (factMap.experienceEvidence || []).length;
+  const imageFactCount = (imageAnalysis.visuallySupported || factMap.visuallySupported || []).length;
+  const subKeywordCount = (context.subKeywords || []).length;
+  const sectionCount = context.writerPlan?.sectionCount || (level === "low" ? 3 : level === "medium" ? 5 : 7);
+  const raw =
+    620 +
+    userFactCount * 170 +
+    experienceFactCount * 80 +
+    imageFactCount * 130 +
+    subKeywordCount * 70 +
+    sectionCount * 55;
+
+  if (level === "low") return clampNumber(raw, 700, 1300);
+  if (level === "medium") return clampNumber(raw, 1200, 2400);
+  return clampNumber(raw, 1800, 3600);
+};
+
+const buildTargetLengthContract = ({ lengthSettings = {}, context = {}, factMap = {}, imageAnalysis = {}, body = "", resultMode = "fallback_draft" } = {}) => {
+  const requestedTargetCharCount = lengthSettings.requestedTargetCharCount || lengthSettings.targetCharCount || DEFAULT_TARGET_CHAR_COUNT;
+  const informationSufficiency = context.informationSufficiency?.level || "medium";
+  const estimatedContentCapacity = estimateContentCapacity({ context, factMap, imageAnalysis });
+  const effectiveTargetCharCount =
+    informationSufficiency === "low"
+      ? Math.min(requestedTargetCharCount, estimatedContentCapacity)
+      : informationSufficiency === "medium"
+        ? Math.min(Math.max(1200, requestedTargetCharCount), 2400, estimatedContentCapacity)
+        : Math.min(Math.max(Math.round(requestedTargetCharCount * 0.85), requestedTargetCharCount), Math.round(requestedTargetCharCount * 1.1), estimatedContentCapacity);
+  const actualCharCount = Array.from(String(body || "")).length;
+  const targetAdjustmentReason =
+    requestedTargetCharCount > effectiveTargetCharCount
+      ? informationSufficiency === "low"
+        ? "insufficient-grounded-facts"
+        : "content-capacity-limit"
+      : "";
+
+  return {
+    requestedTargetCharCount,
+    estimatedContentCapacity,
+    effectiveTargetCharCount,
+    actualCharCount,
+    targetComplianceRatio: requestedTargetCharCount > 0 ? Number((actualCharCount / requestedTargetCharCount).toFixed(2)) : 0,
+    targetAdjustmentReason,
+    informationSufficiency,
+    resultMode
+  };
+};
+
+const ADDITIONAL_INFO_HINTS = {
+  restaurant: ["실제로 주문한 메뉴는 무엇인가요?", "맛·양·응대 중 기억나는 점이 있나요?", "주차나 웨이팅을 직접 확인했나요?"],
+  cafe: ["실제로 주문한 메뉴는 무엇인가요?", "공간이나 좌석에서 기억나는 점이 있나요?", "머문 시간이나 방문 상황이 있었나요?"],
+  accommodation: ["실제 숙박했나요?", "객실·시설에서 좋았던 점이 있나요?", "주차·위치·소음 중 확인한 정보가 있나요?"],
+  fashion: ["언제 착용하거나 사용했나요?", "가장 편했던 점은 무엇인가요?", "아쉬웠던 점이나 사이즈·착용 팁이 있나요?"],
+  underwear: ["언제 착용했나요?", "가장 편했던 점은 무엇인가요?", "압박감·사이즈·아쉬운 점이 있었나요?"],
+  beauty: ["언제 사용했나요?", "제형·향·마무리감 중 기억나는 점이 있나요?", "아쉬웠던 점이나 사용 순서가 있나요?"],
+  product: ["언제 착용하거나 사용했나요?", "가장 편했던 점은 무엇인가요?", "아쉬웠던 점이나 사용 팁이 있나요?"]
+};
+
+const getAdditionalInfoHints = (category = "") =>
+  ADDITIONAL_INFO_HINTS[category] || ["실제로 사용하거나 방문한 상황이 있나요?", "가장 좋았던 점 또는 아쉬웠던 점은 무엇인가요?", "직접 확인한 가격·위치·구성 정보가 있나요?"];
 
 const EMPTY_FIELD_VALUES = {
   productName: "",
@@ -639,6 +790,27 @@ export function createProductReviewDraft(form = {}) {
     factMap: context.factMap,
     imageAnalysis: context.imageAnalysis
   });
+  const resultMode = getResultMode({
+    informationSufficiency: context.informationSufficiency,
+    engine: "fallback",
+    llmReady: false
+  });
+  const targetLengthContract = buildTargetLengthContract({
+    lengthSettings,
+    context,
+    factMap: context.factMap,
+    imageAnalysis: context.imageAnalysis,
+    body,
+    resultMode
+  });
+  const inputFactCoverage = calculateInputFactCoverage({
+    factMap: context.factMap,
+    body
+  });
+  const categoryContaminationResult = evaluateCategoryContamination({
+    category: context.category,
+    values: [finalTitle, ...titleCandidates, body]
+  });
   const facts = uniqueTexts((context.factMap?.facts || []).map((fact) => fact.value), 12);
   const hashtags = createHashtags({ context, entityParts, facts });
   const faqItems = createFaqItems({ context, factMap: context.factMap });
@@ -673,7 +845,7 @@ export function createProductReviewDraft(form = {}) {
     faqItems,
     imageCount: context.imageAnalysis?.items?.length || normalizedForm.imageCount || 0,
     photoGuide,
-    targetCharCount: lengthSettings.targetCharCount
+    targetCharCount: targetLengthContract.effectiveTargetCharCount
   });
   const humanQuality = evaluateHumanQuality({
     title: finalTitle,
@@ -688,20 +860,28 @@ export function createProductReviewDraft(form = {}) {
     mainKeyword: context.mainKeyword,
     primaryEntity: entityParts.primaryEntity,
     subKeywords: context.subKeywords,
-    requestedTargetCharCount: lengthSettings.requestedTargetCharCount || lengthSettings.targetCharCount,
-    effectiveTargetCharCount: lengthSettings.targetCharCount,
+    requestedTargetCharCount: targetLengthContract.requestedTargetCharCount,
+    effectiveTargetCharCount: targetLengthContract.effectiveTargetCharCount,
     engine: "fallback"
   });
-  const qualityScore = Math.min(89, humanQuality.score, rawQuality.score, claimLedgerSummary.hardFail ? 55 : 89);
+  const factCoverageCap =
+    inputFactCoverage.inputFactCoverage < 0.5
+      ? 65
+      : inputFactCoverage.inputFactCoverage < 0.7
+        ? 80
+        : 100;
+  const qualityScore = Math.min(
+    89,
+    humanQuality.score,
+    rawQuality.score,
+    claimLedgerSummary.hardFail ? 55 : 89,
+    categoryContaminationResult.hardFail ? 50 : 100,
+    factCoverageCap
+  );
   const generationId = text(form.generationId) || `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const resultMode = getResultMode({
-    informationSufficiency: context.informationSufficiency,
-    engine: "fallback",
-    llmReady: false
-  });
   const additionalInfoHints =
-    context.informationSufficiency?.level === "low"
-      ? ["실제 방문·사용·숙박 여부", "가장 좋았던 점 또는 아쉬웠던 점", "가격·주차·메뉴·시설 등 직접 확인한 정보"]
+    targetLengthContract.targetAdjustmentReason
+      ? getAdditionalInfoHints(context.category).slice(0, 3)
       : [];
   const bodyLength = body.replace(/\s+/gu, "").length;
   const actualBodyCharCount = Array.from(body).length;
@@ -748,6 +928,10 @@ export function createProductReviewDraft(form = {}) {
     contextFacts: context.contextFacts,
     informationSufficiency: context.informationSufficiency,
     factMap: context.factMap,
+    userFacts: context.factMap?.userFacts || [],
+    inputFactCoverage,
+    categoryContamination: categoryContaminationResult.categoryContamination,
+    categoryFitScore: categoryContaminationResult.categoryFitScore,
     imageAnalysis: context.imageAnalysis,
     writerPlan: context.writerPlan,
     titleCandidates,
@@ -760,10 +944,19 @@ export function createProductReviewDraft(form = {}) {
     claimLedger,
     claimLedgerSummary,
     photoGuide,
-    targetCharCount: lengthSettings.targetCharCount,
-    targetLengthRange: lengthSettings.targetLengthRange,
-    requestedTargetCharCount: lengthSettings.requestedTargetCharCount,
-    informationLimited: lengthSettings.informationLimited,
+    targetLengthContract,
+    requestedTargetCharCount: targetLengthContract.requestedTargetCharCount,
+    effectiveTargetCharCount: targetLengthContract.effectiveTargetCharCount,
+    actualCharCount: targetLengthContract.actualCharCount,
+    targetComplianceRatio: targetLengthContract.targetComplianceRatio,
+    targetAdjustmentReason: targetLengthContract.targetAdjustmentReason,
+    estimatedContentCapacity: targetLengthContract.estimatedContentCapacity,
+    targetCharCount: targetLengthContract.effectiveTargetCharCount,
+    targetLengthRange: {
+      ...lengthSettings.targetLengthRange,
+      target: targetLengthContract.effectiveTargetCharCount
+    },
+    informationLimited: Boolean(targetLengthContract.targetAdjustmentReason),
     additionalInfoHints,
     engine: "fallback",
     judgeEngine: "deterministic",
@@ -774,7 +967,13 @@ export function createProductReviewDraft(form = {}) {
     legacyQualityScore: rawQuality.score,
     cappedScore: qualityScore,
     qualityScore,
-    qualityIssues: uniqueTexts([...(rawQuality.issues || []), ...(humanQuality.issues || []).map((issue) => `${issue.code}: ${issue.message}`), ...claimLedgerIssues], 16),
+    qualityIssues: uniqueTexts([
+      ...(rawQuality.issues || []),
+      ...(humanQuality.issues || []).map((issue) => `${issue.code}: ${issue.message}`),
+      ...claimLedgerIssues,
+      ...categoryContaminationResult.categoryContamination.map((item) => `CATEGORY_CONTAMINATION: ${item.term}`),
+      ...(inputFactCoverage.inputFactCoverage < 0.9 ? [`INPUT_FACT_COVERAGE: ${inputFactCoverage.missingFactIds.join(", ")}`] : [])
+    ], 16),
     qualityChecks: rawQuality.checks,
     blogWriterQuality: rawQuality,
     humanQuality,
@@ -789,10 +988,17 @@ export function createProductReviewDraft(form = {}) {
       engine: "fallback",
       bodyLength,
       actualBodyCharCount,
-      targetCharCount: lengthSettings.targetCharCount,
-      requestedTargetCharCount: lengthSettings.requestedTargetCharCount,
-      informationLimited: lengthSettings.informationLimited,
+      requestedTargetCharCount: targetLengthContract.requestedTargetCharCount,
+      effectiveTargetCharCount: targetLengthContract.effectiveTargetCharCount,
+      actualCharCount: targetLengthContract.actualCharCount,
+      targetCharCount: targetLengthContract.effectiveTargetCharCount,
+      targetComplianceRatio: targetLengthContract.targetComplianceRatio,
+      targetAdjustmentReason: targetLengthContract.targetAdjustmentReason,
+      estimatedContentCapacity: targetLengthContract.estimatedContentCapacity,
+      informationLimited: Boolean(targetLengthContract.targetAdjustmentReason),
       informationSufficiency: context.informationSufficiency?.level || null,
+      inputFactCoverage: inputFactCoverage.inputFactCoverage,
+      categoryContaminationCount: categoryContaminationResult.categoryContamination.length,
       rawQualityScore: rawQuality.score,
       cappedScore: qualityScore,
       qualityScore,
@@ -825,6 +1031,10 @@ export function createProductReviewDraft(form = {}) {
     contextFacts: context.contextFacts,
     informationSufficiency: context.informationSufficiency,
     factMap: context.factMap,
+    userFacts: context.factMap?.userFacts || [],
+    inputFactCoverage,
+    categoryContamination: categoryContaminationResult.categoryContamination,
+    categoryFitScore: categoryContaminationResult.categoryFitScore,
     imageAnalysis: context.imageAnalysis,
     writerPlan: context.writerPlan,
     body,
@@ -843,6 +1053,13 @@ export function createProductReviewDraft(form = {}) {
     searchKeywords: createSearchKeywords({ context }),
     closingParagraph: getClosingParagraph(body),
     contentPackage,
+    targetLengthContract,
+    requestedTargetCharCount: targetLengthContract.requestedTargetCharCount,
+    effectiveTargetCharCount: targetLengthContract.effectiveTargetCharCount,
+    actualCharCount: targetLengthContract.actualCharCount,
+    targetComplianceRatio: targetLengthContract.targetComplianceRatio,
+    targetAdjustmentReason: targetLengthContract.targetAdjustmentReason,
+    estimatedContentCapacity: targetLengthContract.estimatedContentCapacity,
     rawQualityScore: rawQuality.score,
     legacyQualityScore: rawQuality.score,
     cappedScore: qualityScore,

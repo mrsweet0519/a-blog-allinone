@@ -597,22 +597,6 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   const rawQualityScore = blogWriterQuality.score;
   const qualityIssues = blogWriterQuality.issues;
   const qualityChecks = blogWriterQuality.checks;
-  const deterministicHumanQuality = evaluateHumanQuality({
-    title: finalTitle,
-    titleCandidates,
-    body,
-    faq: faqItems,
-    hashtags,
-    factMap: createHumanQualityFactMap(form, form.imageAnalysis || form.imageContext || form.images || form.photoMetadata),
-    imageAnalysis: form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
-    category: fallbackDraft.category,
-    mainKeyword,
-    primaryEntity: fallbackPackage.primaryEntity || fallbackPackage.blogWriterAnalysis?.primaryEntity || fallbackDraft.primaryEntity || mainKeyword,
-    subKeywords,
-    requestedTargetCharCount: fallbackPackage.requestedTargetCharCount || form.targetCharCount || targetCharCount,
-    effectiveTargetCharCount: targetCharCount,
-    engine: "llm"
-  });
   const pipelineContext = buildBlogWriterPipelineContext(form, {
     category: fallbackDraft.category,
     analysis: {
@@ -627,6 +611,23 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     informationSufficiency: fallbackPackage.informationSufficiency,
     searchIntent: fallbackPackage.searchIntent,
     writerPlan: fallbackPackage.writerPlan
+  });
+  const deterministicHumanQuality = evaluateHumanQuality({
+    title: finalTitle,
+    titleCandidates,
+    body,
+    faq: faqItems,
+    hashtags,
+    factMap: pipelineContext.factMap,
+    imageAnalysis: pipelineContext.imageAnalysis,
+    category: fallbackDraft.category,
+    visitStatus: pipelineContext.factMap?.visitStatus,
+    mainKeyword,
+    primaryEntity: fallbackPackage.primaryEntity || fallbackPackage.blogWriterAnalysis?.primaryEntity || fallbackDraft.primaryEntity || mainKeyword,
+    subKeywords,
+    requestedTargetCharCount: fallbackPackage.requestedTargetCharCount || form.targetCharCount || targetCharCount,
+    effectiveTargetCharCount: targetCharCount,
+    engine: "llm"
   });
   const claimLedger = createClaimLedger({
     title: finalTitle,
@@ -662,6 +663,17 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     finalResult: { body, sections: llmSections },
     postProcessingSteps
   });
+  const requestedTargetCharCount = fallbackPackage.requestedTargetCharCount || form.targetCharCount || form.targetLength || targetCharCount;
+  const actualCharCount = Array.from(String(body || "")).length;
+  const targetLengthContract = {
+    ...(fallbackPackage.targetLengthContract || {}),
+    requestedTargetCharCount,
+    effectiveTargetCharCount: targetCharCount,
+    actualCharCount,
+    targetComplianceRatio: requestedTargetCharCount > 0 ? Number((actualCharCount / requestedTargetCharCount).toFixed(2)) : 0,
+    informationSufficiency: pipelineContext.informationSufficiency?.level || null,
+    resultMode: "honest_draft"
+  };
 
   const contentPackage = {
     ...fallbackPackage,
@@ -691,12 +703,21 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     claimLedgerSummary,
     engine: "llm",
     actualBodyLength: bodyLength,
-    actualBodyCharCount: Array.from(String(body || "")).length,
+    actualBodyCharCount: actualCharCount,
+    targetLengthContract,
+    requestedTargetCharCount,
+    effectiveTargetCharCount: targetCharCount,
+    actualCharCount,
+    targetComplianceRatio: targetLengthContract.targetComplianceRatio,
     summary: {
       engine: "llm",
       bodyLength,
-      actualBodyCharCount: Array.from(String(body || "")).length,
+      actualBodyCharCount: actualCharCount,
       targetCharCount,
+      requestedTargetCharCount,
+      effectiveTargetCharCount: targetCharCount,
+      actualCharCount,
+      targetComplianceRatio: targetLengthContract.targetComplianceRatio,
       informationSufficiency: pipelineContext.informationSufficiency?.level || null,
       rawQualityScore,
       cappedScore: cappedHumanScore,

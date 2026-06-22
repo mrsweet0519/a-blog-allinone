@@ -192,6 +192,7 @@ const getKeywordRange = (length = 1500) => {
 };
 
 import { getEntityCoverage } from "./blogWriterEntity.js";
+import { calculateInputFactCoverage, evaluateCategoryContamination } from "./blogWriterPipeline.js";
 
 const scoreFromPenalty = (max, penalty) => Math.max(0, max - penalty);
 
@@ -277,6 +278,14 @@ export const evaluateHumanQuality = ({
     primaryEntity: entityForCoverage,
     title: normalizedTitle,
     titleCandidates: titles,
+    body: normalizedBody
+  });
+  const categoryContaminationResult = evaluateCategoryContamination({
+    category,
+    values: [normalizedTitle, ...titles, normalizedBody, ...faqList.flatMap((item) => [item.question, item.answer]), ...hashtags]
+  });
+  const inputFactCoverage = calculateInputFactCoverage({
+    factMap,
     body: normalizedBody
   });
   const primaryEntityMissing = Boolean(
@@ -488,6 +497,44 @@ export const evaluateHumanQuality = ({
     });
   }
   if (allFaqCheckOnly) caps.push({ score: 85, code: "FAQ_CHECK_ONLY" });
+  if (faqList.length > 2) {
+    caps.push({ score: 85, code: "FAQ_TOO_MANY" });
+    addIssue(issues, {
+      code: "FAQ_TOO_MANY",
+      severity: "medium",
+      evidence: `${faqList.length}개`,
+      message: "FAQ는 최대 2개까지만 생성합니다.",
+      revisionInstruction: "근거가 약하거나 본문과 겹치는 FAQ를 삭제하세요."
+    });
+  }
+  if (categoryContaminationResult.hardFail) {
+    caps.push({ score: 50, code: "CATEGORY_CONTAMINATION" });
+    addIssue(issues, {
+      code: "CATEGORY_CONTAMINATION",
+      severity: "critical",
+      evidence: categoryContaminationResult.categoryContamination.map((item) => item.term).join(", "),
+      message: "카테고리에 맞지 않는 표현이 섞였습니다.",
+      revisionInstruction: "현재 카테고리의 금지 표현을 삭제하고 입력 fact에 맞는 표현으로 바꾸세요."
+    });
+  }
+  if (inputFactCoverage.inputFactCoverage < 0.7) {
+    caps.push({ score: inputFactCoverage.inputFactCoverage < 0.5 ? 65 : 80, code: "LOW_INPUT_FACT_COVERAGE" });
+    addIssue(issues, {
+      code: "LOW_INPUT_FACT_COVERAGE",
+      severity: inputFactCoverage.inputFactCoverage < 0.5 ? "critical" : "high",
+      evidence: inputFactCoverage.missingFactIds.join(", "),
+      message: "사용자가 입력한 핵심 fact가 본문에 충분히 반영되지 않았습니다.",
+      revisionInstruction: "누락된 userFactId의 내용을 새 경험을 만들지 않고 자연스럽게 본문에 반영하세요."
+    });
+  } else if (inputFactCoverage.inputFactCoverage < 0.9) {
+    addIssue(issues, {
+      code: "INPUT_FACT_COVERAGE_BELOW_PUBLISH_READY",
+      severity: "medium",
+      evidence: inputFactCoverage.missingFactIds.join(", "),
+      message: "발행 준비 기준인 사용자 fact 90% 반영에 못 미칩니다.",
+      revisionInstruction: "누락된 사용자 fact를 중복 없이 한 번씩 반영하세요."
+    });
+  }
 
   const llmScores = llmJudge?.scores || llmJudge?.breakdown || null;
   const isMock = Boolean(llmJudge?.isMock || llmJudge?.mock || llmJudge?.model === "mock-model" || llmJudge?.model === "unit-model");
@@ -522,6 +569,8 @@ export const evaluateHumanQuality = ({
     unsupportedClaims.length === 0 &&
     duplicateSignals.duplicates.length === 0 &&
     !awkwardTitle &&
+    inputFactCoverage.inputFactCoverage >= 0.9 &&
+    !categoryContaminationResult.hardFail &&
     genericRatio < 0.3;
 
   const revisionInstructions = unique([
@@ -553,7 +602,10 @@ export const evaluateHumanQuality = ({
       duplicateParagraphs: duplicateSignals.duplicates,
       repeatedHeadingCount: duplicateSignals.repeatedHeadingCount,
       repeatedNgramRatio: Number(repeatedNgramRatio.toFixed(3)),
-      entityCoverage
+      entityCoverage,
+      inputFactCoverage,
+      categoryContamination: categoryContaminationResult.categoryContamination,
+      categoryFitScore: categoryContaminationResult.categoryFitScore
     },
     requestedTargetCharCount,
     effectiveTargetCharCount,

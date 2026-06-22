@@ -13,7 +13,7 @@ const BLOG_WRITER_CORE_SYSTEM_PROMPT = `
 당신은 네이버 블로그에 실제로 올릴 수 있는 한국어 사실 근거형 블로그 원고를 쓰는 편집자입니다.
 독자는 방문, 구매, 수강, 비교, 정보 확인 전에 실제 입력 근거 안에서 판단하고 싶은 사람입니다.
 
-카테고리는 맛집, 카페, 숙소, 여행, 상품, 뷰티, 패션, 교육, 매장, 병원, 서비스, 아이 동반 장소, 체험, 정보, 비교, 행사, 기타 글을 다룹니다.
+카테고리는 맛집, 카페, 숙소, 여행, 상품, 뷰티, 패션, 속옷/언더웨어, 교육, 매장, 병원, 서비스, 아이 동반 장소, 체험, 정보, 비교, 행사, 기타 글을 다룹니다.
 글의 중심은 반드시 상호명, 상품명, 강의명, 장소명 같은 primary entity입니다.
 지역명 맛집, 확인된 메뉴, 가족여행, 근처 검색어 같은 broad keyword는 중심 주제로 삼지 말고 서브키워드로 자연스럽게 분산합니다.
 가족, 아이, 친구, 동료, 단체 같은 동행자 맥락은 입력에 명시된 경우에만 씁니다. 여행이라는 단어만으로 가족여행이나 아이 동반을 만들지 않습니다.
@@ -112,13 +112,14 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "contextFacts.companions가 unknown이면 가족, 아이, 친구, 동료, 단체 동행을 추정하지 마세요. 여행 맥락만으로 가족여행을 만들지 마세요.",
     "experienceStatus가 visited/stayed/used/eaten/attended/purchased가 아니면 실제 방문·사용 후기처럼 쓰지 마세요.",
     "imageAnalysis.mode가 label-only이면 라벨과 메모로 알 수 있는 내용만 쓰고, 사진 속 맛·가격·양·직원 응대·영업시간은 만들지 마세요.",
-    "informationSufficiency가 low이면 긴 글자수를 억지로 맞추지 말고 600~1100자 수준의 밀도 있는 원고로 끝내세요. low는 본문 2~4개 섹션, FAQ 0~1개만 씁니다.",
+    "informationSufficiency가 low이면 긴 글자수를 억지로 맞추지 말고 700~1300자 안의 밀도 있는 원고로 끝내세요. low는 FAQ를 만들지 않습니다.",
     "첫 문장에는 primaryEntity 또는 mainKeyword를 넣고, 첫 문단에는 mainKeyword를 1~2회만, subKeyword는 최대 1개만 자연스럽게 연결하세요.",
     "본문 문단은 readerIntent의 서로 다른 질문에 답하고, 각 문단은 factMap evidenceIds 또는 imageRefs 중 하나 이상과 연결하세요.",
     "제목 후보 5개는 SEO/GEO Title Candidate Generation 단계로 만들고 categoryFit, experienceFit 관점으로 평가하세요. 정보 정리, 체험 흐름, 식사 후보, 해당 제품, 대표 메뉴 같은 기계적 표현을 쓰지 마세요.",
     "사용자 메모에 방문·숙박·사용·수강 신호가 있으면 실제 경험형 문장을 쓰고, 신호가 없으면 경험한 척하지 마세요.",
     "경험 주장은 experienceEvidence, 가족·아이·동행 주장은 contextEvidence, 사진 주장은 imageEvidence가 있을 때만 쓰세요.",
     "unsupported, contradictory, metaGuidance, placeholder 문장이 최종 섹션에 남지 않게 스스로 검토하세요. Claim Ledger는 서버가 최종 본문 기준으로 다시 만듭니다.",
+    "FAQ는 Fact Map으로 직접 답할 수 있을 때만 0~2개 생성하세요. 운영시간, 예약, 주차, 글 작성법, 확인 필요만 말하는 질문은 만들지 마세요.",
     "writer 출력은 titleCandidates, finalTitle, sections, faq, hashtags 중심의 최소 구조를 우선하세요. body가 필요하면 sections를 그대로 이어 붙인 내용만 넣고, 별도 후처리용 문장은 만들지 마세요.",
     "최종 본문에는 내부 writerPlan에서나 쓸 메타 표현을 넣지 마세요.",
     "정보가 부족하면 억지로 길게 쓰지 말고 실제 본문 길이에 맞춰 자연스럽게 마무리하세요.",

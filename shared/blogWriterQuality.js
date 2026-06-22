@@ -1,5 +1,6 @@
 import { createHumanQualityFactMap, evaluateHumanQuality } from "./blogWriterHumanQuality.js";
 import { analyzeBlogWritingInput } from "./blogWriterCategory.js";
+import { evaluateCategoryContamination } from "./blogWriterPipeline.js";
 
 const text = (value) => String(value ?? "").trim();
 
@@ -157,6 +158,10 @@ export const evaluateBlogWriterQuality = ({
     Number(targetCharCount) >= 2400 &&
     normalizedBody.length >= 2500 &&
     (criterionWordCount >= 14 || genericExplanationCount > 0 || restaurantRoleOverlapCount >= 2);
+  const categoryContaminationResult = evaluateCategoryContamination({
+    category,
+    values: [selectedTitle, ...titles, normalizedBody, ...faqItems.flatMap((item) => [item.question, item.answer]), ...hashtags]
+  });
 
   const checks = [
     {
@@ -222,7 +227,9 @@ export const evaluateBlogWriterQuality = ({
     },
     {
       id: "faq",
-      passed: faqItems.length >= 3 && faqItems.every((item) => text(item.question) && text(item.answer)),
+      passed:
+        faqItems.length <= 2 &&
+        faqItems.every((item) => text(item.question) && text(item.answer) && !/확인\s*필요|글\s*작성|작성법/u.test(`${item.question} ${item.answer}`)),
       penalty: 6,
       detail: `${faqItems.length}개`
     },
@@ -234,9 +241,9 @@ export const evaluateBlogWriterQuality = ({
     },
     {
       id: "category-terms",
-      passed: !restaurantWrongCategory && !productWrongCategory,
+      passed: !restaurantWrongCategory && !productWrongCategory && !categoryContaminationResult.hardFail,
       penalty: 24,
-      critical: restaurantWrongCategory || productWrongCategory,
+      critical: restaurantWrongCategory || productWrongCategory || categoryContaminationResult.hardFail,
       detail: "카테고리 표현 일치"
     },
     {

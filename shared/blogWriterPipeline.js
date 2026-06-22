@@ -36,6 +36,146 @@ const uniqueTexts = (values = []) => {
   return result;
 };
 
+const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const createTermPattern = (term = "") => {
+  const escaped = escapeRegExp(term).replace(/\s+/gu, "\\s*");
+  if (Array.from(term).length === 1) {
+    return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}]|[이가은는을를와과도만에처럼])`, "u");
+  }
+  return new RegExp(escaped, "u");
+};
+
+const contaminationPolicy = ({ allow = [], forbid = [] } = {}) => ({
+  allow,
+  forbid: forbid.map((term) => ({
+    term,
+    pattern: createTermPattern(term)
+  }))
+});
+
+export const CATEGORY_CONTAMINATION_MATRIX = {
+  underwear: contaminationPolicy({
+    allow: ["착용감", "무게감", "압박감", "봉제선", "밴드", "어깨끈", "사이즈", "데일리 착용", "세탁"],
+    forbid: ["향", "피부 타입", "제형", "발림감", "흡수력", "용량", "운영시간", "예약", "주차", "방문 전", "상담 과정", "구매처 확인"]
+  }),
+  fashion: contaminationPolicy({
+    allow: ["착용감", "무게감", "수납", "사이즈", "소재", "코디", "데일리 착용"],
+    forbid: ["향", "피부 타입", "제형", "발림감", "흡수력", "용량", "운영시간", "예약", "주차", "방문 전", "상담 과정"]
+  }),
+  beauty: contaminationPolicy({
+    allow: ["제형", "발림감", "마무리감", "사용 순서", "패키지", "향", "보습"],
+    forbid: ["착용감", "압박감", "봉제선", "밴드", "어깨끈", "객실", "숙박", "주차", "운영시간", "예약", "방문 전"]
+  }),
+  product: contaminationPolicy({
+    allow: ["사용감", "휴대", "구성", "세척", "수납", "가격", "용량"],
+    forbid: ["운영시간", "예약", "주차", "방문 전", "상담 과정", "수강 흐름", "객실", "숙박"]
+  }),
+  restaurant: contaminationPolicy({
+    allow: ["메뉴", "맛", "양", "응대", "웨이팅", "주차", "방문"],
+    forbid: ["발림감", "착용감", "제형", "피부 타입", "용량", "수강 흐름", "객실", "숙박"]
+  }),
+  cafe: contaminationPolicy({
+    allow: ["커피", "디저트", "공간", "메뉴", "방문"],
+    forbid: ["발림감", "착용감", "제형", "피부 타입", "수강 흐름", "객실", "숙박"]
+  }),
+  accommodation: contaminationPolicy({
+    allow: ["객실", "체크인", "숙박", "시설", "위치", "주차", "소음"],
+    forbid: ["피부 타입", "향", "착용감", "발림감", "제형", "수강 흐름"]
+  }),
+  education: contaminationPolicy({
+    allow: ["수강", "강의", "커리큘럼", "난이도", "준비"],
+    forbid: ["발림감", "착용감", "객실", "숙박", "메뉴 맛"]
+  }),
+  store: contaminationPolicy({
+    allow: ["매장", "상담", "위치", "구매", "진열"],
+    forbid: ["발림감", "착용감", "객실", "숙박", "수강 흐름"]
+  }),
+  service: contaminationPolicy({
+    allow: ["상담", "일정", "설치", "진행", "비용"],
+    forbid: ["발림감", "착용감", "객실", "숙박", "메뉴 맛"]
+  })
+};
+
+export const evaluateCategoryContamination = ({ category = "", values = [] } = {}) => {
+  const policy = CATEGORY_CONTAMINATION_MATRIX[category] || contaminationPolicy();
+  const source = values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map(text)
+    .filter(Boolean)
+    .join("\n");
+  const contamination = policy.forbid
+    .filter((rule) => rule.pattern.test(source))
+    .map((rule) => ({
+      category,
+      term: rule.term,
+      severity: "hardFail"
+    }));
+
+  return {
+    categoryContamination: contamination,
+    categoryFitScore: contamination.length === 0 ? 100 : Math.max(0, 100 - contamination.length * 50),
+    hardFail: contamination.length > 0,
+    allowedConcepts: policy.allow,
+    forbiddenConcepts: policy.forbid.map((rule) => rule.term)
+  };
+};
+
+const factTokens = (value = "") =>
+  uniqueTexts(
+    String(value || "")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/u)
+      .map((token) => token.trim())
+      .filter((token) => Array.from(token).length >= 2)
+  );
+
+const normalizeFactMatch = (value = "") =>
+  compact(value)
+    .replace(/사용(?:함|했어요|했음|했다)/gu, "사용")
+    .replace(/착용(?:함|했어요|했음|했다)/gu, "착용")
+    .replace(/방문(?:함|했어요|했음|했다)/gu, "방문")
+    .replace(/숙박(?:함|했어요|했음|했다)/gu, "숙박")
+    .replace(/구매(?:함|했어요|했음|했다)/gu, "구매")
+    .replace(/수강(?:함|했어요|했음|했다)/gu, "수강")
+    .replace(/궁금(?:했음|했어요|했다)/gu, "궁금")
+    .replace(/떠올랐(?:음|어요)/gu, "떠올")
+    .replace(/좋았(?:음|어요)/gu, "좋")
+    .replace(/편했(?:음|어요)/gu, "편")
+    .replace(/않았(?:음|어요)/gu, "않았");
+
+const isFactReflected = (factValue = "", body = "") => {
+  const factKey = compact(factValue);
+  const bodyKey = compact(body);
+  const normalizedFactKey = normalizeFactMatch(factValue);
+  const normalizedBodyKey = normalizeFactMatch(body);
+  if (!factKey) return false;
+  if (bodyKey.includes(factKey)) return true;
+  if (normalizedFactKey && normalizedBodyKey.includes(normalizedFactKey)) return true;
+  const tokens = factTokens(factValue);
+  if (tokens.length === 0) return false;
+  const hitCount = tokens.filter((token) => body.includes(token) || normalizedBodyKey.includes(normalizeFactMatch(token))).length;
+  return hitCount / tokens.length >= 0.55;
+};
+
+export const calculateInputFactCoverage = ({ factMap = {}, body = "" } = {}) => {
+  const highConfidenceFacts = (factMap.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
+  const reflected = highConfidenceFacts.filter((fact) => isFactReflected(fact.value, body));
+  const missing = highConfidenceFacts.filter((fact) => !isFactReflected(fact.value, body));
+
+  return {
+    totalHighConfidenceFacts: highConfidenceFacts.length,
+    reflectedFacts: reflected.length,
+    inputFactCoverage: highConfidenceFacts.length === 0 ? 1 : Number((reflected.length / highConfidenceFacts.length).toFixed(2)),
+    missingFactIds: missing.map((fact) => fact.id),
+    missingFacts: missing.map((fact) => ({
+      id: fact.id,
+      type: fact.type,
+      value: fact.value
+    }))
+  };
+};
+
 const isBroadBlogKeyword = (value = "") => {
   const cleaned = text(value);
   if (!cleaned) return false;
@@ -371,9 +511,25 @@ const VISIT_PURPOSE_RULES = [
   ["정보 확인", /방법|정보|절차|준비|알아보/u]
 ];
 
-const createFact = ({ id = "", field, value, source, confidence = 0.85, allowedAsExperience = false } = {}) => ({
+const USER_FACT_TYPE_RULES = [
+  ["usage_context", /계기|때문|위해|하려고|찾다가|필요|궁금|알아보|출근|퇴근|여행|주말|일상|가방|집|회사/u],
+  ["actual_usage", /사용|써봄|써봤|착용|입어|들고|발라|먹어|마셔|방문|다녀|숙박|수강|참여|이용/u],
+  ["fit_or_feel", /맛|향|식감|착용감|사용감|무게|압박|편했|부담|부드|산뜻|건조|수납|세척/u],
+  ["positive_experience", /좋았|편했|기억|만족|괜찮|쉬웠|차분|부담스럽지|눈에\s*들/u],
+  ["concern_or_drawback", /아쉬|불편|걱정|궁금|부담|고민|헷갈|주의/u],
+  ["future_intent", /재방문|재구매|다시|계속|의향|또\s*(?:가|사|쓰|입)/u],
+  ["price", /가격|금액|원|만원|비용/u],
+  ["location", /위치|근처|주차|동선|역|길|거리/u],
+  ["facility", /시설|객실|공간|자리|창가|대기|놀이|산책로/u]
+];
+
+const classifyUserFactType = (value = "") =>
+  USER_FACT_TYPE_RULES.find(([, pattern]) => pattern.test(value))?.[0] || "memo";
+
+const createFact = ({ id = "", field, type = "", value, source, confidence = 0.85, allowedAsExperience = false } = {}) => ({
   id,
   field,
+  type: type || field,
   value: text(value),
   source,
   confidence,
@@ -424,6 +580,29 @@ const collectContextEvidenceIds = (contextFacts = {}) =>
 export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput(form), imageAnalysis = analyzeBlogImages(form), experienceStatus = detectExperienceStatus(form) } = {}) => {
   const memoText = getMemoText(form);
   const inputSubKeywords = parseSubKeywords(form.subKeywords, analysis.mainKeyword);
+  const memoLines = memoText
+    .split(/\n|(?<=[.!?。])\s+/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  const memoFacts = memoLines.map((line, index) =>
+    createFact({
+      id: `uf${index + 1}`,
+      field: "memo",
+      type: classifyUserFactType(line),
+      value: line,
+      source: "user_memory",
+      confidence: 0.92,
+      allowedAsExperience: getExperienceTone(experienceStatus) === "actual-review"
+    })
+  );
+  const userFacts = memoFacts.map((fact) => ({
+    id: fact.id,
+    type: fact.type,
+    value: fact.value,
+    confidence: fact.confidence,
+    source: fact.source
+  }));
   const rawFacts = [
     createFact({
       field: "topic",
@@ -444,20 +623,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
     ...inputSubKeywords.map((keyword) =>
       createFact({ field: "subKeyword", value: keyword, source: "user_sub_keyword", confidence: 0.9 })
     ),
-    ...memoText
-      .split(/\n|(?<=[.!?。])\s+/u)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .slice(0, 8)
-      .map((line) =>
-        createFact({
-          field: "memo",
-          value: line,
-          source: "user_memory",
-          confidence: 0.88,
-          allowedAsExperience: getExperienceTone(experienceStatus) === "actual-review"
-        })
-      ),
+    ...memoFacts,
     ...(imageAnalysis?.visuallySupported || []).map((value) =>
       createFact({
         field: "visualLabel",
@@ -500,6 +666,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
 
   return {
     facts,
+    userFacts,
     supported,
     visuallySupported,
     unsupportedFields,
@@ -534,6 +701,10 @@ const CATEGORY_OUTLINES = {
   fashion: {
     actual: ["입어보게 된 상황", "착용 첫인상", "코디와 활동에서 본 점", "아쉬운 점과 맞는 사람"],
     reference: ["관심이 간 이유", "사이즈와 소재에서 볼 부분", "구매 전 비교할 점", "어울리는 상황"]
+  },
+  underwear: {
+    actual: ["착용하게 된 이유", "착용 상황", "실제 착용감", "편했던 점", "아쉬웠던 점", "데일리 활용 여부", "계속 착용할 의향"],
+    reference: ["관심이 간 이유", "사이즈와 소재에서 볼 부분", "착용 전 비교할 점", "어울리는 상황"]
   },
   accommodation: {
     actual: ["숙박하게 된 이유", "객실과 공용공간 첫인상", "머무는 동안 기억난 점", "예약 전 챙길 부분", "과장 없는 마무리"],
@@ -621,8 +792,9 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
   const resolvedInformation = informationSufficiency || determineInformationSufficiency({ form, analysis });
   const subKeywords = uniqueTexts([...(analysis.subKeywords || []), ...parseSubKeywords(form.subKeywords, analysis.mainKeyword)]).slice(0, 3);
   const outline = resolveOutline({ category, experienceTone, informationSufficiency: resolvedInformation });
-  const faqCount = resolvedInformation.level === "low" ? 0 : resolvedInformation.level === "medium" ? 2 : 3;
+  const faqCount = resolvedInformation.level === "low" ? 0 : resolvedInformation.level === "medium" ? 1 : 2;
   const sections = createPlanSections({ outline, factMap, contextFacts });
+  const contaminationPolicy = CATEGORY_CONTAMINATION_MATRIX[category] || { allow: [], forbid: [] };
 
   return {
     profilePreset: `${category || "experience"}-${experienceTone}`,
@@ -640,7 +812,9 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
     }),
     factPolicy: {
       useOnly: factMap?.supported || [],
-      doNotInvent: factMap?.unsupportedFields || []
+      doNotInvent: factMap?.unsupportedFields || [],
+      categoryAllowedConcepts: contaminationPolicy.allow || [],
+      categoryForbiddenConcepts: (contaminationPolicy.forbid || []).map((rule) => rule.term || rule)
     },
     contextFacts: contextFacts || null
   };
