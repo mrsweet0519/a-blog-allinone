@@ -78,12 +78,18 @@ const getOpenAiModel = (env = {}) => env.OPENAI_MODEL || env.BLOG_WRITER_OPENAI_
 const getLlmEnvironmentStatus = (env = {}) => {
   const model = String(getOpenAiModel(env) || "").trim();
   const enabled = isLlmEnabled(env);
+  const judgeEnabled = isEnabledFlag(env.BLOG_WRITER_LLM_JUDGE_ENABLED);
+  const revisionEnabled = isEnabledFlag(env.BLOG_WRITER_LLM_REVISION_ENABLED);
+  const visionEnabled = isEnabledFlag(env.BLOG_WRITER_VISION_ENABLED);
   const keyPresent = Boolean(env.OPENAI_API_KEY);
   const modelPresent = Boolean(model);
   const reason = !enabled ? "llm-disabled" : !keyPresent ? "server-key-missing" : !modelPresent ? "model-missing" : null;
 
   return {
     enabled,
+    judgeEnabled,
+    revisionEnabled,
+    visionEnabled,
     keyPresent,
     modelPresent,
     model,
@@ -99,15 +105,15 @@ const shouldUseLlm = (env = {}) =>
 
 const shouldUseLlmJudge = (env = {}) =>
   shouldUseLlm(env) &&
-  LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_LLM_JUDGE_ENABLED || "").trim());
+  getLlmEnvironmentStatus(env).judgeEnabled;
 
 const shouldUseLlmRevision = (env = {}) =>
   shouldUseLlmJudge(env) &&
-  LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_LLM_REVISION_ENABLED || "").trim());
+  getLlmEnvironmentStatus(env).revisionEnabled;
 
 const shouldUseVision = (env = {}) =>
   Boolean(env.OPENAI_API_KEY) &&
-  LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_VISION_ENABLED || "").trim());
+  getLlmEnvironmentStatus(env).visionEnabled;
 
 const getVisionModel = (env = {}) =>
   env.OPENAI_VISION_MODEL || env.BLOG_WRITER_OPENAI_VISION_MODEL || env.OPENAI_MODEL || DEFAULT_OPENAI_VISION_MODEL;
@@ -172,6 +178,14 @@ const parseLlmJsonSafely = (content = "") => {
   }
 };
 
+const isEnabledFlag = (value = "") => LLM_ENABLED_PATTERN.test(String(value || "").trim());
+
+const safeNumericStatus = (status = null) => {
+  if (status === null || status === undefined || status === "") return null;
+  const numericStatus = Number(status);
+  return Number.isFinite(numericStatus) ? numericStatus : null;
+};
+
 const getErrorDiagnostics = (error) => ({
   reason: error instanceof SafeLlmError ? error.reason : "unknown-llm-error",
   status: error instanceof SafeLlmError ? error.status : null
@@ -184,11 +198,14 @@ const createSafeLlmDiagnostics = ({ env = {}, used = false, reason = null, statu
     attempted: Boolean(attempted || used),
     accepted: Boolean(accepted),
     enabled: envStatus.enabled,
+    judgeEnabled: envStatus.judgeEnabled,
+    revisionEnabled: envStatus.revisionEnabled,
+    visionEnabled: envStatus.visionEnabled,
     keyPresent: envStatus.keyPresent,
     modelPresent: envStatus.modelPresent,
     model: envStatus.model,
     reason: reason ? safeReason(reason) : null,
-    status: Number.isFinite(Number(status)) ? Number(status) : null,
+    status: safeNumericStatus(status),
     isMock: isMockEnvironment(env),
     judgeUsed: Boolean(judgeUsed)
   };
@@ -211,7 +228,7 @@ const createSafeVisionDiagnostics = ({ form = {}, result = {} } = {}) => {
   return {
     mode,
     reason: form.visionDiagnostics?.reason || null,
-    status: Number.isFinite(Number(form.visionDiagnostics?.status)) ? Number(form.visionDiagnostics.status) : null,
+    status: safeNumericStatus(form.visionDiagnostics?.status),
     imageCount: getInputImageCount(form),
     visibleElementsCount: Array.isArray(imageAnalysis.visuallySupported) ? imageAnalysis.visuallySupported.length : 0
   };
@@ -226,6 +243,10 @@ const logSafeGenerateBlogEvent = ({ result = {}, env = {}, status = 200 } = {}) 
       route: "/api/generate-blog",
       engine: result.engine || packageData.engine || trace.engine || "fallback",
       judgeEngine: result.judgeEngine || packageData.judgeEngine || trace.judgeEngine || "deterministic",
+      enabled: getLlmEnvironmentStatus(env).enabled,
+      judgeEnabled: getLlmEnvironmentStatus(env).judgeEnabled,
+      revisionEnabled: getLlmEnvironmentStatus(env).revisionEnabled,
+      visionEnabled: getLlmEnvironmentStatus(env).visionEnabled,
       keyPresent: getLlmEnvironmentStatus(env).keyPresent,
       modelPresent: getLlmEnvironmentStatus(env).modelPresent,
       llmReason: llm.reason || null,

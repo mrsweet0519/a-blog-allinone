@@ -391,8 +391,13 @@ assert.equal(apiDraft.trace.engine, "fallback");
 assert.equal(apiDraft.contentPackage.trace.visionMode, "none");
 assert.equal(apiDraft.contentPackage.diagnostics.rawFinalDiff.rawBodyLength, apiDraft.contentPackage.diagnostics.rawFinalDiff.finalBodyLength);
 assert.equal(apiDraft.llm.used, false);
+assert.equal(apiDraft.llm.enabled, false);
+assert.equal(apiDraft.llm.judgeEnabled, false);
+assert.equal(apiDraft.llm.revisionEnabled, false);
+assert.equal(apiDraft.llm.visionEnabled, false);
 assert.equal(apiDraft.llm.keyPresent, true);
 assert.equal(apiDraft.llm.reason, "llm-disabled");
+assert.equal(apiDraft.llm.status, null);
 assert.ok(!JSON.stringify(apiDraft).includes("sk-test-not-returned-to-client"));
 assertDraftContract(apiDraft);
 
@@ -431,6 +436,45 @@ const missingKeyDraft = await callApiWithFetch({
 assert.equal(missingKeyDraft.engine, "fallback");
 assert.equal(missingKeyDraft.llm.keyPresent, false);
 assert.equal(missingKeyDraft.llm.reason, "server-key-missing");
+
+const mockSuccessDraft = await callApiWithFetch({
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "false",
+    BLOG_WRITER_VISION_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                finalTitle: "Daily note tool review",
+                titleCandidates: ["Daily note tool review", "How the note tool felt"],
+                body: Array(18).fill("I checked the note flow, reminder setup, and data organization from a practical user view.").join(" "),
+                faqItems: [],
+                hashtags: ["#note", "#productivity"]
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(mockSuccessDraft.engine, "llm");
+assert.equal(mockSuccessDraft.llm.used, true);
+assert.equal(mockSuccessDraft.llm.enabled, true);
+assert.equal(mockSuccessDraft.llm.judgeEnabled, false);
+assert.equal(mockSuccessDraft.llm.revisionEnabled, false);
+assert.equal(mockSuccessDraft.llm.visionEnabled, true);
+assert.equal(mockSuccessDraft.llm.keyPresent, true);
+assert.equal(mockSuccessDraft.llm.model, "gpt-4.1");
+assert.equal(mockSuccessDraft.llm.status, null);
 
 const authFailureDraft = await callApiWithFetch({
   env: {
@@ -515,11 +559,12 @@ const diagnosticFallback = summarizeDiagnosticResponse({
   json: {
     engine: "fallback",
     judgeEngine: "deterministic",
-    llm: { used: false, keyPresent: false, model: "unit-model", reason: "server-key-missing" }
+    llm: { used: false, keyPresent: false, model: "unit-model", reason: "server-key-missing", status: 0 }
   }
 });
 assert.equal(diagnosticFallback.pass, false);
 assert.ok(formatDiagnosticSummary(diagnosticFallback).includes("llm.reason: server-key-missing"));
+assert.ok(formatDiagnosticSummary(diagnosticFallback).includes("llm.status: none"));
 
 const diagnosticVisionWarning = summarizeDiagnosticResponse({
   url: "https://preview.example/api/generate-blog",

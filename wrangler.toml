@@ -1,0 +1,25 @@
+name = "a-blog-allinone"
+pages_build_output_dir = "frontend/dist"
+compatibility_date = "2026-05-28"
+
+[vars]
+NODE_VERSION = "22"
+VITE_DEPLOY_TARGET = "static"
+
+[env.preview.vars]
+BLOG_WRITER_LLM_ENABLED = "true"
+BLOG_WRITER_LLM_JUDGE_ENABLED = "true"
+BLOG_WRITER_LLM_REVISION_ENABLED = "true"
+BLOG_WRITER_VISION_ENABLED = "true"
+NODE_VERSION = "22"
+OPENAI_MODEL = "gpt-4.1"
+VITE_DEPLOY_TARGET = "static"
+
+[env.production.vars]
+BLOG_WRITER_LLM_ENABLED = "true"
+BLOG_WRITER_LLM_JUDGE_ENABLED = "true"
+BLOG_WRITER_LLM_REVISION_ENABLED = "true"
+BLOG_WRITER_VISION_ENABLED = "true"
+NODE_VERSION = "22"
+OPENAI_MODEL = "gpt-4.1"
+VITE_DEPLOY_TARGET = "static"
