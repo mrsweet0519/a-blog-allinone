@@ -17,6 +17,33 @@ const LLM_ENABLED_PATTERN = /^(1|true|yes|on)$/iu;
 const VISION_SUPPORTED_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_VISION_IMAGES = 3;
 const MAX_VISION_DATA_URL_LENGTH = 2_500_000;
+const OPENAI_REQUEST_TIMEOUT_MS = 45_000;
+const ALLOWED_LLM_REASONS = new Set([
+  "llm-disabled",
+  "server-key-missing",
+  "model-missing",
+  "openai-auth-failed",
+  "openai-quota-exceeded",
+  "openai-rate-limited",
+  "openai-timeout",
+  "openai-http-error",
+  "openai-invalid-response",
+  "llm-schema-invalid",
+  "llm-quality-rejected",
+  "vision-disabled",
+  "vision-request-failed",
+  "unknown-llm-error"
+]);
+
+class SafeLlmError extends Error {
+  constructor(reason = "unknown-llm-error", { status = null, cause = null } = {}) {
+    super(reason);
+    this.name = "SafeLlmError";
+    this.reason = ALLOWED_LLM_REASONS.has(reason) ? reason : "unknown-llm-error";
+    this.status = status;
+    this.cause = cause;
+  }
+}
 
 const jsonResponse = (body, init = {}) =>
   new Response(JSON.stringify(body), {
@@ -43,16 +70,32 @@ const parseLlmJson = (value = "") => {
   return JSON.parse(cleaned);
 };
 
+const safeReason = (reason = "") => (ALLOWED_LLM_REASONS.has(reason) ? reason : "unknown-llm-error");
+
 const isLlmEnabled = (env = {}) => LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_LLM_ENABLED || "").trim());
 
 const getOpenAiModel = (env = {}) => env.OPENAI_MODEL || env.BLOG_WRITER_OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+const getLlmEnvironmentStatus = (env = {}) => {
+  const model = String(getOpenAiModel(env) || "").trim();
+  const enabled = isLlmEnabled(env);
+  const keyPresent = Boolean(env.OPENAI_API_KEY);
+  const modelPresent = Boolean(model);
+  const reason = !enabled ? "llm-disabled" : !keyPresent ? "server-key-missing" : !modelPresent ? "model-missing" : null;
+
+  return {
+    enabled,
+    keyPresent,
+    modelPresent,
+    model,
+    reason
+  };
+};
 const isMockEnvironment = (env = {}) =>
   /^(unit-test-key|mock-key|test-key)$/u.test(String(env.OPENAI_API_KEY || "")) ||
   /^(unit-model|mock-model)$/u.test(String(getOpenAiModel(env) || ""));
 
 const shouldUseLlm = (env = {}) =>
-  isLlmEnabled(env) &&
-  Boolean(env.OPENAI_API_KEY);
+  !getLlmEnvironmentStatus(env).reason;
 
 const shouldUseLlmJudge = (env = {}) =>
   shouldUseLlm(env) &&
@@ -68,6 +111,131 @@ const shouldUseVision = (env = {}) =>
 
 const getVisionModel = (env = {}) =>
   env.OPENAI_VISION_MODEL || env.BLOG_WRITER_OPENAI_VISION_MODEL || env.OPENAI_MODEL || DEFAULT_OPENAI_VISION_MODEL;
+
+const classifyOpenAiStatus = (status = 0, responseText = "") => {
+  if (status === 401 || status === 403) return "openai-auth-failed";
+  if (status === 429) {
+    return /quota|insufficient_quota|billing|exceeded your current quota/iu.test(responseText)
+      ? "openai-quota-exceeded"
+      : "openai-rate-limited";
+  }
+  return "openai-http-error";
+};
+
+const readSafeResponseText = async (response) => {
+  try {
+    return String(await response.text()).slice(0, 1000);
+  } catch {
+    return "";
+  }
+};
+
+const fetchOpenAiJson = async ({ url = "https://api.openai.com/v1/chat/completions", env = {}, body = {}, timeoutMs = OPENAI_REQUEST_TIMEOUT_MS } = {}) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      const responseText = await readSafeResponseText(response);
+      throw new SafeLlmError(classifyOpenAiStatus(response.status, responseText), { status: response.status });
+    }
+
+    try {
+      return await response.json();
+    } catch (error) {
+      throw new SafeLlmError("openai-invalid-response", { status: response.status, cause: error });
+    }
+  } catch (error) {
+    if (error instanceof SafeLlmError) throw error;
+    if (error?.name === "AbortError") throw new SafeLlmError("openai-timeout", { cause: error });
+    throw new SafeLlmError("unknown-llm-error", { cause: error });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const parseLlmJsonSafely = (content = "") => {
+  try {
+    return parseLlmJson(content);
+  } catch (error) {
+    throw new SafeLlmError("llm-schema-invalid", { cause: error });
+  }
+};
+
+const getErrorDiagnostics = (error) => ({
+  reason: error instanceof SafeLlmError ? error.reason : "unknown-llm-error",
+  status: error instanceof SafeLlmError ? error.status : null
+});
+
+const createSafeLlmDiagnostics = ({ env = {}, used = false, reason = null, status = null, attempted = false, accepted = false, judgeUsed = false } = {}) => {
+  const envStatus = getLlmEnvironmentStatus(env);
+  return {
+    used: Boolean(used),
+    attempted: Boolean(attempted || used),
+    accepted: Boolean(accepted),
+    enabled: envStatus.enabled,
+    keyPresent: envStatus.keyPresent,
+    modelPresent: envStatus.modelPresent,
+    model: envStatus.model,
+    reason: reason ? safeReason(reason) : null,
+    status: Number.isFinite(Number(status)) ? Number(status) : null,
+    isMock: isMockEnvironment(env),
+    judgeUsed: Boolean(judgeUsed)
+  };
+};
+
+const getInputImageCount = (form = {}) => {
+  if (Number.isFinite(Number(form.imageCount))) return Number(form.imageCount);
+  if (Array.isArray(form.imageContext)) return form.imageContext.length;
+  if (Array.isArray(form.images)) return form.images.length;
+  if (Array.isArray(form.photos)) return form.photos.length;
+  if (Array.isArray(form.photoMetadata)) return form.photoMetadata.length;
+  return 0;
+};
+
+const createSafeVisionDiagnostics = ({ form = {}, result = {} } = {}) => {
+  const packageData = result.contentPackage || {};
+  const imageAnalysis = packageData.imageAnalysis || result.imageAnalysis || {};
+  const trace = packageData.trace || result.trace || {};
+  const mode = trace.visionMode || imageAnalysis.mode || "none";
+  return {
+    mode,
+    reason: form.visionDiagnostics?.reason || null,
+    status: Number.isFinite(Number(form.visionDiagnostics?.status)) ? Number(form.visionDiagnostics.status) : null,
+    imageCount: getInputImageCount(form),
+    visibleElementsCount: Array.isArray(imageAnalysis.visuallySupported) ? imageAnalysis.visuallySupported.length : 0
+  };
+};
+
+const logSafeGenerateBlogEvent = ({ result = {}, env = {}, status = 200 } = {}) => {
+  try {
+    const packageData = result.contentPackage || {};
+    const trace = packageData.trace || result.trace || {};
+    const llm = result.llm || {};
+    console.log(JSON.stringify({
+      route: "/api/generate-blog",
+      engine: result.engine || packageData.engine || trace.engine || "fallback",
+      judgeEngine: result.judgeEngine || packageData.judgeEngine || trace.judgeEngine || "deterministic",
+      keyPresent: getLlmEnvironmentStatus(env).keyPresent,
+      modelPresent: getLlmEnvironmentStatus(env).modelPresent,
+      llmReason: llm.reason || null,
+      visionMode: trace.visionMode || packageData.imageAnalysis?.mode || result.imageAnalysis?.mode || "none",
+      status
+    }));
+  } catch {
+    // Logging must never break generation.
+  }
+};
 
 const compact = (value = "") =>
   String(value ?? "")
@@ -203,13 +371,9 @@ const requestVisionAnalysis = async ({ env = {}, form = {} } = {}) => {
   const imageItems = getVisionImageItems(form);
   if (imageItems.length === 0) return null;
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
+  const payload = await fetchOpenAiJson({
+    env,
+    body: {
       model: getVisionModel(env),
       temperature: 0,
       response_format: { type: "json_object" },
@@ -253,21 +417,34 @@ const requestVisionAnalysis = async ({ env = {}, form = {} } = {}) => {
           ]
         }
       ]
-    })
+    }
   });
 
-  if (!response.ok) throw new Error(`Vision request failed with ${response.status}`);
-  const payload = await response.json();
   const content = payload?.choices?.[0]?.message?.content || "";
-  return normalizeVisionAnalysis(parseLlmJson(content), imageItems);
+  return normalizeVisionAnalysis(parseLlmJsonSafely(content), imageItems);
 };
 
 const enrichFormWithVision = async (form = {}, env = {}) => {
+  if (!LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_VISION_ENABLED || "").trim())) {
+    return {
+      ...form,
+      visionDiagnostics: {
+        reason: "vision-disabled",
+        status: null
+      }
+    };
+  }
   try {
     const imageAnalysis = await requestVisionAnalysis({ env, form });
     return imageAnalysis ? { ...form, imageAnalysis } : form;
-  } catch {
-    return form;
+  } catch (error) {
+    return {
+      ...form,
+      visionDiagnostics: {
+        reason: error instanceof SafeLlmError ? error.reason : "vision-request-failed",
+        status: error instanceof SafeLlmError ? error.status : null
+      }
+    };
   }
 };
 
@@ -332,24 +509,18 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
 
 const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, draft = {} } = {}) => {
   if (!shouldUseLlmJudge(env)) return null;
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
+  const payload = await fetchOpenAiJson({
+    env,
+    body: {
       model,
       messages: buildHumanJudgeMessages({ form, draft }),
       temperature: 0,
       response_format: { type: "json_object" }
-    })
+    }
   });
 
-  if (!response.ok) throw new Error(`LLM judge request failed with ${response.status}`);
-  const payload = await response.json();
   const content = payload?.choices?.[0]?.message?.content || "";
-  return parseLlmJson(content);
+  return parseLlmJsonSafely(content);
 };
 
 const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}) => [
@@ -387,24 +558,18 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}
 ];
 
 const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, draft = {}, humanQuality = {} } = {}) => {
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
+  const payload = await fetchOpenAiJson({
+    env,
+    body: {
       model,
       messages: buildRevisionMessages({ form, draft, humanQuality }),
       temperature: 0.35,
       response_format: { type: "json_object" }
-    })
+    }
   });
 
-  if (!response.ok) throw new Error(`LLM revision request failed with ${response.status}`);
-  const payload = await response.json();
   const content = payload?.choices?.[0]?.message?.content || "";
-  return parseLlmJson(content);
+  return parseLlmJsonSafely(content);
 };
 
 const evaluateDraftHumanQuality = ({ form = {}, draft = {}, engine = "fallback", llmJudge = null } = {}) => {
@@ -805,9 +970,16 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   };
 };
 
-const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
+const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}, env = {}) => {
   const humanQuality = evaluateDraftHumanQuality({ form, draft: fallbackDraft, engine: "fallback" });
   const decorated = attachHumanQuality(fallbackDraft, humanQuality, 1);
+  const safeLlm = createSafeLlmDiagnostics({
+    env,
+    used: false,
+    attempted: llm.attempted,
+    reason: llm.reason || getLlmEnvironmentStatus(env).reason || "unknown-llm-error",
+    status: llm.status
+  });
   return {
     ...decorated,
     resultMode: "fallback_draft",
@@ -848,10 +1020,8 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}) => {
           }
         }
       : decorated.contentPackage,
-    llm: {
-      used: false,
-      ...llm
-    }
+    llm: safeLlm,
+    vision: createSafeVisionDiagnostics({ form, result: decorated })
   };
 };
 
@@ -860,8 +1030,9 @@ const hasUsableLlmDraft = (draft = {}) =>
   Boolean(String(draft.finalTitle || draft.selectedTitle || "").trim() || normalizeList(draft.titleCandidates || draft.titles).length > 0);
 
 export async function onRequestPost(context) {
+  const env = context?.env ?? {};
   const rawForm = await parseJsonRequest(context.request);
-  const visionForm = await enrichFormWithVision(rawForm, context.env);
+  const visionForm = await enrichFormWithVision(rawForm, env);
   const form = normalizeBlogWriterInput(visionForm);
   const fallbackDraft = createProductReviewDraft(form);
   const promptPayload = buildBlogWriterPromptPayload({
@@ -869,40 +1040,34 @@ export async function onRequestPost(context) {
     fallbackDraft
   });
 
-  if (!shouldUseLlm(context.env)) {
-    return jsonResponse(withFallbackRoute(fallbackDraft, {
-      reason: isLlmEnabled(context.env) ? "server-key-missing" : "llm-disabled"
-    }, form));
+  if (!shouldUseLlm(env)) {
+    const fallback = withFallbackRoute(fallbackDraft, {
+      reason: getLlmEnvironmentStatus(env).reason || "unknown-llm-error"
+    }, form, env);
+    logSafeGenerateBlogEvent({ result: fallback, env, status: 200 });
+    return jsonResponse(fallback);
   }
 
   try {
-    const model = getOpenAiModel(context.env);
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${context.env.OPENAI_API_KEY}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
+    const model = getOpenAiModel(env);
+    const payload = await fetchOpenAiJson({
+      env,
+      body: {
         model,
         messages: promptPayload.messages,
         temperature: 0.45,
         response_format: { type: "json_object" }
-      })
+      }
     });
-
-    if (!response.ok) {
-      throw new Error(`LLM request failed with ${response.status}`);
-    }
-
-    const payload = await response.json();
     const content = payload?.choices?.[0]?.message?.content || "";
-    const llmDraft = parseLlmJson(content);
+    const llmDraft = parseLlmJsonSafely(content);
     if (!hasUsableLlmDraft(llmDraft)) {
-      return jsonResponse(withFallbackRoute(fallbackDraft, {
+      const fallback = withFallbackRoute(fallbackDraft, {
         attempted: true,
-        reason: "llm-schema-unusable"
-      }, form));
+        reason: "llm-schema-invalid"
+      }, form, env);
+      logSafeGenerateBlogEvent({ result: fallback, env, status: 200 });
+      return jsonResponse(fallback);
     }
 
     let acceptedDraft = mergeAcceptedLlmDraft({
@@ -911,9 +1076,9 @@ export async function onRequestPost(context) {
       llmDraft
     });
     try {
-      if (shouldUseLlmJudge(context.env)) {
+      if (shouldUseLlmJudge(env)) {
         acceptedDraft = await improveDraftWithQualityAttempts({
-          env: context.env,
+          env,
           model,
           form,
           fallbackDraft,
@@ -929,24 +1094,32 @@ export async function onRequestPost(context) {
       acceptedDraft = attachHumanQuality(acceptedDraft, humanQuality, 1);
     }
 
-    return jsonResponse({
+    const result = {
       ...acceptedDraft,
       generationRoute: "llm",
       engine: "llm",
-      isMock: Boolean(acceptedDraft.isMock || isMockEnvironment(context.env)),
-      llm: {
+      isMock: Boolean(acceptedDraft.isMock || isMockEnvironment(env)),
+      llm: createSafeLlmDiagnostics({
+        env,
         used: true,
+        attempted: true,
         accepted: true,
-        model,
-        isMock: Boolean(acceptedDraft.isMock || isMockEnvironment(context.env)),
+        reason: acceptedDraft.publishReady ? null : "llm-quality-rejected",
         judgeUsed: acceptedDraft.judgeEngine === "llm"
-      }
-    });
-  } catch {
-    return jsonResponse(withFallbackRoute(fallbackDraft, {
+      }),
+      vision: createSafeVisionDiagnostics({ form, result: acceptedDraft })
+    };
+    logSafeGenerateBlogEvent({ result, env, status: 200 });
+    return jsonResponse(result);
+  } catch (error) {
+    const errorDiagnostics = getErrorDiagnostics(error);
+    const fallback = withFallbackRoute(fallbackDraft, {
       attempted: true,
-      reason: "llm-failed"
-    }, form));
+      reason: errorDiagnostics.reason,
+      status: errorDiagnostics.status
+    }, form, env);
+    logSafeGenerateBlogEvent({ result: fallback, env, status: 200 });
+    return jsonResponse(fallback);
   }
 }
 

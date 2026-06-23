@@ -17,6 +17,11 @@ import {
   ANEUNYEOJA_WRITER_PROFILE_VERSION
 } from "../shared/writerProfiles/aneunyeoja.js";
 import { onRequestPost as generateBlogOnRequestPost } from "../functions/api/generate-blog.js";
+import {
+  buildDiagnosticPayload,
+  formatDiagnosticSummary,
+  summarizeDiagnosticResponse
+} from "../scripts/diagnose-blog-preview.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 
@@ -385,7 +390,148 @@ assert.ok(apiDraft.qualityScore <= 89);
 assert.equal(apiDraft.trace.engine, "fallback");
 assert.equal(apiDraft.contentPackage.trace.visionMode, "none");
 assert.equal(apiDraft.contentPackage.diagnostics.rawFinalDiff.rawBodyLength, apiDraft.contentPackage.diagnostics.rawFinalDiff.finalBodyLength);
+assert.equal(apiDraft.llm.used, false);
+assert.equal(apiDraft.llm.keyPresent, true);
+assert.equal(apiDraft.llm.reason, "llm-disabled");
 assert.ok(!JSON.stringify(apiDraft).includes("sk-test-not-returned-to-client"));
 assertDraftContract(apiDraft);
+
+const makeApiRequest = (body = {}) =>
+  new Request("https://local.test/api/generate-blog", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      productName: "오르기록 도구 정보 점검",
+      mainKeyword: "생활 기록 도구",
+      subKeywords: "기록 방식, 알림 설정",
+      experienceMemo: "처음 알아보는 중\n기록 방식이 궁금함",
+      ...body
+    })
+  });
+
+const callApiWithFetch = async ({ env = {}, fetchImpl = null } = {}) => {
+  const originalFetch = globalThis.fetch;
+  if (fetchImpl) globalThis.fetch = fetchImpl;
+  try {
+    const response = await generateBlogOnRequestPost({
+      request: makeApiRequest(),
+      env
+    });
+    return response.json();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+};
+
+const missingKeyDraft = await callApiWithFetch({
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true"
+  }
+});
+assert.equal(missingKeyDraft.engine, "fallback");
+assert.equal(missingKeyDraft.llm.keyPresent, false);
+assert.equal(missingKeyDraft.llm.reason, "server-key-missing");
+
+const authFailureDraft = await callApiWithFetch({
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key"
+  },
+  fetchImpl: async () => new Response(JSON.stringify({ error: { message: "invalid key" } }), { status: 401 })
+});
+assert.equal(authFailureDraft.engine, "fallback");
+assert.equal(authFailureDraft.llm.reason, "openai-auth-failed");
+assert.equal(authFailureDraft.llm.status, 401);
+assert.ok(!JSON.stringify(authFailureDraft).includes("unit-test-key"));
+
+const quotaFailureDraft = await callApiWithFetch({
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key"
+  },
+  fetchImpl: async () => new Response(JSON.stringify({ error: { message: "insufficient_quota" } }), { status: 429 })
+});
+assert.equal(quotaFailureDraft.llm.reason, "openai-quota-exceeded");
+
+const rateFailureDraft = await callApiWithFetch({
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key"
+  },
+  fetchImpl: async () => new Response(JSON.stringify({ error: { message: "rate limit" } }), { status: 429 })
+});
+assert.equal(rateFailureDraft.llm.reason, "openai-rate-limited");
+
+const timeoutFailureDraft = await callApiWithFetch({
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key"
+  },
+  fetchImpl: async () => {
+    throw new DOMException("aborted", "AbortError");
+  }
+});
+assert.equal(timeoutFailureDraft.llm.reason, "openai-timeout");
+
+const invalidSchemaDraft = await callApiWithFetch({
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "{not-json" } }]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(invalidSchemaDraft.llm.reason, "llm-schema-invalid");
+
+const diagnosticPayload = buildDiagnosticPayload();
+assert.equal(diagnosticPayload.imageCount, 0);
+assert.ok(!JSON.stringify(diagnosticPayload).includes("sk-"));
+
+const diagnosticPass = summarizeDiagnosticResponse({
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  json: {
+    engine: "llm",
+    judgeEngine: "llm",
+    isMock: false,
+    vision: { mode: "none", imageCount: 0, visibleElementsCount: 0 },
+    llm: { used: true, keyPresent: true, model: "unit-model", reason: null },
+    qualityScore: 96,
+    publishReady: true,
+    qualityAttempts: 1
+  }
+});
+assert.equal(diagnosticPass.pass, true);
+assert.ok(formatDiagnosticSummary(diagnosticPass).includes("result: PASS"));
+
+const diagnosticFallback = summarizeDiagnosticResponse({
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  json: {
+    engine: "fallback",
+    judgeEngine: "deterministic",
+    llm: { used: false, keyPresent: false, model: "unit-model", reason: "server-key-missing" }
+  }
+});
+assert.equal(diagnosticFallback.pass, false);
+assert.ok(formatDiagnosticSummary(diagnosticFallback).includes("llm.reason: server-key-missing"));
+
+const diagnosticVisionWarning = summarizeDiagnosticResponse({
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  imageExpected: true,
+  json: {
+    engine: "llm",
+    judgeEngine: "llm",
+    vision: { mode: "label-only", imageCount: 1, visibleElementsCount: 0 },
+    llm: { used: true, keyPresent: true, model: "unit-model", reason: null }
+  }
+});
+assert.equal(diagnosticVisionWarning.pass, false);
 
 console.log("local validation passed");
