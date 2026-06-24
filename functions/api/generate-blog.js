@@ -335,8 +335,17 @@ const createLlmStages = (env = {}) => {
   };
 };
 
-const recordStageSuccess = (llmStages, stage, { status = 200, attempts = 1, latencyMs = 0, finishReason = null, revisionAttempt = 0 } = {}) => {
+const normalizeOpenAiUsage = (usage = null) => {
+  if (!usage || typeof usage !== "object") return { input: 0, output: 0, total: 0 };
+  const input = Number(usage.prompt_tokens ?? usage.input_tokens ?? usage.input ?? 0) || 0;
+  const output = Number(usage.completion_tokens ?? usage.output_tokens ?? usage.output ?? 0) || 0;
+  const total = Number(usage.total_tokens ?? usage.total ?? 0) || input + output;
+  return { input, output, total };
+};
+
+const recordStageSuccess = (llmStages, stage, { status = 200, attempts = 1, latencyMs = 0, finishReason = null, revisionAttempt = 0, usage = null } = {}) => {
   if (!llmStages) return;
+  const tokenUsage = normalizeOpenAiUsage(usage);
   const target =
     stage === "revision"
       ? (() => {
@@ -347,7 +356,8 @@ const recordStageSuccess = (llmStages, stage, { status = 200, attempts = 1, late
             status,
             reason: null,
             attempts,
-            latencyMs
+            latencyMs,
+            tokenUsage
           };
           llmStages.revisions.push(entry);
           return entry;
@@ -360,6 +370,7 @@ const recordStageSuccess = (llmStages, stage, { status = 200, attempts = 1, late
   target.reason = null;
   target.attempts = attempts;
   target.latencyMs = latencyMs;
+  target.tokenUsage = tokenUsage;
   if (stage === "writer") target.finishReason = finishReason || null;
 };
 
@@ -477,7 +488,8 @@ const fetchOpenAiJson = async ({
       payload.__openAiMeta = {
         attempts: attempt,
         status: 200,
-        finishReason: payload?.choices?.[0]?.finish_reason || null
+        finishReason: payload?.choices?.[0]?.finish_reason || null,
+        usage: normalizeOpenAiUsage(payload?.usage)
       };
       return payload;
     } catch (error) {
@@ -1221,7 +1233,8 @@ const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, fo
     recordStageSuccess(llmStages, "judge", {
       status: payload.__openAiMeta?.status || 200,
       attempts: payload.__openAiMeta?.attempts || 1,
-      latencyMs: Date.now() - startedAt
+      latencyMs: Date.now() - startedAt,
+      usage: payload.__openAiMeta?.usage
     });
 
     const extraction = extractOpenAiText(payload);
@@ -1304,7 +1317,8 @@ const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form
       status: payload.__openAiMeta?.status || 200,
       attempts: payload.__openAiMeta?.attempts || 1,
       latencyMs: Date.now() - startedAt,
-      revisionAttempt
+      revisionAttempt,
+      usage: payload.__openAiMeta?.usage
     });
 
     const extraction = extractOpenAiText(payload);
@@ -2000,7 +2014,8 @@ const requestLlmWriter = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form =
           status: payload.__openAiMeta?.status || 200,
           attempts: schemaAttempt + (payload.__openAiMeta?.attempts || 1),
           latencyMs: Date.now() - startedAt,
-          finishReason: extraction.finishReason || null
+          finishReason: extraction.finishReason || null,
+          usage: payload.__openAiMeta?.usage
         });
         return draft;
       } catch (error) {
@@ -2021,7 +2036,8 @@ const requestLlmWriter = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form =
     status: lastPayload?.__openAiMeta?.status || 200,
     attempts: lastPayload?.__openAiMeta?.attempts || 1,
     latencyMs: 0,
-    finishReason: lastPayload?.__openAiMeta?.finishReason || null
+    finishReason: lastPayload?.__openAiMeta?.finishReason || null,
+    usage: lastPayload?.__openAiMeta?.usage
   });
   return lastDraft;
 };

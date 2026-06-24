@@ -21,3 +21,4 @@ codex-preview.err
 .codex-*.err
 .codex-*-smoke.png
 .tmp-quality-canary/
+.tmp-commercial-readiness/

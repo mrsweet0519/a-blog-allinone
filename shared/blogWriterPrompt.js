@@ -107,6 +107,18 @@ export const BLOG_WRITER_OUTPUT_JSON_SCHEMA = {
 
 const toJsonBlock = (value) => JSON.stringify(value, null, 2);
 
+const sanitizePromptImageContext = (items = []) =>
+  (Array.isArray(items) ? items : []).map((item, index) => ({
+    index: Number(item?.index || item?.photoIndex) || index + 1,
+    name: String(item?.name || "").trim(),
+    source: String(item?.source || "").trim(),
+    note: String(item?.note || item?.description || item?.alt || "").trim(),
+    ocrText: String(item?.ocrText || "").trim(),
+    mediaType: String(item?.mediaType || item?.type || "").trim(),
+    size: Number(item?.size) || 0,
+    hasInlineData: Boolean(item?.dataUrl || item?.previewDataUrl || item?.base64Data || item?.base64)
+  }));
+
 const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {}) => {
   const primaryEntity = pipelineContext.primaryEntity || pipelineContext.mainKeyword || "";
   const writerPlan = pipelineContext.writerPlan || {};
@@ -203,7 +215,7 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
       form.targetLength ||
       2500,
     informationLimited: Boolean(fallbackDraft?.contentPackage?.informationLimited),
-    imageContext: form.imageContext || [],
+    imageContext: sanitizePromptImageContext(form.imageContext || form.images || form.photos || form.photoMetadata || []),
     imageCount: form.imageCount || 0,
     outputSchema: BLOG_WRITER_OUTPUT_SCHEMA,
     fallbackReference: fallbackDraft

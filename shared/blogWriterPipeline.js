@@ -322,8 +322,7 @@ const getImageItems = (form = {}) => {
     ocrText: text(item?.ocrText),
     mediaType: text(item?.mediaType || item?.type),
     size: Number(item?.size) || 0,
-    dataUrl: text(item?.dataUrl || item?.previewDataUrl),
-    base64Data: text(item?.base64Data || item?.base64)
+    hasInlineData: Boolean(item?.dataUrl || item?.previewDataUrl || item?.base64Data || item?.base64)
   }));
 };
 
