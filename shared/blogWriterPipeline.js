@@ -915,11 +915,22 @@ const splitClaimUnits = ({ title = "", body = "", faq = [], hashtags = [] } = {}
     ...hashtags
   ]).slice(0, 80);
 
+const claimEvidenceFacts = (factMap = {}) => {
+  const seen = new Set();
+  return [...(factMap.facts || []), ...(factMap.userFacts || [])].filter((fact) => {
+    const factValue = fact?.value || "";
+    const key = `${fact?.id || ""}:${compact(factValue)}`;
+    if (!factValue || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 const evidenceIdsForText = (value = "", factMap = {}) => {
   const normalized = compact(value);
   if (!normalized) return [];
   return uniqueTexts(
-    (factMap.facts || [])
+    claimEvidenceFacts(factMap)
       .filter((fact) => {
         const factKey = compact(fact.value || "");
         return factKey && (normalized.includes(factKey) || factKey.includes(normalized.slice(0, Math.min(10, normalized.length))) || isFactReflected(fact.value, value));

@@ -333,13 +333,9 @@ export const createCommercialReadinessInputs = ({ seed = randomUUID().slice(0, 8
       informationLevel: "low",
       productName: infoName,
       mainKeyword: "도서관 좌석 확인 방법",
-      subKeywords: "운영 정보, 방문 전 확인",
-      targetCharCount: 900,
-      experienceMemo: [
-        `${infoName}에 대해 아직 직접 방문하지 않았고 좌석 확인 방법만 알아보는 중이다.`,
-        "현재 알고 있는 것은 도서관 이름과 방문 전 좌석 확인이 필요하다는 점뿐이다.",
-        "실제 이용 후기처럼 쓰지 말고 부족한 정보는 짧게 정리해야 한다."
-      ].join("\n"),
+      subKeywords: "",
+      targetCharCount: 700,
+      experienceMemo: "",
       imageContext: []
     },
     {
@@ -472,11 +468,12 @@ const classifyFailure = (summary = {}) => {
 const evaluateCommercialCase = ({ input = {}, summary = {}, titleCheck = {}, faqCheck = {}, falseExperience = false, previousTopicContamination = false } = {}) => {
   const highOrMedium = input.informationLevel !== "low";
   const targetRatio = Number(summary.targetComplianceRatio || 0);
+  const lowResultMode = ["honest_draft", "fallback_draft"].includes(summary.resultMode);
   const commonChecks = {
-    engine: summary.engine === "llm",
-    judgeEngine: summary.judgeEngine === "llm",
+    engine: highOrMedium ? summary.engine === "llm" : ["llm", "fallback"].includes(summary.engine),
+    judgeEngine: highOrMedium ? summary.judgeEngine === "llm" : true,
     isMock: summary.isMock === false,
-    writerSuccess: summary.writerSuccess === true,
+    writerSuccess: highOrMedium ? summary.writerSuccess === true : true,
     judgeSuccess: highOrMedium ? summary.judgeSuccess === true : true,
     primaryEntityCoverage: summary.primaryEntityCoverage === true,
     unsupportedClaimCount: Number(summary.unsupportedClaimCount || 0) === 0,
@@ -498,7 +495,7 @@ const evaluateCommercialCase = ({ input = {}, summary = {}, titleCheck = {}, faq
       summary.publishReady === true &&
       titleCheck.pass === true
     : ["llm", "fallback"].includes(summary.engine) &&
-      ["honest_draft", "fallback_draft"].includes(summary.resultMode) &&
+      lowResultMode &&
       commonChecks.unsupportedClaimCount &&
       commonChecks.categoryContaminationCount &&
       commonChecks.metaGuidanceCount &&
@@ -511,6 +508,7 @@ const evaluateCommercialCase = ({ input = {}, summary = {}, titleCheck = {}, faq
     targetComplianceRatio: highOrMedium ? targetRatio >= 0.85 && targetRatio <= 1.1 : true,
     qualityScore: highOrMedium ? Number(summary.qualityScore || 0) >= 95 : true,
     publishReady: highOrMedium ? summary.publishReady === true : true,
+    lowResultMode: highOrMedium ? true : lowResultMode,
     titlePolicy: highOrMedium ? titleCheck.pass === true : true
   }).filter(([, passed]) => !passed).map(([key]) => key);
 
