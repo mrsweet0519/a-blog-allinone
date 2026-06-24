@@ -563,7 +563,7 @@ const makeMockLlmDraft = (attemptLabel = "initial") => ({
   ],
   body: [
     `${revisionCanaryInput.productName}의 ${revisionCanaryInput.mainKeyword}를 실제 착용 흐름으로 정리했다.`,
-    ...revisionMemoLines.map((line) => `${line} ${attemptLabel}`),
+    ...revisionMemoLines.map((line, index) => `${line} ${attemptLabel}. ${revisionCanaryInput.productName}에서 이 ${index + 1}번째 대목은 그날의 상황과 다시 사용할 때의 판단 기준을 함께 보여준다. 좋았던 점은 어떤 조건에서 편했는지로 남기고, 아쉬운 점은 다음에 먼저 확인할 항목으로 이어서 정리했다.`),
     `${revisionCanaryInput.productName}은 출근 코디와 착용감 기준으로 다시 사용할 만한지 판단하기 쉬웠다.`
   ].join("\n\n"),
   faqItems: [
@@ -595,7 +595,7 @@ const revisionDraft = await callApiWithFetch({
         { status: 200 }
       );
     }
-    const judgeScore = revisionFetchCount === 2 ? 52 : revisionFetchCount === 4 ? 72 : 88;
+    const judgeScore = revisionFetchCount === 2 ? 52 : revisionFetchCount === 4 ? 72 : 100;
     return new Response(
       JSON.stringify({
         choices: [
@@ -664,6 +664,68 @@ assert.equal(judgeTimeoutDraft.judgeEngine, "deterministic");
 assert.equal(judgeTimeoutDraft.llmStages.writer.success, true);
 assert.equal(judgeTimeoutDraft.llmStages.judge.success, false);
 assert.equal(judgeTimeoutDraft.llmStages.judge.reason, "timeout");
+
+let judgeRateLimitRevisionFetchCount = 0;
+const judgeRateLimitRevisionDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "true",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    judgeRateLimitRevisionFetchCount += 1;
+    if (judgeRateLimitRevisionFetchCount === 1) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("rate-limit-initial")) } }] }), { status: 200 });
+    }
+    if ([2, 3, 4].includes(judgeRateLimitRevisionFetchCount)) {
+      return new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 });
+    }
+    if (judgeRateLimitRevisionFetchCount === 5) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("rate-limit-revision")) } }] }), { status: 200 });
+    }
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                score: 100,
+                publishReady: true,
+                scores: {
+                  titleQuality: 10,
+                  openingQuality: 10,
+                  factualGrounding: 15,
+                  specificity: 15,
+                  humanNaturalness: 15,
+                  narrativeCoherence: 10,
+                  paragraphValue: 10,
+                  keywordNaturalness: 5,
+                  imageGrounding: 5,
+                  readerUtility: 5
+                },
+                issues: [],
+                revisionInstructions: [],
+                coveredFactIds: [],
+                missingFactIds: []
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    );
+  }
+});
+assert.ok(judgeRateLimitRevisionFetchCount >= 6);
+assert.equal(judgeRateLimitRevisionDraft.engine, "llm");
+assert.equal(judgeRateLimitRevisionDraft.judgeEngine, "llm");
+assert.equal(judgeRateLimitRevisionDraft.qualityDiagnostics.revisionUsed, true);
+assert.ok(judgeRateLimitRevisionDraft.llmStages.revisions.length >= 1);
+assert.ok(judgeRateLimitRevisionDraft.llmStages.revisions.length <= 2);
 
 let revisionTimeoutFetchCount = 0;
 const revisionTimeoutDraft = await callApiWithFetch({
@@ -811,6 +873,53 @@ const plainTextDraft = await callApiWithFetch({
 assert.equal(plainTextDraft.engine, "llm");
 assert.ok(plainTextDraft.contentPackage.diagnostics.schemaRepair.repairedFields.includes("body"));
 
+const groundedRepairDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({
+                titleCandidates: ["짧은 제목", "후기", "정보", "기준", "정리"],
+                finalTitle: "짧은 제목",
+                sections: [{ heading: null, paragraphs: ["처음에는 전체 흐름만 짧게 적었다."], imageRefs: [] }],
+                faq: [],
+                hashtags: []
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+const groundedRepair = groundedRepairDraft.contentPackage.diagnostics.groundedRepair;
+assert.equal(groundedRepairDraft.engine, "llm");
+assert.ok(groundedRepairDraft.finalTitle.includes(groundedRepairDraft.primaryEntity));
+assert.equal(
+  getEntityCoverage({
+    primaryEntity: groundedRepairDraft.primaryEntity,
+    title: groundedRepairDraft.finalTitle,
+    titleCandidates: groundedRepairDraft.titleCandidates,
+    body: groundedRepairDraft.body
+  }).openingSentence,
+  true
+);
+assert.ok(groundedRepair.inputFactCoverage.inputFactCoverage >= 0.9);
+assert.ok(groundedRepair.targetComplianceRatio >= 0.85);
+assert.ok(groundedRepair.applied.includes("missingFactExpansion"));
+assert.ok(!JSON.stringify(groundedRepair).includes(revisionMemoLines[0]));
+
 let retryFetchCount = 0;
 const retrySuccessDraft = await callApiWithFetch({
   body: revisionCanaryInput,
@@ -936,6 +1045,11 @@ assert.equal(BLOG_WRITER_OUTPUT_JSON_SCHEMA.properties.sections.items.properties
 assert.equal(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.additionalProperties, false);
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("coveredFactIds"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("missingFactIds"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("categoryContamination"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("metaGuidance"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("josaErrors"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("genericFillerRatio"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("targetComplianceRatio"));
 
 const chatExtraction = extractOpenAiText({
   choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("extract-chat")) } }]
@@ -1128,6 +1242,10 @@ assert.equal(qualityCanaryInputs.length, 3);
 for (const input of qualityCanaryInputs) {
   const context = buildBlogWriterPipelineContext(input);
   assert.equal(context.informationSufficiency.level, "high");
+  assert.equal(context.writerPlan.effectiveTargetCharCount, input.targetCharCount);
+  assert.ok(context.writerPlan.sectionBudgets.length >= 3);
+  assert.ok(context.writerPlan.sections.some((section) => (section.requiredFactIds || []).length > 0));
+  assert.ok((context.writerPlan.factPolicy.forbiddenClaims || []).includes("unverified price"));
   assert.ok(!productionSource.includes(input.productName));
 }
 
@@ -1189,7 +1307,7 @@ const qualityCanaryPass = summarizeQualityCanaryResponse({
       caps: [],
       diagnostics: {
         entityCoverage: { finalTitle: true, openingSentence: true, body: true },
-        inputFactCoverage: { inputFactCoverage: 0.95 },
+        inputFactCoverage: { inputFactCoverage: 0.95, missingFactIds: ["uf2"] },
         categoryContamination: [],
         genericFillerRatio: 0.05
       }
@@ -1199,6 +1317,12 @@ const qualityCanaryPass = summarizeQualityCanaryResponse({
       informationSufficiency: { level: "high" },
       requestedTargetCharCount: 2200,
       actualBodyCharCount: 2100,
+      factMap: {
+        userFacts: [
+          { id: "uf1", value: "hidden fact one", confidence: 0.92 },
+          { id: "uf2", value: "hidden fact two", confidence: 0.92 }
+        ]
+      },
       qualityDiagnostics: {
         initialQualityScore: 86,
         qualityAttempts: 2,
@@ -1216,6 +1340,9 @@ const qualityCanaryPass = summarizeQualityCanaryResponse({
 assert.equal(qualityCanaryPass.connectionResult, "PASS");
 assert.equal(qualityCanaryPass.qualityResult, "PASS");
 assert.equal(qualityCanaryPass.revisionDiagnostics.revisionCallCount, 1);
+assert.deepEqual(qualityCanaryPass.coveredFactIds, ["uf1"]);
+assert.deepEqual(qualityCanaryPass.missingFactIds, ["uf2"]);
+assert.ok(!JSON.stringify(qualityCanaryPass).includes("hidden fact one"));
 assert.ok(!JSON.stringify(qualityCanaryPass.metadata).includes("루미핏 unitquality"));
 
 const qualityCanaryFail = summarizeQualityCanaryResponse({

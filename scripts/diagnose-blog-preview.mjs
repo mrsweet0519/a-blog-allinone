@@ -416,6 +416,19 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
   const targetLengthContract = packageData.targetLengthContract || {};
   const schemaRepair = packageData.diagnostics?.schemaRepair || {};
   const responseExtraction = packageData.diagnostics?.responseExtraction || {};
+  const groundedRepair = packageData.diagnostics?.groundedRepair || {};
+  const inputFactCoverageDiagnostics =
+    humanDiagnostics.inputFactCoverage ||
+    groundedRepair.inputFactCoverage ||
+    packageData.inputFactCoverage ||
+    {};
+  const userFactIds = Array.isArray(packageData.factMap?.userFacts)
+    ? packageData.factMap.userFacts.map((fact) => text(fact?.id)).filter(Boolean)
+    : [];
+  const missingFactIds = Array.isArray(inputFactCoverageDiagnostics.missingFactIds)
+    ? inputFactCoverageDiagnostics.missingFactIds.map(text).filter(Boolean)
+    : [];
+  const coveredFactIds = userFactIds.filter((id) => !missingFactIds.includes(id));
   const qualityScore = json.qualityScore ?? packageData.qualityScore ?? packageData.summary?.qualityScore ?? null;
   const qualityAttempts = json.qualityAttempts ?? packageData.qualityAttempts ?? 0;
   const visionMode = vision.mode || trace.visionMode || imageAnalysis.mode || "none";
@@ -456,8 +469,13 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
     schemaFailureCount: numericOrNull(responseExtraction.schemaFailureCount),
     repairedFields: schemaRepair.repairedFields || [],
     inputFactCoverage:
-      numericOrNull(humanDiagnostics.inputFactCoverage?.inputFactCoverage ?? packageData.inputFactCoverage?.inputFactCoverage),
+      numericOrNull(inputFactCoverageDiagnostics.inputFactCoverage),
+    totalUserFacts: userFactIds.length,
+    coveredFactIds,
+    missingFactIds,
+    groundedRepairApplied: groundedRepair.applied || [],
     genericFillerRatio: numericOrNull(humanDiagnostics.genericFillerRatio),
+    josaErrorCount: Array.isArray(humanDiagnostics.josaErrors) ? humanDiagnostics.josaErrors.length : 0,
     changedCharacterRatio: numericOrNull(rawFinalDiff.changedCharacterRatio),
     rawWriterScore: numericOrNull(json.rawQualityScore ?? packageData.rawQualityScore ?? packageData.summary?.rawQualityScore),
     finalJudgeScore: numericOrNull(humanQuality.llmJudgeScore ?? humanQuality.score ?? qualityScore),
@@ -519,7 +537,12 @@ export const formatDiagnosticSummary = (summary = {}) => [
   `finalJudgeScore: ${summary.finalJudgeScore ?? "unknown"}`,
   `appliedCaps: ${(summary.appliedCaps || []).join(", ") || "none"}`,
   `inputFactCoverage: ${summary.inputFactCoverage ?? "unknown"}`,
+  `totalUserFacts: ${summary.totalUserFacts ?? "unknown"}`,
+  `coveredFactIds: ${(summary.coveredFactIds || []).join(", ") || "none"}`,
+  `missingFactIds: ${(summary.missingFactIds || []).join(", ") || "none"}`,
+  `groundedRepairApplied: ${(summary.groundedRepairApplied || []).join(", ") || "none"}`,
   `genericFillerRatio: ${summary.genericFillerRatio ?? "unknown"}`,
+  `josaErrorCount: ${summary.josaErrorCount ?? "unknown"}`,
   `changedCharacterRatio: ${summary.changedCharacterRatio ?? "unknown"}`,
   `rawWriterCharCount: ${summary.rawWriterCharCount ?? "unknown"}`,
   `finalCharCount: ${summary.finalCharCount ?? "unknown"}`,

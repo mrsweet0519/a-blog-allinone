@@ -169,7 +169,7 @@ export const calculateInputFactCoverage = ({ factMap = {}, body = "", coveredFac
   const coveredSet = new Set(coveredFactIds.filter(Boolean));
   const explicitMissingSet = new Set(missingFactIds.filter(Boolean));
   const reflected = highConfidenceFacts.filter((fact) =>
-    coveredSet.has(fact.id) || (!explicitMissingSet.has(fact.id) && isFactReflected(fact.value, body))
+    coveredSet.has(fact.id) || isFactReflected(fact.value, body)
   );
   const missing = highConfidenceFacts.filter((fact) => !reflected.some((item) => item.id === fact.id));
 
@@ -610,6 +610,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
     id: fact.id,
     type: fact.type,
     value: fact.value,
+    priority: ["actual_usage", "positive_experience", "concern_or_drawback", "future_intent"].includes(fact.type) ? "critical" : "high",
     confidence: fact.confidence,
     source: fact.source
   }));
@@ -772,14 +773,51 @@ const createKeywordPlan = ({ targetLengthRange = {}, mainKeyword = "", subKeywor
   };
 };
 
-const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {} } = {}) => {
+const distributeFactsForSection = (facts = [], sectionIndex = 0, sectionCount = 1) => {
+  if (facts.length === 0) return { required: [], optional: [] };
+  const middleCount = Math.max(1, sectionCount - 2);
+  const bucketSize = Math.max(1, Math.ceil(facts.length / middleCount));
+  const start = sectionIndex <= 0 ? 0 : Math.max(0, (sectionIndex - 1) * bucketSize);
+  const required =
+    sectionIndex === 0
+      ? facts.slice(0, Math.min(2, facts.length))
+      : sectionIndex === sectionCount - 1
+        ? facts.slice(Math.max(0, facts.length - 2))
+        : facts.slice(start, start + bucketSize);
+  const requiredIds = new Set(required.map((fact) => fact.id).filter(Boolean));
+  const optional = facts.filter((fact) => !requiredIds.has(fact.id)).slice(0, 3);
+  return { required, optional };
+};
+
+const createSectionBudgets = ({ sectionCount = 1, targetCharCount = 1800 } = {}) => {
+  const safeCount = Math.max(1, Number(sectionCount) || 1);
+  const safeTarget = Math.max(700, Number(targetCharCount) || 1800);
+  if (safeCount === 1) return [safeTarget];
+  const opening = Math.round(safeTarget * 0.15);
+  const closing = Math.round(safeTarget * 0.1);
+  const middleCount = Math.max(1, safeCount - 2);
+  const middle = Math.max(180, Math.round((safeTarget - opening - closing) / middleCount));
+  return Array.from({ length: safeCount }, (_, index) => {
+    if (index === 0) return opening;
+    if (index === safeCount - 1) return closing;
+    return middle;
+  });
+};
+
+const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, targetCharCount = 1800 } = {}) => {
   const facts = factMap?.facts || [];
+  const userFacts = (factMap?.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
   const contextEvidence = collectContextEvidenceIds(contextFacts);
   const imageEvidence = factMap?.imageEvidence || [];
+  const sectionBudgets = createSectionBudgets({ sectionCount: outline.length, targetCharCount });
 
   return outline.map((heading, index) => {
     const fact = facts[index % Math.max(facts.length, 1)];
+    const assigned = distributeFactsForSection(userFacts, index, outline.length);
+    const requiredFactIds = assigned.required.map((item) => item.id).filter(Boolean);
+    const optionalFactIds = assigned.optional.map((item) => item.id).filter(Boolean);
     const evidenceIds = uniqueTexts([
+      ...requiredFactIds,
       fact?.id,
       ...(index === 0 ? contextEvidence.slice(0, 2) : []),
       ...(index > 0 && index < 3 ? contextEvidence.slice(0, 1) : [])
@@ -789,8 +827,12 @@ const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {} } = 
       : [];
 
     return {
+      sectionId: `s${index + 1}`,
       heading,
       purpose: index === 0 ? "opening_context" : index === outline.length - 1 ? "closing" : "reader_intent",
+      requiredFactIds,
+      optionalFactIds,
+      targetCharCount: sectionBudgets[index] || 0,
       evidenceIds,
       imageRefs
     };
@@ -803,7 +845,12 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
   const subKeywords = uniqueTexts([...(analysis.subKeywords || []), ...parseSubKeywords(form.subKeywords, analysis.mainKeyword)]).slice(0, 3);
   const outline = resolveOutline({ category, experienceTone, informationSufficiency: resolvedInformation });
   const faqCount = resolvedInformation.level === "low" ? 0 : resolvedInformation.level === "medium" ? 1 : 2;
-  const sections = createPlanSections({ outline, factMap, contextFacts });
+  const requestedTarget = Number(form.targetCharCount || form.targetLength || 0) || 0;
+  const effectiveTargetCharCount =
+    resolvedInformation.level === "high" && requestedTarget > 0
+      ? requestedTarget
+      : requestedTarget || resolvedInformation.targetLengthRange?.target || 1800;
+  const sections = createPlanSections({ outline, factMap, contextFacts, targetCharCount: effectiveTargetCharCount });
   const contaminationPolicy = CATEGORY_CONTAMINATION_MATRIX[category] || { allow: [], forbid: [] };
 
   return {
@@ -814,6 +861,12 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
     dynamicOutline: sections,
     sections,
     sectionCount: outline.length,
+    requestedTargetCharCount: requestedTarget || effectiveTargetCharCount,
+    effectiveTargetCharCount,
+    sectionBudgets: sections.map((section) => ({
+      sectionId: section.sectionId,
+      targetChars: section.targetCharCount
+    })),
     faqCount,
     keywordPlan: createKeywordPlan({
       targetLengthRange: resolvedInformation.targetLengthRange,
@@ -822,6 +875,18 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
     }),
     factPolicy: {
       useOnly: factMap?.supported || [],
+      allowedClaims: factMap?.supported || [],
+      forbiddenClaims: [
+        ...(factMap?.unsupportedFields || []),
+        "unprovided companion details",
+        "unverified price",
+        "unverified business hours",
+        "unverified parking convenience",
+        "unverified staff attitude",
+        "unverified taste or effect guarantee",
+        "unprovided revisit or repurchase intent"
+      ],
+      unknownFields: factMap?.unsupportedFields || [],
       doNotInvent: factMap?.unsupportedFields || [],
       categoryAllowedConcepts: contaminationPolicy.allow || [],
       categoryForbiddenConcepts: (contaminationPolicy.forbid || []).map((rule) => rule.term || rule)
@@ -858,7 +923,7 @@ const evidenceIdsForText = (value = "", factMap = {}) => {
     (factMap.facts || [])
       .filter((fact) => {
         const factKey = compact(fact.value || "");
-        return factKey && (normalized.includes(factKey) || factKey.includes(normalized.slice(0, Math.min(10, normalized.length))));
+        return factKey && (normalized.includes(factKey) || factKey.includes(normalized.slice(0, Math.min(10, normalized.length))) || isFactReflected(fact.value, value));
       })
       .map((fact) => fact.id)
       .filter(Boolean)
@@ -874,8 +939,9 @@ const classifyClaim = ({ value = "", factMap = {}, contextFacts = {}, imageAnaly
 
   if (META_GUIDANCE_PATTERN.test(value)) return { claimType: "metaGuidance", evidenceIds: [] };
   if (PLACEHOLDER_PATTERN.test(value)) return { claimType: "placeholder", evidenceIds: [] };
-  if (CONTEXT_CLAIM_PATTERN.test(value) && !hasContextEvidence) return { claimType: "unsupported", evidenceIds };
+  if (CONTEXT_CLAIM_PATTERN.test(value) && !hasContextEvidence && evidenceIds.length === 0) return { claimType: "unsupported", evidenceIds };
   if (EXPERIENCE_CLAIM_PATTERN.test(value) && !hasExperienceEvidence) {
+    if (evidenceIds.length > 0) return { claimType: "supported", evidenceIds };
     return { claimType: isActual ? "unsupported" : "contradictory", evidenceIds };
   }
   if (IMAGE_CLAIM_PATTERN.test(value) && !hasImageEvidence) return { claimType: "unsupported", evidenceIds };

@@ -107,11 +107,67 @@ export const BLOG_WRITER_OUTPUT_JSON_SCHEMA = {
 
 const toJsonBlock = (value) => JSON.stringify(value, null, 2);
 
+const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {}) => {
+  const primaryEntity = pipelineContext.primaryEntity || pipelineContext.mainKeyword || "";
+  const writerPlan = pipelineContext.writerPlan || {};
+  const factMap = pipelineContext.factMap || {};
+  const requiredFactIds = (factMap.userFacts || [])
+    .filter((fact) => Number(fact.confidence || 0) >= 0.85)
+    .map((fact) => fact.id)
+    .filter(Boolean);
+
+  return {
+    primaryEntity,
+    canonicalEntity: primaryEntity,
+    mainKeyword: pipelineContext.mainKeyword || "",
+    subKeywords: pipelineContext.subKeywords || [],
+    requiredEntityPlacements: ["finalTitle", "openingFirstSentence", "openingParagraph", "body"],
+    titleRules: {
+      candidateCount: 5,
+      minimumCandidatesWithPrimaryEntity: 4,
+      characterRange: [25, 42],
+      chooseHighestIntentFit: true
+    },
+    factCoverageRules: {
+      requiredFactIds,
+      minimumInputFactCoverage: 0.9,
+      criticalFactsMustBeCovered: true,
+      doNotCountRepeatedFactTwice: true
+    },
+    claimBoundary: {
+      allowedClaims: writerPlan.factPolicy?.allowedClaims || factMap.supported || [],
+      forbiddenClaims: writerPlan.factPolicy?.forbiddenClaims || factMap.unsupportedFields || [],
+      unknownFields: writerPlan.factPolicy?.unknownFields || factMap.unsupportedFields || []
+    },
+    lengthContract: {
+      requestedTargetCharCount: Number(targetCharCount) || writerPlan.requestedTargetCharCount || 2500,
+      effectiveTargetCharCount: writerPlan.effectiveTargetCharCount || Number(targetCharCount) || 2500,
+      acceptableRatio: [0.85, 1.1],
+      sectionBudgets: writerPlan.sectionBudgets || []
+    },
+    sectionPlan: (writerPlan.sections || []).map((section) => ({
+      sectionId: section.sectionId,
+      heading: section.heading,
+      purpose: section.purpose,
+      requiredFactIds: section.requiredFactIds || [],
+      optionalFactIds: section.optionalFactIds || [],
+      targetCharCount: section.targetCharCount || 0,
+      imageRefs: section.imageRefs || []
+    }))
+  };
+};
+
 export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWritingInput(form), fallbackDraft = null } = {}) => {
   const pipelineContext = buildBlogWriterPipelineContext(form, {
     category: fallbackDraft?.category || fallbackDraft?.contentPackage?.category || analysis.category,
     analysis
   });
+  const targetCharCount =
+    form.targetCharCount ||
+    form.targetLength ||
+    fallbackDraft?.contentPackage?.requestedTargetCharCount ||
+    fallbackDraft?.contentPackage?.targetCharCount ||
+    2500;
   const payload = {
     task: "네이버 블로그 publishable draft 생성",
     promptVersion: BLOG_WRITER_PROMPT_VERSION,
@@ -137,8 +193,9 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     factMap: pipelineContext.factMap,
     imageAnalysis: pipelineContext.imageAnalysis,
     writerPlan: pipelineContext.writerPlan,
+    writerBrief: buildWriterBrief(pipelineContext, { targetCharCount }),
     memoText: analysis.memoText,
-    targetCharCount: form.targetCharCount || form.targetLength || 2500,
+    targetCharCount,
     effectiveTargetCharCount:
       fallbackDraft?.contentPackage?.targetLengthRange?.target ||
       fallbackDraft?.contentPackage?.targetCharCount ||
@@ -183,6 +240,10 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "정보가 부족하면 억지로 길게 쓰지 말고 실제 본문 길이에 맞춰 자연스럽게 마무리하세요.",
     "사진이 있으면 본문 흐름 안에 [사진 삽입: 설명] 마커를 넣되 파일명은 쓰지 마세요.",
     "최종 응답은 JSON만 반환하세요.",
+    "Use writerBrief as the binding brief. Include the canonical primaryEntity in finalTitle, the first sentence, the opening paragraph, and the body. At least 4 of 5 titleCandidates must include the exact primaryEntity.",
+    "Follow writerBrief.sectionPlan and sectionBudgets. Each section must cover its requiredFactIds with distinct, grounded sentences. Do not replace the primaryEntity with a broad keyword.",
+    "If writerBrief.lengthContract.effectiveTargetCharCount is high, write within 85-110% by expanding distinct user facts, not by repeating keywords, headings, FAQ, or generic filler.",
+    "Before returning JSON, self-check: inputFactCoverage >= 0.90, no unsupportedClaims, no category contamination, no meta guidance, no josa awkwardness, target length 85-110%.",
     toJsonBlock(payload)
   ].join("\n\n");
 };

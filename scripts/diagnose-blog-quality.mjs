@@ -200,6 +200,10 @@ export const summarizeQualityCanaryResponse = ({
     requestedTargetCharCount: base.requestedTargetCharCount || requestedTargetCharCount,
     actualCharCount,
     inputFactCoverage: base.inputFactCoverage ?? 0,
+    totalUserFacts: base.totalUserFacts ?? 0,
+    coveredFactIds: base.coveredFactIds || [],
+    missingFactIds: base.missingFactIds || [],
+    groundedRepairApplied: base.groundedRepairApplied || [],
     qualityScore: base.qualityScore ?? 0,
     publishReady: base.publishReady,
     qualityAttempts: base.qualityAttempts,
@@ -238,6 +242,7 @@ export const summarizeQualityCanaryResponse = ({
       finalJudgeScore: base.finalJudgeScore ?? null,
       appliedCaps: base.appliedCaps || [],
       genericFillerRatio: base.genericFillerRatio ?? null,
+      josaErrorCount: base.josaErrorCount ?? 0,
       changedCharacterRatio: base.changedCharacterRatio ?? null,
       contentHash: hashText(`${getTitle(json)}\n${getBody(json)}`)
     },
@@ -268,6 +273,10 @@ const toConsoleCanary = (summary = {}) => ({
   requestedTargetCharCount: summary.requestedTargetCharCount,
   actualCharCount: summary.actualCharCount,
   inputFactCoverage: summary.inputFactCoverage,
+  totalUserFacts: summary.totalUserFacts,
+  coveredFactIds: summary.coveredFactIds,
+  missingFactIds: summary.missingFactIds,
+  groundedRepairApplied: summary.groundedRepairApplied,
   qualityScore: summary.qualityScore,
   publishReady: summary.publishReady,
   qualityAttempts: summary.qualityAttempts,
@@ -366,7 +375,7 @@ export const runQualityDiagnostics = async ({
         requestedTargetCharCount: input.targetCharCount
       })
     );
-    if (index < inputs.length - 1) await wait(1200);
+    if (index < inputs.length - 1) await wait(3500);
   }
 
   const aggregate = summarizeAggregate(summaries);

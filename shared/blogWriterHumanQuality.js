@@ -278,6 +278,10 @@ export const evaluateHumanQuality = ({
     if (!pattern.test(normalizedBody)) return false;
     return !new RegExp(escapeRegExp(label.replace(/\s+/gu, "")), "u").test(compact(sourceText)) && !pattern.test(sourceText);
   });
+  const llmUnsupportedClaims = Array.isArray(llmJudge?.unsupportedClaims) ? llmJudge.unsupportedClaims.filter(Boolean) : [];
+  const llmCategoryContamination = Array.isArray(llmJudge?.categoryContamination) ? llmJudge.categoryContamination.filter(Boolean) : [];
+  const llmMetaGuidance = Array.isArray(llmJudge?.metaGuidance) ? llmJudge.metaGuidance.filter(Boolean) : [];
+  const llmJosaErrors = Array.isArray(llmJudge?.josaErrors) ? llmJudge.josaErrors.filter(Boolean) : [];
   const bodySuggestsVisit = /다녀왔|방문했|먹었|사용해봤|수강했|들렀/u.test(normalizedBody);
   const visitContradiction = /not[-_\s]?visited|previsit|unknown|방문전|방문 전 참고/u.test(resolvedVisitStatus) && bodySuggestsVisit;
   const photoMarkers = (normalizedBody.match(/\[사진 삽입:/gu) || []).length;
@@ -297,6 +301,7 @@ export const evaluateHumanQuality = ({
     category,
     values: [normalizedTitle, ...titles, normalizedBody, ...faqList.flatMap((item) => [item.question, item.answer]), ...hashtags]
   });
+  const hasCategoryContamination = categoryContaminationResult.hardFail || llmCategoryContamination.length > 0;
   const inputFactCoverage = calculateInputFactCoverage({
     factMap,
     body: normalizedBody,
@@ -335,7 +340,7 @@ export const evaluateHumanQuality = ({
   if (tokenize(firstParagraph).length < 15) openingPenalty += 2;
 
   let factualPenalty = 0;
-  if (unsupportedClaims.length > 0) factualPenalty += Math.min(12, unsupportedClaims.length * 5);
+  if (unsupportedClaims.length > 0 || llmUnsupportedClaims.length > 0) factualPenalty += Math.min(12, (unsupportedClaims.length + llmUnsupportedClaims.length) * 5);
   if (visitContradiction) factualPenalty += 10;
   if (/가격은\s*\d|영업시간\s*(?:은|:)\s*\d/u.test(normalizedBody) && !/\d/u.test(sourceText)) factualPenalty += 5;
 
@@ -459,7 +464,7 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "본문 중심 문단에 대표 엔티티를 다시 반영하세요."
     });
   }
-  if (unsupportedClaims.length > 0 || visitContradiction) {
+  if (unsupportedClaims.length > 0 || llmUnsupportedClaims.length > 0 || visitContradiction) {
     caps.push({ score: 55, code: "UNSUPPORTED_CLAIM" });
     addIssue(issues, {
       code: "UNSUPPORTED_CLAIM",
@@ -515,6 +520,26 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "엔티티의 받침 여부에 맞게 은/는, 이/가, 을/를, 과/와, 으로/로 조사를 고치세요."
     });
   }
+  if (llmJosaErrors.length > 0) {
+    caps.push({ score: 75, code: "JOSA_ERROR" });
+    addIssue(issues, {
+      code: "JOSA_ERROR",
+      severity: "high",
+      evidence: llmJosaErrors.join(", "),
+      message: "LLM judge reported awkward particles or spelling.",
+      revisionInstruction: "Fix awkward particles and spelling while keeping the exact primaryEntity natural."
+    });
+  }
+  if (llmMetaGuidance.length > 0) {
+    caps.push({ score: 60, code: "META_GUIDANCE" });
+    addIssue(issues, {
+      code: "META_GUIDANCE",
+      severity: "critical",
+      evidence: llmMetaGuidance.join(", "),
+      message: "LLM judge reported meta guidance in the draft.",
+      revisionInstruction: "Replace writing-guide language with grounded reader-facing sentences."
+    });
+  }
   if (allFaqCheckOnly) caps.push({ score: 85, code: "FAQ_CHECK_ONLY" });
   if (faqList.length > 2) {
     caps.push({ score: 85, code: "FAQ_TOO_MANY" });
@@ -526,12 +551,12 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "근거가 약하거나 본문과 겹치는 FAQ를 삭제하세요."
     });
   }
-  if (categoryContaminationResult.hardFail) {
+  if (hasCategoryContamination) {
     caps.push({ score: 50, code: "CATEGORY_CONTAMINATION" });
     addIssue(issues, {
       code: "CATEGORY_CONTAMINATION",
       severity: "critical",
-      evidence: categoryContaminationResult.categoryContamination.map((item) => item.term).join(", "),
+      evidence: [...categoryContaminationResult.categoryContamination.map((item) => item.term), ...llmCategoryContamination].join(", "),
       message: "카테고리에 맞지 않는 표현이 섞였습니다.",
       revisionInstruction: "현재 카테고리의 금지 표현을 삭제하고 입력 fact에 맞는 표현으로 바꾸세요."
     });
@@ -609,18 +634,25 @@ export const evaluateHumanQuality = ({
     !guideLeak &&
     !placeholderLeak &&
     !josaError &&
+    llmJosaErrors.length === 0 &&
+    llmMetaGuidance.length === 0 &&
     !primaryEntityMissing &&
     unsupportedClaims.length === 0 &&
+    llmUnsupportedClaims.length === 0 &&
     duplicateSignals.duplicates.length === 0 &&
     !awkwardTitle &&
     inputFactCoverage.inputFactCoverage >= 0.9 &&
     (Number(requestedTargetCharCount) < 1800 || (targetComplianceRatio >= 0.85 && targetComplianceRatio <= 1.1)) &&
-    !categoryContaminationResult.hardFail &&
+    !hasCategoryContamination &&
     genericRatio < 0.3;
 
-  const llmIssues = (Array.isArray(llmJudge?.issues) ? llmJudge.issues.map(toIssue) : []).filter((issue) =>
-    hasImageInput ? true : !isNoImageIssue(issue)
-  );
+  const llmIssues = (Array.isArray(llmJudge?.issues) ? llmJudge.issues.map(toIssue) : []).filter((issue) => {
+    if (!hasImageInput && isNoImageIssue(issue)) return false;
+    if (/MISSING_FACT|LOW_INPUT_FACT|FACT_COVERAGE/u.test(String(issue.code || "")) && Number(inputFactCoverage.inputFactCoverage || 0) >= 0.9) {
+      return false;
+    }
+    return true;
+  });
   const revisionInstructions = unique([
     ...issues.map((issue) => issue.revisionInstruction),
     ...(Array.isArray(llmJudge?.revisionInstructions) ? llmJudge.revisionInstructions : []),
@@ -659,10 +691,15 @@ export const evaluateHumanQuality = ({
       targetComplianceRatio,
       unsupportedClaims: [
         ...unsupportedClaims.map((item) => item.label),
-        ...(Array.isArray(llmJudge?.unsupportedClaims) ? llmJudge.unsupportedClaims : [])
+        ...llmUnsupportedClaims
       ],
       applicability: applicableItems,
-      categoryContamination: categoryContaminationResult.categoryContamination,
+      categoryContamination: [
+        ...categoryContaminationResult.categoryContamination,
+        ...llmCategoryContamination.map((term) => ({ category, term, severity: "hardFail" }))
+      ],
+      metaGuidance: llmMetaGuidance,
+      josaErrors: llmJosaErrors,
       categoryFitScore: categoryContaminationResult.categoryFitScore
     },
     requestedTargetCharCount,

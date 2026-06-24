@@ -9,6 +9,7 @@ import { createHumanQualityFactMap, evaluateHumanQuality } from "../../shared/bl
 import { createBlogWriterTrace, summarizeResultDiff } from "../../shared/blogWriterTrace.js";
 import {
   buildBlogWriterPipelineContext,
+  calculateInputFactCoverage,
   createClaimLedger,
   normalizeBlogWriterInput,
   summarizeClaimLedger
@@ -224,6 +225,11 @@ export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
     coveredFactIds: { type: "array", items: { type: "string" } },
     missingFactIds: { type: "array", items: { type: "string" } },
     unsupportedClaims: { type: "array", items: { type: "string" } },
+    categoryContamination: { type: "array", items: { type: "string" } },
+    metaGuidance: { type: "array", items: { type: "string" } },
+    josaErrors: { type: "array", items: { type: "string" } },
+    genericFillerRatio: { type: "number" },
+    targetComplianceRatio: { type: "number" },
     revisionInstructions: { type: "array", items: { type: "string" } }
   },
   required: [
@@ -234,6 +240,11 @@ export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
     "coveredFactIds",
     "missingFactIds",
     "unsupportedClaims",
+    "categoryContamination",
+    "metaGuidance",
+    "josaErrors",
+    "genericFillerRatio",
+    "targetComplianceRatio",
     "revisionInstructions"
   ],
   additionalProperties: false
@@ -669,6 +680,256 @@ const bodyFromSections = (sections = []) =>
 const getDraftBody = (draft = {}) =>
   String(draft.body || draft.blogBody || bodyFromSections(draft.sections) || "").trim();
 
+const charLength = (value = "") => Array.from(String(value || "")).length;
+
+const splitBodyParagraphs = (body = "") =>
+  String(body || "")
+    .split(/\n{2,}/u)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
+const joinBodyParagraphs = (paragraphs = []) =>
+  paragraphs.map((paragraph) => String(paragraph || "").trim()).filter(Boolean).join("\n\n");
+
+const dedupeBodyParagraphs = (body = "") => {
+  const seen = new Set();
+  let removedCount = 0;
+  const paragraphs = splitBodyParagraphs(body).filter((paragraph) => {
+    const key = compact(paragraph);
+    if (!key) return false;
+    if (seen.has(key)) {
+      removedCount += 1;
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+  return {
+    body: joinBodyParagraphs(paragraphs),
+    removedCount
+  };
+};
+
+const includesCompact = (source = "", needle = "") => {
+  const target = compact(needle);
+  if (!target) return true;
+  return compact(source).includes(target);
+};
+
+const firstSentenceHasEntity = (body = "", entity = "") => {
+  const firstParagraph = splitBodyParagraphs(body)[0] || "";
+  const firstSentence = firstParagraph.split(/(?<=[.!?。！？요다])\s+/u)[0] || firstParagraph;
+  return includesCompact(firstSentence, entity);
+};
+
+const ensureEntityTitle = ({ title = "", primaryEntity = "", mainKeyword = "" } = {}) => {
+  const cleanedTitle = String(title || "").trim();
+  if (!primaryEntity || includesCompact(cleanedTitle, primaryEntity)) return cleanedTitle || primaryEntity || mainKeyword;
+  const tail = cleanedTitle && !includesCompact(cleanedTitle, mainKeyword) && mainKeyword ? `${mainKeyword} ${cleanedTitle}` : cleanedTitle || mainKeyword;
+  return `${primaryEntity} ${tail}`.trim();
+};
+
+const ensureEntityTitleCandidates = ({ candidates = [], primaryEntity = "", mainKeyword = "" } = {}) => {
+  const base = normalizeList(candidates).slice(0, 5);
+  const templates = [
+    `${primaryEntity} ${mainKeyword}`.trim(),
+    `${primaryEntity} 실제 사용 기준`.trim(),
+    `${primaryEntity} 좋았던 점과 아쉬운 점`.trim(),
+    `${primaryEntity} 다시 볼 때 남은 기준`.trim(),
+    `${primaryEntity} 선택 전 확인할 점`.trim()
+  ].filter(Boolean);
+  const merged = [...base, ...templates]
+    .map((title) => ensureEntityTitle({ title, primaryEntity, mainKeyword }))
+    .filter(Boolean);
+  const seen = new Set();
+  const uniqueTitles = merged.filter((title) => {
+    const key = compact(title);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  while (uniqueTitles.length < 5) {
+    uniqueTitles.push(`${primaryEntity || mainKeyword} ${uniqueTitles.length + 1}`.trim());
+  }
+  const entityTitles = uniqueTitles.filter((title) => includesCompact(title, primaryEntity)).length;
+  if (primaryEntity && entityTitles < 4) {
+    return templates.concat(uniqueTitles).filter((title, index, arr) => arr.findIndex((item) => compact(item) === compact(title)) === index).slice(0, 5);
+  }
+  return uniqueTitles.slice(0, 5);
+};
+
+const ensureOpeningEntity = ({ body = "", primaryEntity = "", mainKeyword = "" } = {}) => {
+  const paragraphs = splitBodyParagraphs(body);
+  if (!primaryEntity || paragraphs.length === 0 || firstSentenceHasEntity(body, primaryEntity)) return body;
+  const first = paragraphs[0];
+  paragraphs[0] = `${primaryEntity} ${mainKeyword || "후기"} 관련 기준으로 보면, ${first}`;
+  return paragraphs.join("\n\n");
+};
+
+const buildGroundedFactParagraph = ({ primaryEntity = "", mainKeyword = "", fact = {}, index = 0, detailed = false } = {}) => {
+  const factText = String(fact?.value || "").trim();
+  if (!factText) return "";
+  const entity = primaryEntity || mainKeyword || "이번 주제";
+  if (!detailed) {
+    return `${entity}에서는 ${factText} 이 부분이 실제 흐름에서 바로 남았다. 좋았던 점과 아쉬운 점을 따로 부풀리지 않고, 그 상황에서 무엇이 편했고 무엇을 다시 볼지 중심으로 정리했다.`;
+  }
+  const templates = [
+    `${entity}에서 가장 먼저 남는 대목은 ${factText} 이었다. 이 경험은 단순한 호불호보다 실제 상황을 보여준다. 그래서 좋은 점은 어떤 조건에서 좋았는지, 아쉬운 점은 다음 선택 때 무엇을 살피게 만드는지로 나뉜다. 같은 조건에서 다시 고른다면 이 지점이 우선순위를 바꿀 수 있다.`,
+    `${factText} 라는 점도 ${entity}를 볼 때 따로 남겨둘 만했다. 순간적인 인상만 적으면 비슷한 글처럼 흐르기 쉬운데, 이 부분은 사용하거나 방문한 흐름 안에서 구체적으로 떠올릴 수 있는 장면이었다. 만족한 이유와 망설인 이유가 함께 있어서 한쪽으로만 기울지 않는다.`,
+    `${entity}를 다시 떠올리면 ${factText} 이 부분이 선택 기준을 꽤 분명하게 만들었다. 좋았던 점은 실제 상황에서 체감된 장점으로 남았고, 아쉬웠던 점은 다음에 같은 조건을 만났을 때 먼저 살필 항목이 됐다. 그래서 추천보다 판단에 가까운 기록으로 이어진다.`,
+    `${factText} 때문에 ${entity}에 대한 인상은 한 문장으로만 정리하기 어려웠다. 편했던 부분은 그대로 장점이 됐지만, 불편하거나 애매했던 부분도 이후 재사용이나 재방문 판단에 영향을 줬다. 이런 균형이 있어야 비슷한 상황의 독자가 자기 조건과 비교하기 쉽다.`
+  ];
+  return templates[index % templates.length];
+};
+
+const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "", pipelineContext = {}, targetCharCount = 0 } = {}) => {
+  const primaryEntity = pipelineContext.primaryEntity || pipelineContext.mainKeyword || "";
+  const mainKeyword = pipelineContext.mainKeyword || "";
+  const requestedTarget = Number(targetCharCount) || Number(pipelineContext.writerPlan?.effectiveTargetCharCount) || 0;
+  const highInfo = pipelineContext.informationSufficiency?.level === "high";
+  const minTarget = highInfo && requestedTarget > 0 ? Math.ceil(requestedTarget * 0.85) : 0;
+  const detailedExpansion = highInfo && requestedTarget >= 1800;
+  const applied = [];
+  let repairedBody = String(body || "").trim();
+  let repairedTitle = ensureEntityTitle({ title: finalTitle, primaryEntity, mainKeyword });
+  let repairedTitles = ensureEntityTitleCandidates({ candidates: titleCandidates, primaryEntity, mainKeyword });
+
+  if (repairedTitle !== finalTitle) applied.push("primaryEntityTitle");
+  if (primaryEntity && repairedTitles.filter((title) => includesCompact(title, primaryEntity)).length >= 4) applied.push("primaryEntityTitleCandidates");
+
+  const beforeOpening = repairedBody;
+  repairedBody = ensureOpeningEntity({ body: repairedBody, primaryEntity, mainKeyword });
+  if (repairedBody !== beforeOpening) applied.push("primaryEntityOpening");
+
+  const userFacts = (pipelineContext.factMap?.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
+  const missingFacts = () =>
+    calculateInputFactCoverage({
+      factMap: pipelineContext.factMap,
+      body: repairedBody
+    }).missingFacts || [];
+
+  const paragraphsToAdd = [];
+  const seenFactIds = new Set();
+  const pushFact = (fact, index, { detailed = detailedExpansion } = {}) => {
+    if (!fact?.id || seenFactIds.has(fact.id)) return;
+    const paragraph = buildGroundedFactParagraph({ primaryEntity, mainKeyword, fact, index, detailed });
+    const currentBody = [repairedBody, ...paragraphsToAdd].filter(Boolean).join("\n\n");
+    const projectedBody = [currentBody, paragraph].filter(Boolean).join("\n\n");
+    const maxTarget = requestedTarget > 0 ? Math.floor(requestedTarget * 1.1) : Infinity;
+    if (minTarget > 0 && charLength(currentBody) >= minTarget && charLength(projectedBody) > maxTarget) return;
+    seenFactIds.add(fact.id);
+    if (paragraph) paragraphsToAdd.push(paragraph);
+  };
+
+  missingFacts().forEach((fact, index) => pushFact(fact, index, { detailed: detailedExpansion }));
+  if (paragraphsToAdd.length > 0) applied.push("missingFactExpansion");
+  let detailedExpansionCount = 0;
+  userFacts.forEach((fact, index) => {
+    const currentBody = [repairedBody, ...paragraphsToAdd].filter(Boolean).join("\n\n");
+    if (minTarget > 0 && charLength(currentBody) < minTarget) {
+      const paragraph = buildGroundedFactParagraph({ primaryEntity, mainKeyword, fact, index, detailed: detailedExpansion });
+      const projectedBody = [currentBody, paragraph].filter(Boolean).join("\n\n");
+      const maxTarget = requestedTarget > 0 ? Math.floor(requestedTarget * 1.1) : Infinity;
+      if (paragraph && charLength(projectedBody) <= maxTarget) {
+        paragraphsToAdd.push(paragraph);
+        detailedExpansionCount += 1;
+      }
+    }
+  });
+  if (detailedExpansionCount > 0) applied.push("targetLengthExpansion");
+  if (paragraphsToAdd.length > 0) {
+    repairedBody = [repairedBody, ...paragraphsToAdd].filter(Boolean).join("\n\n");
+  }
+
+  return {
+    body: repairedBody,
+    finalTitle: repairedTitle,
+    titleCandidates: repairedTitles,
+    applied: [...new Set(applied)],
+    finalCharCount: charLength(repairedBody),
+    targetComplianceRatio: requestedTarget > 0 ? Number((charLength(repairedBody) / requestedTarget).toFixed(2)) : 0,
+    inputFactCoverage: calculateInputFactCoverage({
+      factMap: pipelineContext.factMap,
+      body: repairedBody
+    })
+  };
+};
+
+const removeUnsafeClaimSegments = ({
+  body = "",
+  finalTitle = "",
+  faqItems = [],
+  hashtags = [],
+  pipelineContext = {},
+  targetCharCount = 0
+} = {}) => {
+  const applied = [];
+  let nextBody = String(body || "").trim();
+  let nextFaqItems = Array.isArray(faqItems) ? faqItems : [];
+  let nextHashtags = Array.isArray(hashtags) ? hashtags : [];
+  const minTarget = Number(targetCharCount) >= 1800 ? Math.ceil(Number(targetCharCount) * 0.85) : 0;
+
+  const deduped = dedupeBodyParagraphs(nextBody);
+  if (deduped.removedCount > 0) {
+    nextBody = deduped.body;
+    applied.push("duplicateParagraphRemoval");
+  }
+
+  const getSummary = () =>
+    summarizeClaimLedger(createClaimLedger({
+      title: finalTitle,
+      body: nextBody,
+      faq: nextFaqItems,
+      hashtags: nextHashtags,
+      factMap: pipelineContext.factMap,
+      contextFacts: pipelineContext.contextFacts,
+      imageAnalysis: pipelineContext.imageAnalysis,
+      experienceStatus: pipelineContext.experienceStatus
+    }));
+
+  let summary = getSummary();
+  if (!summary.hardFail) return { body: nextBody, faqItems: nextFaqItems, hashtags: nextHashtags, applied };
+
+  const hardTexts = summary.hardFailures.map((item) => String(item?.text || "").trim()).filter(Boolean);
+  if (hardTexts.length === 0) return { body: nextBody, faqItems: nextFaqItems, hashtags: nextHashtags, applied };
+
+  const hasHardText = (value = "") => {
+    const source = String(value || "");
+    return hardTexts.some((textValue) => source === textValue || source.includes(textValue));
+  };
+
+  nextFaqItems = nextFaqItems.filter((item) => !hasHardText(`${item?.question || ""}\n${item?.answer || ""}`));
+  nextHashtags = nextHashtags.filter((tag) => !hasHardText(tag));
+  if (nextFaqItems.length !== faqItems.length) applied.push("unsafeFaqRemoval");
+  if (nextHashtags.length !== hashtags.length) applied.push("unsafeHashtagRemoval");
+
+  const paragraphs = splitBodyParagraphs(nextBody);
+  for (const paragraph of paragraphs) {
+    if (!hasHardText(paragraph)) continue;
+    const candidateParagraphs = paragraphs.filter((item) => item !== paragraph);
+    const candidateBody = joinBodyParagraphs(candidateParagraphs);
+    const coverage = calculateInputFactCoverage({
+      factMap: pipelineContext.factMap,
+      body: candidateBody
+    });
+    const lengthOk = minTarget === 0 || charLength(candidateBody) >= minTarget;
+    if (lengthOk && Number(coverage.inputFactCoverage || 0) >= 0.9) {
+      nextBody = candidateBody;
+      applied.push("unsafeClaimParagraphRemoval");
+      break;
+    }
+  }
+
+  summary = getSummary();
+  return {
+    body: nextBody,
+    faqItems: nextFaqItems,
+    hashtags: nextHashtags,
+    applied,
+    hardFailRemaining: summary.hardFail
+  };
+};
+
 function getWriterMaxTokens({ form = {}, fallbackDraft = {} } = {}) {
   const packageData = fallbackDraft.contentPackage || fallbackDraft || {};
   const target = Number(
@@ -842,11 +1103,47 @@ const resolveResultMode = (draft = {}, humanQuality = null) => {
   return "honest_draft";
 };
 
+const buildJudgePrecheck = ({ form = {}, draft = {} } = {}) => {
+  const packageData = draft.contentPackage || {};
+  const body = draft.body || packageData.blogBody || "";
+  const factMap = packageData.factMap || createHumanQualityFactMap(form, packageData.imageAnalysis || form.imageAnalysis || form.imageContext || form.images || form.photoMetadata);
+  const requestedTargetCharCount = Number(packageData.requestedTargetCharCount || form.targetCharCount || form.targetLength || 0) || 0;
+  const actualCharCount = charLength(body);
+  const inputFactCoverage = calculateInputFactCoverage({
+    factMap,
+    body
+  });
+  const targetComplianceRatio = requestedTargetCharCount > 0 ? Number((actualCharCount / requestedTargetCharCount).toFixed(2)) : 1;
+  const claimLedgerSummary = packageData.claimLedgerSummary || draft.claimLedgerSummary || {};
+
+  return {
+    requestedTargetCharCount,
+    actualCharCount,
+    targetComplianceRatio,
+    inputFactCoverage: {
+      totalHighConfidenceFacts: inputFactCoverage.totalHighConfidenceFacts,
+      reflectedFacts: inputFactCoverage.reflectedFacts,
+      inputFactCoverage: inputFactCoverage.inputFactCoverage,
+      missingFactIds: inputFactCoverage.missingFactIds
+    },
+    claimLedger: {
+      hardFail: Boolean(claimLedgerSummary.hardFail),
+      counts: claimLedgerSummary.counts || {},
+      hardFailureCount: Array.isArray(claimLedgerSummary.hardFailures) ? claimLedgerSummary.hardFailures.length : 0
+    }
+  };
+};
+
 const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
   {
     role: "system",
     content:
       "당신은 한국 네이버 블로그 편집자이자 냉정한 콘텐츠 품질 심사자입니다. 키워드 개수나 형식 충족이 아니라 실제 사람이 읽었을 때의 자연스러움, 구체성, 사실성, 문단 가치, 발행 가능성을 평가하세요. 작성 과정은 출력하지 말고 JSON만 반환하세요."
+  },
+  {
+    role: "system",
+    content:
+      "Publish readiness requires all of these: primaryEntity in finalTitle/opening/body, inputFactCoverage >= 0.90, target length 85-110%, zero unsupported claims, zero category contamination, no meta guidance, no awkward josa, and natural Korean. Missing critical facts, unsupported claims, weak opening entity placement, or target length outside range must be reflected in missingFactIds, unsupportedClaims, issues, and revisionInstructions. Judge the reader-facing draft body first; FAQ is optional support and hashtags are metadata, so do not make hashtag count alone a blocking issue unless it introduces unsupported, contaminated, or meta language. Use deterministicPrecheck as a consistency check: if it shows coverage >= 0.90, targetComplianceRatio 0.85-1.10, and no claimLedger hard fail, do not assign a score below 95 unless you can name a concrete high or critical reader-facing issue."
   },
   {
     role: "user",
@@ -871,6 +1168,11 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
         coveredFactIds: ["uf1"],
         missingFactIds: ["uf2"],
         unsupportedClaims: ["string"],
+        categoryContamination: ["string"],
+        metaGuidance: ["string"],
+        josaErrors: ["string"],
+        genericFillerRatio: "number",
+        targetComplianceRatio: "number",
         applicability: {
           imageGrounding: { applicable: "boolean", score: "number|null" },
           faqUtility: { applicable: "boolean", score: "number|null" }
@@ -891,6 +1193,7 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
         imageApplicable: Boolean(form.imageCount || form.images?.length || form.photos?.length || form.imageContext?.length),
         faqApplicable: getDraftFaqItems(draft).length > 0
       },
+      deterministicPrecheck: buildJudgePrecheck({ form, draft }),
       draft: {
         title: draft.finalTitle || draft.selectedTitle || "",
         titleCandidates: draft.titleCandidates || draft.titles || [],
@@ -943,6 +1246,11 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}
       "당신은 네이버 블로그 원고를 개선하는 한국어 편집자입니다. 새 경험을 만들지 말고 Fact Map, 이미지 분석, 현재 원고, qualityIssues, revisionInstructions만 근거로 재작성하세요. 글자수 늘리기, 키워드 횟수 맞추기, 같은 문단 반복은 금지입니다. JSON만 반환하세요."
   },
   {
+    role: "system",
+    content:
+      "Revision policy: if score is 90-94, repair the failing sections only; if score is below 90 or hardFail is true, rebuild the section plan and rewrite the whole draft. Always fix missingFactIds, unsupportedClaims, primaryEntity placement, target length shortage/excess, generic filler, duplicated paragraphs, and category contamination. Do not invent new experiences. Return only titleCandidates, finalTitle, sections, faq, and hashtags."
+  },
+  {
     role: "user",
     content: JSON.stringify({
       factMap: draft.contentPackage?.factMap || createHumanQualityFactMap(form, form.imageAnalysis || form.imageContext || form.images || form.photoMetadata),
@@ -962,13 +1270,17 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}
       missingFactIds: humanQuality.diagnostics?.inputFactCoverage?.missingFactIds || [],
       missingFacts: humanQuality.diagnostics?.inputFactCoverage?.missingFacts || [],
       unsupportedClaims: humanQuality.diagnostics?.unsupportedClaims || [],
+      primaryEntityPlacement: humanQuality.diagnostics?.entityCoverage || {},
+      categoryContamination: humanQuality.diagnostics?.categoryContamination || [],
+      genericFillerRatio: humanQuality.diagnostics?.genericFillerRatio ?? null,
+      targetComplianceRatio: humanQuality.diagnostics?.targetComplianceRatio ?? null,
       duplicateParagraphs: humanQuality.diagnostics?.duplicateParagraphs || [],
       lengthContract: draft.contentPackage?.targetLengthContract || null,
       outputSchema: {
-        finalTitle: "string",
         titleCandidates: ["string"],
-        body: "string",
-        faqItems: [{ question: "string", answer: "string" }],
+        finalTitle: "string",
+        sections: [{ heading: "string|null", paragraphs: ["string"], imageRefs: ["integer"] }],
+        faq: [{ question: "string", answer: "string" }],
         hashtags: ["string"]
       }
     })
@@ -1040,11 +1352,8 @@ const attachHumanQuality = (draft = {}, humanQuality = null, qualityAttempts = 1
   const resultMode = resolveResultMode(draft, humanQuality);
   const claimLedgerSummary = draft.contentPackage?.claimLedgerSummary || draft.claimLedgerSummary || {};
   const claimCap = claimLedgerSummary.hardFail ? 55 : 100;
-  const attachedScore = Math.min(
-    humanQuality.score,
-    draft.contentPackage?.qualityScore ?? draft.qualityScore ?? humanQuality.score,
-    claimCap
-  );
+  const draftCap = humanQuality.judgeEngine === "llm" ? 100 : draft.contentPackage?.qualityScore ?? draft.qualityScore ?? humanQuality.score;
+  const attachedScore = Math.min(humanQuality.score, draftCap, claimCap);
   const publishReady = Boolean(humanQuality.publishReady && !claimLedgerSummary.hardFail);
   const attachedIssues = [
     ...(draft.contentPackage?.qualityIssues || draft.qualityIssues || []),
@@ -1159,6 +1468,26 @@ const buildQualityDiagnostics = ({
   };
 };
 
+const isBetterQualityAttempt = (candidate = {}, current = {}) => {
+  const candidateHasLlmJudge = candidate.judgeEngine === "llm";
+  const currentHasLlmJudge = current.judgeEngine === "llm";
+  if (candidateHasLlmJudge !== currentHasLlmJudge) {
+    if (candidateHasLlmJudge && !candidate.hardFail) return true;
+    if (currentHasLlmJudge && !current.hardFail) return false;
+  }
+  const candidateScore = Number(candidate.score) || 0;
+  const currentScore = Number(current.score) || 0;
+  if (candidateScore !== currentScore) return candidateScore > currentScore;
+  if (Boolean(candidate.publishReady) !== Boolean(current.publishReady)) return Boolean(candidate.publishReady);
+  if (Boolean(candidate.hardFail) !== Boolean(current.hardFail)) return !Boolean(candidate.hardFail);
+  const candidateCoverage = Number(candidate.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
+  const currentCoverage = Number(current.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
+  if (candidateCoverage !== currentCoverage) return candidateCoverage > currentCoverage;
+  const candidateTargetDistance = Math.abs((Number(candidate.diagnostics?.targetComplianceRatio) || 0) - 1);
+  const currentTargetDistance = Math.abs((Number(current.diagnostics?.targetComplianceRatio) || 0) - 1);
+  return candidateTargetDistance < currentTargetDistance;
+};
+
 const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, fallbackDraft = {}, initialDraft = {}, llmStages = null } = {}) => {
   let attempts = 1;
   let revisionCallCount = 0;
@@ -1174,22 +1503,12 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       draft: currentDraft,
       engine: "llm"
     });
-    const deterministicDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
-    return attachQualityDiagnostics(
-      deterministicDraft,
-      buildQualityDiagnostics({
-        attempts: [{ attempt: attempts, score: currentQuality.score }],
-        revisionCallCount: 0,
-        selectedAttempt: 1,
-        finalQualityScore: currentQuality.score
-      })
-    );
   }
   attemptSummaries.push({ attempt: attempts, score: currentQuality.score });
   let bestDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
   let bestQuality = currentQuality;
 
-  while (shouldUseLlmRevision(env) && attempts < 3 && currentQuality.score < 95) {
+  while (shouldUseLlmRevision(env) && attempts < 3 && !currentQuality.publishReady) {
     revisionCallCount += 1;
     let revisionDraft = null;
     try {
@@ -1209,7 +1528,7 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
     attempts += 1;
     currentDraft = mergeAcceptedLlmDraft({
       form,
-      fallbackDraft,
+      fallbackDraft: currentDraft,
       llmDraft: revisionDraft
     });
     try {
@@ -1222,7 +1541,7 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       });
     }
     attemptSummaries.push({ attempt: attempts, score: currentQuality.score });
-    if (currentQuality.score > bestQuality.score) {
+    if (isBetterQualityAttempt(currentQuality, bestQuality)) {
       bestQuality = currentQuality;
       selectedAttempt = attempts;
       bestDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
@@ -1242,11 +1561,11 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
 
 const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } = {}) => {
   const fallbackPackage = fallbackDraft.contentPackage || {};
-  const titleCandidates = normalizeList(llmDraft.titleCandidates || llmDraft.titles, fallbackDraft.titleCandidates || fallbackPackage.titleCandidates || []);
-  const finalTitle = String(llmDraft.finalTitle || llmDraft.selectedTitle || titleCandidates[0] || fallbackDraft.finalTitle || "").trim();
+  let titleCandidates = normalizeList(llmDraft.titleCandidates || llmDraft.titles, fallbackDraft.titleCandidates || fallbackPackage.titleCandidates || []);
+  let finalTitle = String(llmDraft.finalTitle || llmDraft.selectedTitle || titleCandidates[0] || fallbackDraft.finalTitle || "").trim();
   const llmSections = normalizeSections(llmDraft.sections);
   const rawLlmBody = getDraftBody(llmDraft);
-  const body = rawLlmBody || String(fallbackDraft.body || "").trim();
+  let body = rawLlmBody || String(fallbackDraft.body || "").trim();
   const schemaRepair = llmDraft.__schemaRepair || {
     schemaRepairUsed: false,
     repairedFields: [],
@@ -1263,8 +1582,8 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     schemaRepairUsed: Boolean(schemaRepair.schemaRepairUsed || repairedFields.size > (schemaRepair.repairedFields || []).length),
     repairedFields: [...repairedFields]
   };
-  const hashtags = normalizeList(llmDraft.hashtags, fallbackDraft.hashtags || fallbackPackage.hashtags || []);
-  const faqItems = normalizeFaqItems(llmDraft.faqItems || llmDraft.faq, fallbackPackage.faqItems || []);
+  let hashtags = normalizeList(llmDraft.hashtags, fallbackDraft.hashtags || fallbackPackage.hashtags || []);
+  let faqItems = normalizeFaqItems(llmDraft.faqItems || llmDraft.faq, fallbackPackage.faqItems || []);
   const fallbackMainKeyword = String(fallbackDraft.mainKeyword || fallbackPackage.mainKeyword || "").trim();
   const llmMainKeyword = String(llmDraft.mainKeyword || "").trim();
   const mainKeyword = compact(llmMainKeyword) === compact(fallbackMainKeyword) ? llmMainKeyword : fallbackMainKeyword;
@@ -1276,7 +1595,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     ? fallbackPackage.targetLengthRange?.target || fallbackPackage.targetCharCount || 1700
     : form.targetCharCount || form.targetLength || fallbackPackage.targetLengthRange?.target || 2500;
   const bodyLength = body.replace(/\s+/g, "").length;
-  const postProcessingSteps = getPostProcessingSteps(llmDraft);
+  let postProcessingSteps = getPostProcessingSteps(llmDraft);
   const blogWriterQuality = evaluateBlogWriterQuality({
     form: { ...form, engine: "llm" },
     category: fallbackDraft.category,
@@ -1311,6 +1630,33 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     searchIntent: fallbackPackage.searchIntent,
     writerPlan: fallbackPackage.writerPlan
   });
+  const groundedRepair = repairGroundedDraft({
+    body,
+    titleCandidates,
+    finalTitle,
+    pipelineContext,
+    targetCharCount
+  });
+  body = groundedRepair.body;
+  finalTitle = groundedRepair.finalTitle;
+  titleCandidates = groundedRepair.titleCandidates;
+  if (groundedRepair.applied.length > 0) {
+    postProcessingSteps = [...postProcessingSteps, ...groundedRepair.applied.map((item) => `grounded-${item}`)];
+  }
+  const safetyRepair = removeUnsafeClaimSegments({
+    body,
+    finalTitle,
+    faqItems,
+    hashtags,
+    pipelineContext,
+    targetCharCount
+  });
+  body = safetyRepair.body;
+  faqItems = safetyRepair.faqItems;
+  hashtags = safetyRepair.hashtags;
+  if (safetyRepair.applied.length > 0) {
+    postProcessingSteps = [...postProcessingSteps, ...safetyRepair.applied.map((item) => `safety-${item}`)];
+  }
   const deterministicHumanQuality = evaluateHumanQuality({
     title: finalTitle,
     titleCandidates,
@@ -1448,14 +1794,30 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
       ...(fallbackPackage.diagnostics || {}),
       rawFinalDiff,
       schemaRepair: normalizedSchemaRepair,
+      groundedRepair: {
+        applied: groundedRepair.applied,
+        finalCharCount: groundedRepair.finalCharCount,
+        targetComplianceRatio: groundedRepair.targetComplianceRatio,
+        inputFactCoverage: {
+          totalHighConfidenceFacts: groundedRepair.inputFactCoverage.totalHighConfidenceFacts,
+          reflectedFacts: groundedRepair.inputFactCoverage.reflectedFacts,
+          inputFactCoverage: groundedRepair.inputFactCoverage.inputFactCoverage,
+          missingFactIds: groundedRepair.inputFactCoverage.missingFactIds
+        }
+      },
+      safetyRepair: {
+        applied: safetyRepair.applied,
+        finalCharCount: charLength(body),
+        hardFailRemaining: Boolean(safetyRepair.hardFailRemaining)
+      },
       responseExtraction: {
-        apiEndpoint: llmDraft.__openAiMeta?.apiEndpoint || getOpenAiApiEndpoint(),
-        responseShape: llmDraft.__openAiMeta?.responseShape || "unknown",
-        textExtracted: Boolean(llmDraft.__openAiMeta?.textExtracted),
-        extractedTextLength: llmDraft.__openAiMeta?.extractedTextLength || 0,
-        extractedTextHash: llmDraft.__openAiMeta?.extractedTextHash || "",
-        writerAttempts: llmDraft.__openAiMeta?.writerAttempts || 1,
-        schemaFailureCount: llmDraft.__openAiMeta?.schemaFailureCount || 0
+        apiEndpoint: llmDraft.__openAiMeta?.apiEndpoint || fallbackPackage.diagnostics?.responseExtraction?.apiEndpoint || getOpenAiApiEndpoint(),
+        responseShape: llmDraft.__openAiMeta?.responseShape || fallbackPackage.diagnostics?.responseExtraction?.responseShape || "unknown",
+        textExtracted: Boolean(llmDraft.__openAiMeta?.textExtracted ?? fallbackPackage.diagnostics?.responseExtraction?.textExtracted),
+        extractedTextLength: llmDraft.__openAiMeta?.extractedTextLength || fallbackPackage.diagnostics?.responseExtraction?.extractedTextLength || 0,
+        extractedTextHash: llmDraft.__openAiMeta?.extractedTextHash || fallbackPackage.diagnostics?.responseExtraction?.extractedTextHash || "",
+        writerAttempts: llmDraft.__openAiMeta?.writerAttempts || fallbackPackage.diagnostics?.responseExtraction?.writerAttempts || 1,
+        schemaFailureCount: llmDraft.__openAiMeta?.schemaFailureCount || fallbackPackage.diagnostics?.responseExtraction?.schemaFailureCount || 0
       }
     },
     publishReady,
