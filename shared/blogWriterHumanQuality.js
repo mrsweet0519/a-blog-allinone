@@ -218,6 +218,19 @@ const mergeScores = (deterministicBreakdown, llmScores = null) => {
 
 const sumBreakdown = (breakdown) => Object.values(breakdown).reduce((total, value) => total + Number(value || 0), 0);
 
+const hasConcreteImageInput = (imageAnalysis = null) => {
+  if (!imageAnalysis) return false;
+  if (Array.isArray(imageAnalysis)) return imageAnalysis.length > 0;
+  if (imageAnalysis.mode === "none" || imageAnalysis.analysisMode === "none") return false;
+  return Boolean(
+    imageAnalysis.canAssertVisualFacts ||
+      (Array.isArray(imageAnalysis.items) && imageAnalysis.items.length > 0) ||
+      (Array.isArray(imageAnalysis.visuallySupported) && imageAnalysis.visuallySupported.length > 0)
+  );
+};
+
+const isNoImageIssue = (issue = {}) => /NO[-_]?IMAGE|IMAGE[-_]?LACK|VISUAL/i.test(`${issue.code || ""} ${issue.message || ""}`);
+
 export const evaluateHumanQuality = ({
   title = "",
   titleCandidates = [],
@@ -268,7 +281,7 @@ export const evaluateHumanQuality = ({
   const bodySuggestsVisit = /다녀왔|방문했|먹었|사용해봤|수강했|들렀/u.test(normalizedBody);
   const visitContradiction = /not[-_\s]?visited|previsit|unknown|방문전|방문 전 참고/u.test(resolvedVisitStatus) && bodySuggestsVisit;
   const photoMarkers = (normalizedBody.match(/\[사진 삽입:/gu) || []).length;
-  const hasImageInput = Boolean(imageAnalysis && (Array.isArray(imageAnalysis) ? imageAnalysis.length > 0 : Object.keys(imageAnalysis).length > 0));
+  const hasImageInput = hasConcreteImageInput(imageAnalysis);
   const concretePhotoText = /붉은\s*국물|낙지|해산물|채소|그릇|토핑|색감|튀김|패키지|커리큘럼|공고문|안내문/u.test(normalizedBody);
   const fakeVisualClaim = !hasImageInput && photoMarkers > 0 && /사진에서는|사진에서\s*보|가까이\s*찍힌|또렷하게\s*보/u.test(normalizedBody) && !/note|라벨/u.test(String(imageAnalysis || ""));
   const allFaqCheckOnly =
@@ -286,8 +299,14 @@ export const evaluateHumanQuality = ({
   });
   const inputFactCoverage = calculateInputFactCoverage({
     factMap,
-    body: normalizedBody
+    body: normalizedBody,
+    coveredFactIds: llmJudge?.coveredFactIds || [],
+    missingFactIds: llmJudge?.missingFactIds || []
   });
+  const targetComplianceRatio =
+    Number(requestedTargetCharCount) > 0
+      ? Number((Array.from(normalizedBody).length / Number(requestedTargetCharCount)).toFixed(2))
+      : 1;
   const primaryEntityMissing = Boolean(
     entityForCoverage &&
       (!entityCoverage.finalTitle || !entityCoverage.openingSentence || !entityCoverage.body)
@@ -535,8 +554,33 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "누락된 사용자 fact를 중복 없이 한 번씩 반영하세요."
     });
   }
+  if (Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio < 0.85) {
+    caps.push({ score: 89, code: "TARGET_LENGTH_UNDER_85" });
+    addIssue(issues, {
+      code: "TARGET_LENGTH_UNDER_85",
+      severity: "high",
+      evidence: `${Array.from(normalizedBody).length}/${requestedTargetCharCount}`,
+      message: "충분한 정보 입력인데 요청 글자수의 85%에 미달했습니다.",
+      revisionInstruction: "새 경험을 만들지 말고 누락된 fact와 구체적 상황을 서로 다른 문단에 반영해 목표 길이의 85~110%로 확장하세요."
+    });
+  } else if (Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio > 1.15) {
+    caps.push({ score: 89, code: "TARGET_LENGTH_OVER_115" });
+    addIssue(issues, {
+      code: "TARGET_LENGTH_OVER_115",
+      severity: "high",
+      evidence: `${Array.from(normalizedBody).length}/${requestedTargetCharCount}`,
+      message: "요청 글자수 대비 원고가 과도하게 깁니다.",
+      revisionInstruction: "중복과 일반론을 줄여 목표 길이의 85~110%로 압축하세요."
+    });
+  }
 
-  const llmScores = llmJudge?.scores || llmJudge?.breakdown || null;
+  const rawLlmScores = llmJudge?.scores || llmJudge?.breakdown || null;
+  const llmScores = rawLlmScores
+    ? {
+        ...rawLlmScores,
+        ...(hasImageInput ? {} : { imageGrounding: HUMAN_QUALITY_WEIGHTS.imageGrounding })
+      }
+    : null;
   const isMock = Boolean(llmJudge?.isMock || llmJudge?.mock || llmJudge?.model === "mock-model" || llmJudge?.model === "unit-model");
   const hasLlmJudge = Boolean(llmJudge && Number.isFinite(Number(llmJudge.score)));
   const breakdown = mergeScores(deterministicBreakdown, llmScores);
@@ -570,14 +614,22 @@ export const evaluateHumanQuality = ({
     duplicateSignals.duplicates.length === 0 &&
     !awkwardTitle &&
     inputFactCoverage.inputFactCoverage >= 0.9 &&
+    (Number(requestedTargetCharCount) < 1800 || (targetComplianceRatio >= 0.85 && targetComplianceRatio <= 1.1)) &&
     !categoryContaminationResult.hardFail &&
     genericRatio < 0.3;
 
+  const llmIssues = (Array.isArray(llmJudge?.issues) ? llmJudge.issues.map(toIssue) : []).filter((issue) =>
+    hasImageInput ? true : !isNoImageIssue(issue)
+  );
   const revisionInstructions = unique([
     ...issues.map((issue) => issue.revisionInstruction),
     ...(Array.isArray(llmJudge?.revisionInstructions) ? llmJudge.revisionInstructions : []),
-    ...(Array.isArray(llmJudge?.issues) ? llmJudge.issues.map((issue) => issue.revisionInstruction) : [])
+    ...llmIssues.map((issue) => issue.revisionInstruction)
   ]).slice(0, 6);
+  const applicableItems = {
+    imageGrounding: hasImageInput,
+    faqUtility: faqList.length > 0
+  };
 
   return {
     score,
@@ -591,7 +643,7 @@ export const evaluateHumanQuality = ({
     rawQualityScore,
     deterministicScore: clamp(sumBreakdown(deterministicBreakdown)),
     llmJudgeScore: hasLlmJudge ? clamp(llmJudge.score) : null,
-    issues: [...issues, ...(Array.isArray(llmJudge?.issues) ? llmJudge.issues.map(toIssue) : [])],
+    issues: [...issues, ...llmIssues],
     revisionInstructions,
     caps,
     diagnostics: {
@@ -604,6 +656,12 @@ export const evaluateHumanQuality = ({
       repeatedNgramRatio: Number(repeatedNgramRatio.toFixed(3)),
       entityCoverage,
       inputFactCoverage,
+      targetComplianceRatio,
+      unsupportedClaims: [
+        ...unsupportedClaims.map((item) => item.label),
+        ...(Array.isArray(llmJudge?.unsupportedClaims) ? llmJudge.unsupportedClaims : [])
+      ],
+      applicability: applicableItems,
       categoryContamination: categoryContaminationResult.categoryContamination,
       categoryFitScore: categoryContaminationResult.categoryFitScore
     },

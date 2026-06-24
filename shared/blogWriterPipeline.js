@@ -127,6 +127,8 @@ const factTokens = (value = "") =>
       .replace(/[^\p{L}\p{N}\s]/gu, " ")
       .split(/\s+/u)
       .map((token) => token.trim())
+      .map((token) => token.replace(/(?:은|는|이|가|을|를|과|와|도|만|에|에서|으로|로|에게|까지|부터)$/u, ""))
+      .map((token) => token.replace(/(?:했다|했어요|했음|였다|이었어요|이었다|입니다|이에요|예요|어요|아요|더라고요|같아요|습니다)$/u, ""))
       .filter((token) => Array.from(token).length >= 2)
   );
 
@@ -154,14 +156,22 @@ const isFactReflected = (factValue = "", body = "") => {
   if (normalizedFactKey && normalizedBodyKey.includes(normalizedFactKey)) return true;
   const tokens = factTokens(factValue);
   if (tokens.length === 0) return false;
-  const hitCount = tokens.filter((token) => body.includes(token) || normalizedBodyKey.includes(normalizeFactMatch(token))).length;
-  return hitCount / tokens.length >= 0.55;
+  const hitCount = tokens.filter((token) => {
+    const normalizedToken = normalizeFactMatch(token);
+    return body.includes(token) || normalizedBodyKey.includes(normalizedToken) || normalizedBodyKey.includes(compact(token));
+  }).length;
+  const threshold = tokens.length >= 6 ? 0.45 : 0.55;
+  return hitCount / tokens.length >= threshold;
 };
 
-export const calculateInputFactCoverage = ({ factMap = {}, body = "" } = {}) => {
+export const calculateInputFactCoverage = ({ factMap = {}, body = "", coveredFactIds = [], missingFactIds = [] } = {}) => {
   const highConfidenceFacts = (factMap.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
-  const reflected = highConfidenceFacts.filter((fact) => isFactReflected(fact.value, body));
-  const missing = highConfidenceFacts.filter((fact) => !isFactReflected(fact.value, body));
+  const coveredSet = new Set(coveredFactIds.filter(Boolean));
+  const explicitMissingSet = new Set(missingFactIds.filter(Boolean));
+  const reflected = highConfidenceFacts.filter((fact) =>
+    coveredSet.has(fact.id) || (!explicitMissingSet.has(fact.id) && isFactReflected(fact.value, body))
+  );
+  const missing = highConfidenceFacts.filter((fact) => !reflected.some((item) => item.id === fact.id));
 
   return {
     totalHighConfidenceFacts: highConfidenceFacts.length,

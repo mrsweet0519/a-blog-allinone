@@ -11,6 +11,7 @@ import {
   extractProductInfoFieldsWithMetaFromText
 } from "../shared/productReviewGenerator.js";
 import { buildBlogWriterPromptPayload } from "../shared/blogWriterPrompt.js";
+import { evaluateHumanQuality } from "../shared/blogWriterHumanQuality.js";
 import { compareBlogWriterResults } from "../shared/blogWriterComparison.js";
 import {
   ANEUNYEOJA_WRITER_PROFILE_ID,
@@ -19,9 +20,20 @@ import {
 import { onRequestPost as generateBlogOnRequestPost } from "../functions/api/generate-blog.js";
 import {
   buildDiagnosticPayload,
+  DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
+  evaluateOverallResult,
+  evaluateQualityResult,
+  formatDiagnosticAbortError,
   formatDiagnosticSummary,
+  parseArgs,
+  parseTimeoutMs,
+  runDiagnostics,
   summarizeDiagnosticResponse
 } from "../scripts/diagnose-blog-preview.mjs";
+import {
+  createQualityCanaryInputs,
+  summarizeQualityCanaryResponse
+} from "../scripts/diagnose-blog-quality.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 
@@ -414,12 +426,12 @@ const makeApiRequest = (body = {}) =>
     })
   });
 
-const callApiWithFetch = async ({ env = {}, fetchImpl = null } = {}) => {
+const callApiWithFetch = async ({ env = {}, fetchImpl = null, body = {} } = {}) => {
   const originalFetch = globalThis.fetch;
   if (fetchImpl) globalThis.fetch = fetchImpl;
   try {
     const response = await generateBlogOnRequestPost({
-      request: makeApiRequest(),
+      request: makeApiRequest(body),
       env
     });
     return response.json();
@@ -532,9 +544,302 @@ const invalidSchemaDraft = await callApiWithFetch({
 });
 assert.equal(invalidSchemaDraft.llm.reason, "llm-schema-invalid");
 
+const revisionCanaryInput = createQualityCanaryInputs({ seed: "unitrev" })[0];
+const revisionMemoLines = revisionCanaryInput.experienceMemo.split("\n").filter(Boolean);
+const makeMockLlmDraft = (attemptLabel = "initial") => ({
+  finalTitle: `${revisionCanaryInput.productName} ${revisionCanaryInput.mainKeyword}`,
+  titleCandidates: [
+    `${revisionCanaryInput.productName} ${revisionCanaryInput.mainKeyword}`,
+    `${revisionCanaryInput.productName} 출근 코디 착용감`,
+    `${revisionCanaryInput.productName} 실제 사용 후기`,
+    `${revisionCanaryInput.productName} 수납과 소매 먼지`,
+    `${revisionCanaryInput.productName} 재사용 의사 정리`
+  ],
+  body: [
+    `${revisionCanaryInput.productName}의 ${revisionCanaryInput.mainKeyword}를 실제 착용 흐름으로 정리했다.`,
+    ...revisionMemoLines.map((line) => `${line} ${attemptLabel}`),
+    `${revisionCanaryInput.productName}은 출근 코디와 착용감 기준으로 다시 사용할 만한지 판단하기 쉬웠다.`
+  ].join("\n\n"),
+  faqItems: [
+    {
+      question: "출근용으로 다시 입을 만했나요?",
+      answer: "실내 이동이 많은 날에는 다시 입을 의사가 있습니다."
+    }
+  ],
+  hashtags: ["#경량재킷후기", "#출근코디", "#착용감", "#데일리재킷", "#수납"]
+});
+let revisionFetchCount = 0;
+const revisionDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    revisionFetchCount += 1;
+    if ([1, 3, 5].includes(revisionFetchCount)) {
+      const attemptLabel = revisionFetchCount === 1 ? "initial" : `revision-${Math.floor(revisionFetchCount / 2)}`;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(makeMockLlmDraft(attemptLabel)) } }]
+        }),
+        { status: 200 }
+      );
+    }
+    const judgeScore = revisionFetchCount === 2 ? 52 : revisionFetchCount === 4 ? 72 : 88;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                score: judgeScore,
+                publishReady: judgeScore >= 95,
+                scores: {
+                  titleQuality: 8,
+                  openingQuality: 8,
+                  factualGrounding: 12,
+                  specificity: 12,
+                  humanNaturalness: 12,
+                  narrativeCoherence: 8,
+                  paragraphValue: 8,
+                  keywordNaturalness: 4,
+                  imageGrounding: 5,
+                  readerUtility: 4
+                },
+                issues: judgeScore < 95 ? [{ code: "UNIT_NEEDS_REVISION", severity: "medium", message: "needs revision" }] : [],
+                revisionInstructions: judgeScore < 95 ? ["Reflect the provided facts without inventing a new experience."] : []
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    );
+  }
+});
+assert.equal(revisionFetchCount, 6);
+assert.equal(revisionDraft.llm.reason, null);
+assert.ok(!JSON.stringify(revisionDraft).includes("unit-test-key"));
+assert.equal(revisionDraft.qualityDiagnostics.revisionUsed, true);
+assert.equal(revisionDraft.qualityDiagnostics.revisionCallCount, 2);
+assert.equal(revisionDraft.qualityDiagnostics.qualityAttempts, 3);
+assert.ok(revisionDraft.qualityDiagnostics.revisionCallCount <= 2);
+assert.equal(revisionDraft.qualityDiagnostics.attemptScores.length, 3);
+assert.equal(
+  revisionDraft.qualityDiagnostics.attemptScores[revisionDraft.qualityDiagnostics.selectedAttempt - 1],
+  Math.max(...revisionDraft.qualityDiagnostics.attemptScores)
+);
+
+let judgeTimeoutFetchCount = 0;
+const judgeTimeoutDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    judgeTimeoutFetchCount += 1;
+    if (judgeTimeoutFetchCount === 1) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("judge-timeout")) } }] }), { status: 200 });
+    }
+    throw new DOMException("aborted", "AbortError");
+  }
+});
+assert.equal(judgeTimeoutDraft.engine, "llm");
+assert.equal(judgeTimeoutDraft.judgeEngine, "deterministic");
+assert.equal(judgeTimeoutDraft.llmStages.writer.success, true);
+assert.equal(judgeTimeoutDraft.llmStages.judge.success, false);
+assert.equal(judgeTimeoutDraft.llmStages.judge.reason, "timeout");
+
+let revisionTimeoutFetchCount = 0;
+const revisionTimeoutDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "true",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    revisionTimeoutFetchCount += 1;
+    if (revisionTimeoutFetchCount === 1) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("before-revision")) } }] }), { status: 200 });
+    }
+    if (revisionTimeoutFetchCount === 2) {
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ score: 80, publishReady: false, scores: {}, issues: [], revisionInstructions: ["expand facts"] }) } }] }), { status: 200 });
+    }
+    throw new DOMException("aborted", "AbortError");
+  }
+});
+assert.equal(revisionTimeoutDraft.engine, "llm");
+assert.equal(revisionTimeoutDraft.llmStages.revisions[0].success, false);
+assert.equal(revisionTimeoutDraft.llmStages.revisions[0].reason, "timeout");
+assert.ok(revisionTimeoutDraft.body.includes("before-revision"));
+
+const partialSchemaDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({
+                finalTitle: `${revisionCanaryInput.productName} ${revisionCanaryInput.mainKeyword}`,
+                body: makeMockLlmDraft("partial-schema").body
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(partialSchemaDraft.engine, "llm");
+assert.ok(partialSchemaDraft.body.includes("partial-schema"));
+assert.equal(partialSchemaDraft.contentPackage.diagnostics.schemaRepair.schemaRepairUsed, true);
+assert.ok(partialSchemaDraft.contentPackage.diagnostics.schemaRepair.repairedFields.includes("titleCandidates"));
+
+let retryFetchCount = 0;
+const retrySuccessDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    retryFetchCount += 1;
+    if (retryFetchCount === 1) {
+      return new Response(JSON.stringify({ error: { message: "rate limit" } }), { status: 429 });
+    }
+    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("retry-success")) } }] }), { status: 200 });
+  }
+});
+assert.equal(retryFetchCount, 2);
+assert.equal(retrySuccessDraft.engine, "llm");
+assert.equal(retrySuccessDraft.llmStages.writer.attempts, 2);
+
+let quotaFetchCount = 0;
+const quotaNoRetryDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    quotaFetchCount += 1;
+    return new Response(JSON.stringify({ error: { message: "insufficient_quota" } }), { status: 429 });
+  }
+});
+assert.equal(quotaFetchCount, 1);
+assert.equal(quotaNoRetryDraft.engine, "fallback");
+assert.equal(quotaNoRetryDraft.llmStages.writer.reason, "quota-exceeded");
+
+let writerFailureFetchCount = 0;
+const writerFailureDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    writerFailureFetchCount += 1;
+    throw new DOMException("aborted", "AbortError");
+  }
+});
+assert.equal(writerFailureFetchCount, 3);
+assert.equal(writerFailureDraft.engine, "fallback");
+assert.equal(writerFailureDraft.llmStages.writer.reason, "timeout");
+assert.equal(writerFailureDraft.llmStages.writer.attempts, 3);
+
 const diagnosticPayload = buildDiagnosticPayload();
 assert.equal(diagnosticPayload.imageCount, 0);
 assert.ok(!JSON.stringify(diagnosticPayload).includes("sk-"));
+assert.equal(DEFAULT_DIAGNOSTIC_TIMEOUT_MS, 180000);
+assert.deepEqual(parseArgs(["--auto", "--timeout-ms", "180000", "--branch=preview"]), {
+  auto: "1",
+  "timeout-ms": "180000",
+  branch: "preview"
+});
+assert.equal(parseTimeoutMs("180000"), 180000);
+assert.throws(() => parseTimeoutMs("0"), /positive number/u);
+
+const originalDiagnosticFetch = globalThis.fetch;
+globalThis.fetch = async (_url, options = {}) =>
+  new Promise((_resolve, reject) => {
+    options.signal?.addEventListener(
+      "abort",
+      () => reject(new DOMException("This operation was aborted", "AbortError")),
+      { once: true }
+    );
+  });
+try {
+  await assert.rejects(
+    () => runDiagnostics({ previewUrl: "https://preview.example", timeoutMs: 5 }),
+    (error) => {
+      assert.equal(error.name, "AbortError");
+      assert.equal(error.requestUrl, "https://preview.example/api/generate-blog");
+      assert.ok(error.elapsedMs >= 0);
+      assert.equal(error.timeoutMs, 5);
+      assert.equal(error.abortStage, "request");
+      const formatted = formatDiagnosticAbortError(error);
+      assert.ok(formatted.includes("requestUrl: https://preview.example/api/generate-blog"));
+      assert.ok(formatted.includes("timeoutMs: 5"));
+      assert.ok(formatted.includes("abortStage: request"));
+      assert.ok(!formatted.includes("Authorization"));
+      assert.ok(!formatted.includes("unit-test-key"));
+      return true;
+    }
+  );
+
+  globalThis.fetch = async (_url, options = {}) => ({
+    status: 200,
+    json: async () =>
+      new Promise((_resolve, reject) => {
+        options.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("This operation was aborted", "AbortError")),
+          { once: true }
+        );
+      })
+  });
+  await assert.rejects(
+    () => runDiagnostics({ previewUrl: "https://preview.example", timeoutMs: 5 }),
+    (error) => {
+      assert.equal(error.name, "AbortError");
+      assert.equal(error.abortStage, "response-json");
+      assert.equal(error.timeoutMs, 5);
+      return true;
+    }
+  );
+} finally {
+  globalThis.fetch = originalDiagnosticFetch;
+}
 
 const diagnosticPass = summarizeDiagnosticResponse({
   url: "https://preview.example/api/generate-blog",
@@ -551,7 +856,59 @@ const diagnosticPass = summarizeDiagnosticResponse({
   }
 });
 assert.equal(diagnosticPass.pass, true);
-assert.ok(formatDiagnosticSummary(diagnosticPass).includes("result: PASS"));
+assert.equal(diagnosticPass.connectionResult, "PASS");
+assert.equal(diagnosticPass.qualityResult, "NOT_TESTED");
+assert.equal(diagnosticPass.overallResult, "PARTIAL");
+assert.ok(formatDiagnosticSummary(diagnosticPass).includes("connectionResult: PASS"));
+assert.ok(formatDiagnosticSummary(diagnosticPass).includes("qualityResult: NOT_TESTED"));
+assert.ok(!formatDiagnosticSummary(diagnosticPass).includes("result: PASS"));
+
+const diagnosticQuality55 = summarizeDiagnosticResponse({
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  json: {
+    engine: "llm",
+    judgeEngine: "llm",
+    isMock: false,
+    llm: { used: true, keyPresent: true, model: "unit-model", reason: "llm-quality-rejected" },
+    resultMode: "honest_draft",
+    qualityScore: 55,
+    publishReady: false,
+    qualityAttempts: 3,
+    humanQuality: {
+      score: 55,
+      llmJudgeScore: 55,
+      hardFail: true,
+      issues: [{ code: "UNSUPPORTED_CLAIM", severity: "critical", message: "unsupported" }],
+      caps: [{ code: "UNSUPPORTED_CLAIM", score: 55 }],
+      diagnostics: {
+        entityCoverage: { finalTitle: true, openingSentence: true, body: true },
+        inputFactCoverage: { inputFactCoverage: 0.4 },
+        genericFillerRatio: 0.1,
+        categoryContamination: []
+      }
+    },
+    contentPackage: {
+      informationSufficiency: { level: "low" },
+      diagnostics: { rawFinalDiff: { changedCharacterRatio: 0.2 } },
+      qualityDiagnostics: {
+        initialQualityScore: 55,
+        qualityAttempts: 3,
+        revisionUsed: true,
+        revisionCallCount: 2,
+        attemptScores: [55, 55, 55],
+        selectedAttempt: 1,
+        finalQualityScore: 55
+      }
+    }
+  }
+});
+assert.equal(diagnosticQuality55.connectionResult, "PASS");
+assert.equal(diagnosticQuality55.qualityResult, "NOT_TESTED");
+assert.equal(evaluateQualityResult(diagnosticQuality55, { tested: true }), "FAIL");
+assert.equal(evaluateOverallResult({ connectionResult: "PASS", qualityResult: "FAIL" }), "PARTIAL");
+assert.equal(evaluateOverallResult({ connectionResult: "PASS", qualityResult: "PASS" }), "PASS");
+assert.equal(evaluateOverallResult({ connectionResult: "FAIL", qualityResult: "PASS" }), "FAIL");
 
 const diagnosticFallback = summarizeDiagnosticResponse({
   url: "https://preview.example/api/generate-blog",
@@ -578,5 +935,130 @@ const diagnosticVisionWarning = summarizeDiagnosticResponse({
   }
 });
 assert.equal(diagnosticVisionWarning.pass, false);
+
+const qualityCanaryInputs = createQualityCanaryInputs({ seed: "unitquality" });
+assert.equal(qualityCanaryInputs.length, 3);
+for (const input of qualityCanaryInputs) {
+  const context = buildBlogWriterPipelineContext(input);
+  assert.equal(context.informationSufficiency.level, "high");
+  assert.ok(!productionSource.includes(input.productName));
+}
+
+const noImageContext = buildBlogWriterPipelineContext(qualityCanaryInputs[0]);
+const noImageBody = [
+  `${qualityCanaryInputs[0].productName} ${qualityCanaryInputs[0].mainKeyword}를 직접 사용한 흐름으로 정리했다.`,
+  qualityCanaryInputs[0].experienceMemo,
+  "출근 코디와 착용감 기준에서는 다시 사용할 의사가 있고, 비 오는 날 장시간 외부 활동보다 실내 이동이 많은 날에 맞았다."
+].join("\n\n");
+const noImageQuality = evaluateHumanQuality({
+  title: `${qualityCanaryInputs[0].productName} ${qualityCanaryInputs[0].mainKeyword}`,
+  titleCandidates: [`${qualityCanaryInputs[0].productName} ${qualityCanaryInputs[0].mainKeyword}`],
+  body: noImageBody,
+  faq: [],
+  hashtags: [],
+  factMap: noImageContext.factMap,
+  imageAnalysis: noImageContext.imageAnalysis,
+  category: noImageContext.category,
+  visitStatus: noImageContext.experienceStatus,
+  mainKeyword: noImageContext.mainKeyword,
+  primaryEntity: noImageContext.primaryEntity,
+  subKeywords: noImageContext.subKeywords,
+  requestedTargetCharCount: 2200,
+  effectiveTargetCharCount: 2200,
+  engine: "llm",
+  llmJudge: {
+    score: 96,
+    scores: { imageGrounding: 0, readerUtility: 0 },
+    issues: [{ code: "NO_IMAGE_OR_VISUAL_REFERENCE", severity: "high", message: "no image" }],
+    coveredFactIds: noImageContext.factMap.userFacts.map((fact) => fact.id),
+    missingFactIds: []
+  }
+});
+assert.equal(noImageQuality.diagnostics.applicability.imageGrounding, false);
+assert.equal(noImageQuality.diagnostics.applicability.faqUtility, false);
+assert.ok(!noImageQuality.issues.some((issue) => /NO_IMAGE/u.test(issue.code)));
+assert.equal(noImageQuality.diagnostics.inputFactCoverage.inputFactCoverage, 1);
+
+const qualityCanaryPass = summarizeQualityCanaryResponse({
+  category: "fashion",
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  requestedTargetCharCount: 2200,
+  json: {
+    engine: "llm",
+    judgeEngine: "llm",
+    isMock: false,
+    llm: { used: true, keyPresent: true, model: "unit-model", reason: null },
+    finalTitle: "루미핏 unitquality 데일리 재킷 경량 재킷 후기",
+    body: "루미핏 unitquality 데일리 재킷 경량 재킷 후기를 실제 착용 기준으로 정리했다.",
+    qualityScore: 96,
+    publishReady: true,
+    qualityAttempts: 2,
+    humanQuality: {
+      score: 96,
+      llmJudgeScore: 98,
+      hardFail: false,
+      issues: [],
+      caps: [],
+      diagnostics: {
+        entityCoverage: { finalTitle: true, openingSentence: true, body: true },
+        inputFactCoverage: { inputFactCoverage: 0.95 },
+        categoryContamination: [],
+        genericFillerRatio: 0.05
+      }
+    },
+    contentPackage: {
+      resultMode: "publish_ready",
+      informationSufficiency: { level: "high" },
+      requestedTargetCharCount: 2200,
+      actualBodyCharCount: 2100,
+      qualityDiagnostics: {
+        initialQualityScore: 86,
+        qualityAttempts: 2,
+        revisionUsed: true,
+        revisionCallCount: 1,
+        attemptScores: [86, 96],
+        selectedAttempt: 2,
+        finalQualityScore: 96
+      },
+      diagnostics: { rawFinalDiff: { changedCharacterRatio: 0.1 } }
+    },
+    claimLedgerSummary: { hardFail: false, counts: {}, hardFailures: [] }
+  }
+});
+assert.equal(qualityCanaryPass.connectionResult, "PASS");
+assert.equal(qualityCanaryPass.qualityResult, "PASS");
+assert.equal(qualityCanaryPass.revisionDiagnostics.revisionCallCount, 1);
+assert.ok(!JSON.stringify(qualityCanaryPass.metadata).includes("루미핏 unitquality"));
+
+const qualityCanaryFail = summarizeQualityCanaryResponse({
+  category: "fashion",
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  requestedTargetCharCount: 2200,
+  json: {
+    engine: "llm",
+    judgeEngine: "llm",
+    isMock: false,
+    llm: { used: true, keyPresent: true, model: "unit-model", reason: null },
+    qualityScore: 55,
+    publishReady: false,
+    humanQuality: {
+      score: 55,
+      hardFail: true,
+      issues: [{ code: "PRIMARY_ENTITY_BODY_MISSING", severity: "critical", message: "missing" }],
+      diagnostics: {
+        entityCoverage: { finalTitle: true, openingSentence: true, body: false },
+        inputFactCoverage: { inputFactCoverage: 0.5 },
+        categoryContamination: []
+      }
+    },
+    contentPackage: {
+      resultMode: "honest_draft",
+      informationSufficiency: { level: "low" }
+    }
+  }
+});
+assert.equal(qualityCanaryFail.qualityResult, "FAIL");
 
 console.log("local validation passed");
