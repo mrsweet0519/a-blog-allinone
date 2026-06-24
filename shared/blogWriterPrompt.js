@@ -51,6 +51,60 @@ export const BLOG_WRITER_OUTPUT_SCHEMA = {
   hashtags: ["string"]
 };
 
+export const BLOG_WRITER_OUTPUT_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    titleCandidates: {
+      type: "array",
+      items: { type: "string" },
+      minItems: 5,
+      maxItems: 5
+    },
+    finalTitle: {
+      type: "string"
+    },
+    sections: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          heading: {
+            type: ["string", "null"]
+          },
+          paragraphs: {
+            type: "array",
+            items: { type: "string" }
+          },
+          imageRefs: {
+            type: "array",
+            items: { type: "integer" }
+          }
+        },
+        required: ["heading", "paragraphs", "imageRefs"],
+        additionalProperties: false
+      }
+    },
+    faq: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          answer: { type: "string" }
+        },
+        required: ["question", "answer"],
+        additionalProperties: false
+      }
+    },
+    hashtags: {
+      type: "array",
+      items: { type: "string" }
+    }
+  },
+  required: ["titleCandidates", "finalTitle", "sections", "faq", "hashtags"],
+  additionalProperties: false
+};
+
 const toJsonBlock = (value) => JSON.stringify(value, null, 2);
 
 export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWritingInput(form), fallbackDraft = null } = {}) => {
@@ -123,7 +177,8 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "경험 주장은 experienceEvidence, 가족·아이·동행 주장은 contextEvidence, 사진 주장은 imageEvidence가 있을 때만 쓰세요.",
     "unsupported, contradictory, metaGuidance, placeholder 문장이 최종 섹션에 남지 않게 스스로 검토하세요. Claim Ledger는 서버가 최종 본문 기준으로 다시 만듭니다.",
     "FAQ는 Fact Map으로 직접 답할 수 있을 때만 0~2개 생성하세요. 운영시간, 예약, 주차, 글 작성법, 확인 필요만 말하는 질문은 만들지 마세요.",
-    "writer 출력은 titleCandidates, finalTitle, sections, faq, hashtags 중심의 최소 구조를 우선하세요. body가 필요하면 sections를 그대로 이어 붙인 내용만 넣고, 별도 후처리용 문장은 만들지 마세요.",
+    "writer 출력은 titleCandidates, finalTitle, sections, faq, hashtags만 반환하세요. body, qualityScore, Fact Map, Claim Ledger, trace, publishReady 같은 내부 분석 필드는 절대 반환하지 마세요.",
+    "FAQ가 필요 없으면 faq는 빈 배열로 두고, 이미지가 없으면 imageRefs는 빈 배열로 두세요. 소제목이 필요 없는 section은 heading을 null로 두세요.",
     "최종 본문에는 내부 writerPlan에서나 쓸 메타 표현을 넣지 마세요.",
     "정보가 부족하면 억지로 길게 쓰지 말고 실제 본문 길이에 맞춰 자연스럽게 마무리하세요.",
     "사진이 있으면 본문 흐름 안에 [사진 삽입: 설명] 마커를 넣되 파일명은 쓰지 마세요.",

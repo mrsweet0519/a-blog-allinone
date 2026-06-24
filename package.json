@@ -11,6 +11,7 @@
     "build": "npm run build --prefix frontend",
     "diagnose:preview": "node scripts/diagnose-blog-preview.mjs",
     "diagnose:preview:auto": "node scripts/diagnose-blog-preview.mjs --auto",
+    "diagnose:quality:auto": "node scripts/diagnose-blog-quality.mjs --auto",
     "test:local": "node tests/local-validation.test.mjs",
     "start": "npm run start --prefix backend"
   },

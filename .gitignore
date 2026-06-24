@@ -20,3 +20,4 @@ codex-preview.err
 .codex-*.out
 .codex-*.err
 .codex-*-smoke.png
+.tmp-quality-canary/

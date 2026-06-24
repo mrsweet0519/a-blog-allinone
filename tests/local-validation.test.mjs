@@ -17,7 +17,13 @@ import {
   ANEUNYEOJA_WRITER_PROFILE_ID,
   ANEUNYEOJA_WRITER_PROFILE_VERSION
 } from "../shared/writerProfiles/aneunyeoja.js";
-import { onRequestPost as generateBlogOnRequestPost } from "../functions/api/generate-blog.js";
+import {
+  BLOG_JUDGE_OUTPUT_JSON_SCHEMA,
+  extractOpenAiText,
+  getOpenAiApiEndpoint,
+  onRequestPost as generateBlogOnRequestPost
+} from "../functions/api/generate-blog.js";
+import { BLOG_WRITER_OUTPUT_JSON_SCHEMA } from "../shared/blogWriterPrompt.js";
 import {
   buildDiagnosticPayload,
   DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
@@ -718,6 +724,93 @@ assert.ok(partialSchemaDraft.body.includes("partial-schema"));
 assert.equal(partialSchemaDraft.contentPackage.diagnostics.schemaRepair.schemaRepairUsed, true);
 assert.ok(partialSchemaDraft.contentPackage.diagnostics.schemaRepair.repairedFields.includes("titleCandidates"));
 
+const sectionsOnlyDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({
+                titleCandidates: ["t1", "t2", "t3", "t4", "t5"],
+                finalTitle: `${revisionCanaryInput.productName} ${revisionCanaryInput.mainKeyword}`,
+                sections: [{ heading: null, paragraphs: revisionMemoLines.slice(0, 3), imageRefs: [] }],
+                faq: [],
+                hashtags: []
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(sectionsOnlyDraft.engine, "llm");
+assert.ok(sectionsOnlyDraft.body.includes(revisionMemoLines[0]));
+
+const fencedDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: `\`\`\`json\n${JSON.stringify(makeMockLlmDraft("fenced-json"))}\n\`\`\``
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(fencedDraft.engine, "llm");
+assert.ok(fencedDraft.body.includes("fenced-json"));
+
+const plainTextDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: Array(8).fill(`${revisionCanaryInput.productName} plain text recovery paragraph with concrete facts.`).join("\n\n")
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(plainTextDraft.engine, "llm");
+assert.ok(plainTextDraft.contentPackage.diagnostics.schemaRepair.repairedFields.includes("body"));
+
 let retryFetchCount = 0;
 const retrySuccessDraft = await callApiWithFetch({
   body: revisionCanaryInput,
@@ -758,6 +851,30 @@ assert.equal(quotaFetchCount, 1);
 assert.equal(quotaNoRetryDraft.engine, "fallback");
 assert.equal(quotaNoRetryDraft.llmStages.writer.reason, "quota-exceeded");
 
+let schemaRetryFetchCount = 0;
+const schemaRetryDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    schemaRetryFetchCount += 1;
+    if (schemaRetryFetchCount === 1) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "not-json" } }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("schema-retry")) } }] }), { status: 200 });
+  }
+});
+assert.equal(schemaRetryFetchCount, 2);
+assert.equal(schemaRetryDraft.engine, "llm");
+assert.equal(schemaRetryDraft.llmStages.writer.success, true);
+assert.equal(schemaRetryDraft.contentPackage.diagnostics.responseExtraction.schemaFailureCount, 1);
+assert.equal(schemaRetryDraft.contentPackage.diagnostics.responseExtraction.writerAttempts, 2);
+
 let writerFailureFetchCount = 0;
 const writerFailureDraft = await callApiWithFetch({
   body: revisionCanaryInput,
@@ -777,9 +894,79 @@ assert.equal(writerFailureDraft.engine, "fallback");
 assert.equal(writerFailureDraft.llmStages.writer.reason, "timeout");
 assert.equal(writerFailureDraft.llmStages.writer.attempts, 3);
 
+const refusalDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { refusal: "no" } }] }), { status: 200 })
+});
+assert.equal(refusalDraft.engine, "fallback");
+assert.equal(refusalDraft.llmStages.writer.reason, "refusal");
+
+const incompleteDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "" } }] }), { status: 200 })
+});
+assert.equal(incompleteDraft.engine, "fallback");
+assert.equal(incompleteDraft.llmStages.writer.reason, "incomplete");
+
 const diagnosticPayload = buildDiagnosticPayload();
 assert.equal(diagnosticPayload.imageCount, 0);
 assert.ok(!JSON.stringify(diagnosticPayload).includes("sk-"));
+assert.equal(getOpenAiApiEndpoint(), "chat-completions");
+assert.equal(BLOG_WRITER_OUTPUT_JSON_SCHEMA.additionalProperties, false);
+assert.deepEqual(BLOG_WRITER_OUTPUT_JSON_SCHEMA.required, ["titleCandidates", "finalTitle", "sections", "faq", "hashtags"]);
+assert.equal(BLOG_WRITER_OUTPUT_JSON_SCHEMA.properties.titleCandidates.minItems, 5);
+assert.equal(BLOG_WRITER_OUTPUT_JSON_SCHEMA.properties.titleCandidates.maxItems, 5);
+assert.equal(BLOG_WRITER_OUTPUT_JSON_SCHEMA.properties.sections.items.additionalProperties, false);
+assert.deepEqual(BLOG_WRITER_OUTPUT_JSON_SCHEMA.properties.sections.items.properties.heading.type, ["string", "null"]);
+assert.equal(BLOG_WRITER_OUTPUT_JSON_SCHEMA.properties.sections.items.properties.imageRefs.items.type, "integer");
+assert.equal(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.additionalProperties, false);
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("coveredFactIds"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("missingFactIds"));
+
+const chatExtraction = extractOpenAiText({
+  choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("extract-chat")) } }]
+});
+assert.equal(chatExtraction.apiEndpoint, "chat-completions");
+assert.equal(chatExtraction.responseShape, "chat-choices");
+assert.equal(chatExtraction.textExtracted, true);
+assert.ok(chatExtraction.extractedTextLength > 0);
+assert.ok(chatExtraction.extractedTextHash);
+
+const responsesExtraction = extractOpenAiText(
+  {
+    output: [{ content: [{ type: "output_text", text: JSON.stringify(makeMockLlmDraft("extract-responses")) }] }]
+  },
+  { endpoint: "responses" }
+);
+assert.equal(responsesExtraction.apiEndpoint, "responses");
+assert.equal(responsesExtraction.responseShape, "responses-output");
+assert.equal(responsesExtraction.textExtracted, true);
+
+const structuredMinimum = {
+  titleCandidates: ["a", "b", "c", "d", "e"],
+  finalTitle: "a",
+  sections: [{ heading: null, paragraphs: ["body"], imageRefs: [] }],
+  faq: [],
+  hashtags: []
+};
+assert.equal(structuredMinimum.titleCandidates.length, 5);
+assert.equal(structuredMinimum.sections[0].heading, null);
+assert.deepEqual(structuredMinimum.sections[0].imageRefs, []);
+assert.deepEqual(structuredMinimum.faq, []);
 assert.equal(DEFAULT_DIAGNOSTIC_TIMEOUT_MS, 180000);
 assert.deepEqual(parseArgs(["--auto", "--timeout-ms", "180000", "--branch=preview"]), {
   auto: "1",

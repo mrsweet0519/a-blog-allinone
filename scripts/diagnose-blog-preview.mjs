@@ -4,10 +4,10 @@ import { basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-const DIAGNOSTIC_TIMEOUT_MS = 60_000;
+export const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 180_000;
 const MAX_IMAGE_BYTES = 1_600_000;
-const DEFAULT_PROJECT_NAME = "a-blog-allinone";
-const DEFAULT_PREVIEW_BRANCH = "canary/fact-grounded-blog-writer";
+export const DEFAULT_PROJECT_NAME = "a-blog-allinone";
+export const DEFAULT_PREVIEW_BRANCH = "canary/fact-grounded-blog-writer";
 const COMMAND_TIMEOUT_MS = 120_000;
 const COMMAND_MAX_BUFFER = 10 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
@@ -106,7 +106,7 @@ const listPreviewDeployments = async (projectName = DEFAULT_PROJECT_NAME) => {
   }
 };
 
-const selectLatestPreviewDeployment = (deployments = [], { branch = DEFAULT_PREVIEW_BRANCH, source = "" } = {}) => {
+export const selectLatestPreviewDeployment = (deployments = [], { branch = DEFAULT_PREVIEW_BRANCH, source = "" } = {}) => {
   const matches = deployments.filter((deployment) =>
     text(deployment.Branch) === branch &&
     text(deployment.Deployment)
@@ -117,13 +117,36 @@ const selectLatestPreviewDeployment = (deployments = [], { branch = DEFAULT_PREV
   return matches.find((deployment) => source && text(deployment.Source) === source) || matches[0];
 };
 
-export const parseArgs = (argv = []) =>
-  argv.reduce((acc, item) => {
-    if (!item.startsWith("--")) return acc;
+export const parseArgs = (argv = []) => {
+  const args = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const item = argv[index];
+    if (!item.startsWith("--")) continue;
     const [key, ...rest] = item.slice(2).split("=");
-    acc[key] = rest.length > 0 ? rest.join("=") : "1";
-    return acc;
-  }, {});
+    if (rest.length > 0) {
+      args[key] = rest.join("=");
+      continue;
+    }
+    const next = argv[index + 1] || "";
+    if (next && !next.startsWith("--")) {
+      args[key] = next;
+      index += 1;
+      continue;
+    }
+    args[key] = "1";
+  }
+  return args;
+};
+
+export const parseTimeoutMs = (value = "", fallback = DEFAULT_DIAGNOSTIC_TIMEOUT_MS) => {
+  const raw = text(value);
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("--timeout-ms must be a positive number.");
+  }
+  return Math.trunc(parsed);
+};
 
 export const normalizePreviewUrl = (value = "") => {
   const raw = text(value);
@@ -137,6 +160,22 @@ export const normalizePreviewUrl = (value = "") => {
 };
 
 export const buildGenerateBlogUrl = (previewUrl = "") => `${normalizePreviewUrl(previewUrl)}/api/generate-blog`;
+
+export const discoverLatestPreviewDeployment = async ({
+  projectName = DEFAULT_PROJECT_NAME,
+  branch = DEFAULT_PREVIEW_BRANCH
+} = {}) => {
+  await assertWranglerAuthenticated();
+  const deployments = await listPreviewDeployments(projectName);
+  const source = await getCurrentGitSource();
+  const deployment = selectLatestPreviewDeployment(deployments, { branch, source });
+  return {
+    projectName,
+    branch,
+    source,
+    deployment
+  };
+};
 
 export const buildDiagnosticPayload = ({ image = null } = {}) => {
   const imageContext = image
@@ -188,9 +227,33 @@ export const readDiagnosticImage = async (imagePath = "") => {
   };
 };
 
-const fetchJson = async (url, payload) => {
+const isAbortError = (error) => error?.name === "AbortError" || error?.code === "ABORT_ERR";
+
+export const formatDiagnosticAbortError = (error = {}) =>
+  [
+    "diagnostic-error: request aborted",
+    `requestUrl: ${error.requestUrl || "unknown"}`,
+    `elapsedMs: ${error.elapsedMs ?? "unknown"}`,
+    `timeoutMs: ${error.timeoutMs ?? "unknown"}`,
+    `abortStage: ${error.abortStage || "unknown"}`
+  ].join("\n");
+
+const createDiagnosticAbortError = ({ requestUrl = "", elapsedMs = 0, timeoutMs = DEFAULT_DIAGNOSTIC_TIMEOUT_MS, abortStage = "request", cause = null } = {}) => {
+  const error = new Error("Preview diagnostic request aborted.");
+  error.name = "AbortError";
+  error.requestUrl = requestUrl;
+  error.elapsedMs = elapsedMs;
+  error.timeoutMs = timeoutMs;
+  error.abortStage = abortStage;
+  error.cause = cause;
+  return error;
+};
+
+export const fetchDiagnosticJson = async (url, payload, { timeoutMs = DEFAULT_DIAGNOSTIC_TIMEOUT_MS } = {}) => {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DIAGNOSTIC_TIMEOUT_MS);
+  const startedAt = Date.now();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let abortStage = "request";
 
   try {
     const response = await fetch(url, {
@@ -201,15 +264,124 @@ const fetchJson = async (url, payload) => {
     });
     let json = null;
     try {
+      abortStage = "response-json";
       json = await response.json();
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) throw error;
       json = {};
     }
     return { status: response.status, json };
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw createDiagnosticAbortError({
+        requestUrl: url,
+        elapsedMs: Date.now() - startedAt,
+        timeoutMs,
+        abortStage,
+        cause: error
+      });
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
 };
+
+const uniqueTexts = (values = []) => {
+  const seen = new Set();
+  const result = [];
+  values.forEach((value) => {
+    const cleaned = text(value);
+    if (!cleaned || seen.has(cleaned)) return;
+    seen.add(cleaned);
+    result.push(cleaned);
+  });
+  return result;
+};
+
+const numericOrNull = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const normalizeIssueCode = (value = "") => {
+  const cleaned = text(value);
+  if (!cleaned) return "";
+  const code = cleaned.includes(":") ? cleaned.split(":")[0] : cleaned;
+  return code.trim().replace(/\s+/gu, "_").toUpperCase();
+};
+
+const collectIssueCodes = ({ humanQuality = {}, qualityIssues = [], claimLedgerSummary = {} } = {}) =>
+  uniqueTexts([
+    ...(Array.isArray(humanQuality.issues) ? humanQuality.issues.map((issue) => normalizeIssueCode(issue?.code)) : []),
+    ...(Array.isArray(qualityIssues) ? qualityIssues.map(normalizeIssueCode) : []),
+    ...((claimLedgerSummary.hardFailures || []).map((item) => `CLAIM_${normalizeIssueCode(item?.claimType)}`))
+  ].filter(Boolean));
+
+const countHighSeverityIssues = (humanQuality = {}) =>
+  (Array.isArray(humanQuality.issues) ? humanQuality.issues : []).filter((issue) =>
+    ["high", "critical"].includes(text(issue?.severity).toLowerCase())
+  ).length;
+
+const hasIssueCode = (codes = [], pattern = /$^/u) => codes.some((code) => pattern.test(code));
+
+export const evaluateConnectionResult = (summary = {}) => {
+  const reason = text(summary.llmReason).toLowerCase();
+  const reasonOk = !reason || reason === "none" || reason === "llm-quality-rejected";
+  return summary.status === 200 &&
+    summary.engine === "llm" &&
+    summary.judgeEngine === "llm" &&
+    summary.isMock === false &&
+    summary.keyPresent === true &&
+    summary.llmUsed === true &&
+    reasonOk
+    ? "PASS"
+    : "FAIL";
+};
+
+export const evaluateQualityResult = (summary = {}, { tested = true } = {}) => {
+  if (!tested) return "NOT_TESTED";
+  const issueCodes = summary.issueCodes || [];
+  const noUnsupportedClaims =
+    Number(summary.unsupportedClaimCount || 0) === 0 &&
+    !hasIssueCode(issueCodes, /UNSUPPORTED|CONTRADICTORY/u);
+  const noMetaGuidance =
+    Number(summary.metaGuidanceCount || 0) === 0 &&
+    !hasIssueCode(issueCodes, /META_GUIDANCE|PLACEHOLDER/u);
+  const noJosaErrors = !hasIssueCode(issueCodes, /JOSA/u);
+  const noCategoryContamination =
+    Number(summary.categoryContaminationCount || 0) === 0 &&
+    !hasIssueCode(issueCodes, /CATEGORY_CONTAMINATION/u);
+
+  return Number(summary.qualityScore || 0) >= 95 &&
+    summary.publishReady === true &&
+    summary.hardFail === false &&
+    Number(summary.highSeverityIssueCount || 0) === 0 &&
+    noCategoryContamination &&
+    noUnsupportedClaims &&
+    summary.primaryEntityCoverage === true &&
+    noMetaGuidance &&
+    noJosaErrors
+    ? "PASS"
+    : "FAIL";
+};
+
+export const evaluateOverallResult = ({ connectionResult = "FAIL", qualityResult = "NOT_TESTED" } = {}) => {
+  if (connectionResult !== "PASS") return "FAIL";
+  return qualityResult === "PASS" ? "PASS" : "PARTIAL";
+};
+
+export const summarizeQualityInvestigation = (summary = {}) => ({
+  rawWriterScore: summary.rawWriterScore ?? null,
+  finalJudgeScore: summary.finalJudgeScore ?? null,
+  appliedCaps: summary.appliedCaps || [],
+  informationSufficiency: summary.informationSufficiency || "",
+  resultMode: summary.resultMode || "",
+  inputFactCoverage: summary.inputFactCoverage ?? null,
+  genericFillerRatio: summary.genericFillerRatio ?? null,
+  changedCharacterRatio: summary.changedCharacterRatio ?? null,
+  topIssueCodes: (summary.issueCodes || []).slice(0, 5)
+});
 
 export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, imageExpected = false } = {}) => {
   const packageData = json.contentPackage || {};
@@ -217,6 +389,33 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
   const llm = json.llm || {};
   const vision = json.vision || {};
   const imageAnalysis = json.imageAnalysis || packageData.imageAnalysis || {};
+  const humanQuality = json.humanQuality || packageData.humanQuality || {};
+  const humanDiagnostics = humanQuality.diagnostics || {};
+  const claimLedgerSummary = json.claimLedgerSummary || packageData.claimLedgerSummary || {};
+  const qualityIssues = json.qualityIssues || packageData.qualityIssues || [];
+  const issueCodes = collectIssueCodes({ humanQuality, qualityIssues, claimLedgerSummary });
+  const entityCoverage = humanDiagnostics.entityCoverage || {};
+  const primaryEntityCoverage = Object.keys(entityCoverage).length > 0
+    ? Boolean(entityCoverage.finalTitle && entityCoverage.openingSentence && entityCoverage.body)
+    : null;
+  const categoryContaminationCount = Array.isArray(humanDiagnostics.categoryContamination)
+    ? humanDiagnostics.categoryContamination.length
+    : 0;
+  const claimCounts = claimLedgerSummary.counts || {};
+  const unsupportedClaimCount =
+    Number(claimCounts.unsupported || 0) +
+    Number(claimCounts.contradictory || 0) +
+    (claimLedgerSummary.hardFailures || []).filter((item) => ["unsupported", "contradictory"].includes(item?.claimType)).length;
+  const metaGuidanceCount =
+    Number(claimCounts.metaGuidance || 0) +
+    Number(claimCounts.placeholder || 0) +
+    (claimLedgerSummary.hardFailures || []).filter((item) => ["metaGuidance", "placeholder"].includes(item?.claimType)).length;
+  const rawFinalDiff = json.diagnostics?.rawFinalDiff || packageData.diagnostics?.rawFinalDiff || {};
+  const qualityDiagnostics = json.qualityDiagnostics || packageData.qualityDiagnostics || {};
+  const llmStages = json.llmStages || packageData.llmStages || {};
+  const targetLengthContract = packageData.targetLengthContract || {};
+  const schemaRepair = packageData.diagnostics?.schemaRepair || {};
+  const responseExtraction = packageData.diagnostics?.responseExtraction || {};
   const qualityScore = json.qualityScore ?? packageData.qualityScore ?? packageData.summary?.qualityScore ?? null;
   const qualityAttempts = json.qualityAttempts ?? packageData.qualityAttempts ?? 0;
   const visionMode = vision.mode || trace.visionMode || imageAnalysis.mode || "none";
@@ -236,6 +435,45 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
     llmUsed: Boolean(llm.used),
     llmReason: llm.reason || null,
     llmStatus: llm.status === 0 ? null : llm.status ?? null,
+    informationSufficiency: packageData.informationSufficiency?.level || packageData.summary?.informationSufficiency || null,
+    resultMode: json.resultMode || packageData.resultMode || packageData.summary?.resultMode || null,
+    requestedTargetCharCount:
+      numericOrNull(packageData.requestedTargetCharCount ?? packageData.targetLengthContract?.requestedTargetCharCount ?? packageData.summary?.requestedTargetCharCount),
+    actualCharCount:
+      numericOrNull(json.actualBodyCharCount ?? packageData.actualBodyCharCount ?? packageData.actualCharCount ?? packageData.summary?.actualBodyCharCount),
+    rawWriterCharCount: numericOrNull(targetLengthContract.rawWriterCharCount),
+    finalCharCount: numericOrNull(targetLengthContract.finalCharCount ?? targetLengthContract.actualCharCount),
+    targetComplianceRatio: numericOrNull(targetLengthContract.targetComplianceRatio),
+    finishReason: targetLengthContract.finishReason || llmStages.writer?.finishReason || "",
+    postProcessingReductionRatio: numericOrNull(targetLengthContract.postProcessingReductionRatio),
+    schemaRepairUsed: Boolean(schemaRepair.schemaRepairUsed),
+    apiEndpoint: responseExtraction.apiEndpoint || "",
+    responseShape: responseExtraction.responseShape || "unknown",
+    textExtracted: typeof responseExtraction.textExtracted === "boolean" ? responseExtraction.textExtracted : null,
+    extractedTextLength: numericOrNull(responseExtraction.extractedTextLength),
+    extractedTextHash: responseExtraction.extractedTextHash || "",
+    writerAttempts: numericOrNull(responseExtraction.writerAttempts),
+    schemaFailureCount: numericOrNull(responseExtraction.schemaFailureCount),
+    repairedFields: schemaRepair.repairedFields || [],
+    inputFactCoverage:
+      numericOrNull(humanDiagnostics.inputFactCoverage?.inputFactCoverage ?? packageData.inputFactCoverage?.inputFactCoverage),
+    genericFillerRatio: numericOrNull(humanDiagnostics.genericFillerRatio),
+    changedCharacterRatio: numericOrNull(rawFinalDiff.changedCharacterRatio),
+    rawWriterScore: numericOrNull(json.rawQualityScore ?? packageData.rawQualityScore ?? packageData.summary?.rawQualityScore),
+    finalJudgeScore: numericOrNull(humanQuality.llmJudgeScore ?? humanQuality.score ?? qualityScore),
+    appliedCaps: uniqueTexts([
+      ...(Array.isArray(humanQuality.caps) ? humanQuality.caps.map((cap) => cap?.code).filter(Boolean) : []),
+      claimLedgerSummary.hardFail ? "CLAIM_LEDGER_HARD_FAIL" : ""
+    ]),
+    hardFail: Boolean(humanQuality.hardFail || claimLedgerSummary.hardFail),
+    highSeverityIssueCount: countHighSeverityIssues(humanQuality),
+    categoryContaminationCount,
+    unsupportedClaimCount,
+    metaGuidanceCount,
+    primaryEntityCoverage,
+    issueCodes,
+    qualityDiagnostics,
+    llmStages,
     qualityScore,
     publishReady: Boolean(json.publishReady ?? packageData.publishReady),
     qualityAttempts,
@@ -243,10 +481,15 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
     visibleElementsCount: vision.visibleElementsCount ?? imageAnalysis.visuallySupported?.length ?? 0,
     imageExpected
   };
+  const connectionResult = evaluateConnectionResult(summary);
+  const qualityResult = evaluateQualityResult(summary, { tested: false });
 
   return {
     ...summary,
-    pass: summary.engine === "llm" && (!imageExpected || summary.visionMode === "vision")
+    connectionResult,
+    qualityResult,
+    overallResult: evaluateOverallResult({ connectionResult, qualityResult }),
+    pass: connectionResult === "PASS" && (!imageExpected || summary.visionMode === "vision")
   };
 };
 
@@ -267,19 +510,51 @@ export const formatDiagnosticSummary = (summary = {}) => [
   `llm.used: ${summary.llmUsed}`,
   `llm.reason: ${summary.llmReason || "none"}`,
   `llm.status: ${summary.llmStatus ?? "none"}`,
-  `qualityScore: ${summary.qualityScore ?? "unknown"}`,
-  `publishReady: ${summary.publishReady}`,
-  `qualityAttempts: ${summary.qualityAttempts}`,
+  `observedQualityScore: ${summary.qualityScore ?? "unknown"}`,
+  `observedPublishReady: ${summary.publishReady}`,
+  `observedQualityAttempts: ${summary.qualityAttempts}`,
+  `informationSufficiency: ${summary.informationSufficiency || "unknown"}`,
+  `resultMode: ${summary.resultMode || "unknown"}`,
+  `rawWriterScore: ${summary.rawWriterScore ?? "unknown"}`,
+  `finalJudgeScore: ${summary.finalJudgeScore ?? "unknown"}`,
+  `appliedCaps: ${(summary.appliedCaps || []).join(", ") || "none"}`,
+  `inputFactCoverage: ${summary.inputFactCoverage ?? "unknown"}`,
+  `genericFillerRatio: ${summary.genericFillerRatio ?? "unknown"}`,
+  `changedCharacterRatio: ${summary.changedCharacterRatio ?? "unknown"}`,
+  `rawWriterCharCount: ${summary.rawWriterCharCount ?? "unknown"}`,
+  `finalCharCount: ${summary.finalCharCount ?? "unknown"}`,
+  `targetComplianceRatio: ${summary.targetComplianceRatio ?? "unknown"}`,
+  `finishReason: ${summary.finishReason || "unknown"}`,
+  `postProcessingReductionRatio: ${summary.postProcessingReductionRatio ?? "unknown"}`,
+  `schemaRepairUsed: ${summary.schemaRepairUsed}`,
+  `apiEndpoint: ${summary.apiEndpoint || "unknown"}`,
+  `responseShape: ${summary.responseShape || "unknown"}`,
+  `textExtracted: ${summary.textExtracted === null ? "unknown" : summary.textExtracted}`,
+  `extractedTextLength: ${summary.extractedTextLength ?? "unknown"}`,
+  `extractedTextHash: ${summary.extractedTextHash || "unknown"}`,
+  `writerAttempts: ${summary.writerAttempts ?? "unknown"}`,
+  `schemaFailureCount: ${summary.schemaFailureCount ?? "unknown"}`,
+  `repairedFields: ${(summary.repairedFields || []).join(", ") || "none"}`,
+  `topIssueCodes: ${(summary.issueCodes || []).slice(0, 5).join(", ") || "none"}`,
+  `writerStage: ${summary.llmStages?.writer?.success ?? "unknown"} reason=${summary.llmStages?.writer?.reason || "none"} attempts=${summary.llmStages?.writer?.attempts ?? "unknown"}`,
+  `judgeStage: ${summary.llmStages?.judge?.success ?? "unknown"} reason=${summary.llmStages?.judge?.reason || "none"} attempts=${summary.llmStages?.judge?.attempts ?? "unknown"}`,
+  `revisionEnabled: ${summary.revisionEnabled === null ? "unknown" : summary.revisionEnabled}`,
+  `revisionUsed: ${summary.qualityDiagnostics?.revisionUsed ?? "unknown"}`,
+  `revisionCallCount: ${summary.qualityDiagnostics?.revisionCallCount ?? "unknown"}`,
+  `attemptScores: ${(summary.qualityDiagnostics?.attemptScores || []).join(", ") || "unknown"}`,
+  `selectedAttempt: ${summary.qualityDiagnostics?.selectedAttempt ?? "unknown"}`,
   `imageCount: ${summary.imageCount}`,
   `visibleElementsCount: ${summary.visibleElementsCount}`,
-  `result: ${summary.pass ? "PASS" : "FAIL"}`
+  `connectionResult: ${summary.connectionResult}`,
+  `qualityResult: ${summary.qualityResult}`,
+  `overallResult: ${summary.overallResult}`
 ].join("\n");
 
-export const runDiagnostics = async ({ previewUrl = "", imagePath = "" } = {}) => {
+export const runDiagnostics = async ({ previewUrl = "", imagePath = "", timeoutMs = DEFAULT_DIAGNOSTIC_TIMEOUT_MS } = {}) => {
   const url = buildGenerateBlogUrl(previewUrl);
   const image = await readDiagnosticImage(imagePath);
   const payload = buildDiagnosticPayload({ image });
-  const { status, json } = await fetchJson(url, payload);
+  const { status, json } = await fetchDiagnosticJson(url, payload, { timeoutMs });
   return summarizeDiagnosticResponse({
     url,
     status,
@@ -291,15 +566,14 @@ export const runDiagnostics = async ({ previewUrl = "", imagePath = "" } = {}) =
 export const runAutoDiagnostics = async ({
   projectName = DEFAULT_PROJECT_NAME,
   branch = DEFAULT_PREVIEW_BRANCH,
-  imagePath = ""
+  imagePath = "",
+  timeoutMs = DEFAULT_DIAGNOSTIC_TIMEOUT_MS
 } = {}) => {
-  await assertWranglerAuthenticated();
-  const deployments = await listPreviewDeployments(projectName);
-  const source = await getCurrentGitSource();
-  const deployment = selectLatestPreviewDeployment(deployments, { branch, source });
+  const { source, deployment } = await discoverLatestPreviewDeployment({ projectName, branch });
   const summary = await runDiagnostics({
     previewUrl: deployment.Deployment,
-    imagePath
+    imagePath,
+    timeoutMs
   });
   return {
     projectName,
@@ -325,11 +599,13 @@ export const formatAutoDiagnosticSummary = ({ projectName = DEFAULT_PROJECT_NAME
 
 const main = async () => {
   const args = parseArgs(process.argv.slice(2));
+  const timeoutMs = parseTimeoutMs(args["timeout-ms"], DEFAULT_DIAGNOSTIC_TIMEOUT_MS);
   if (args.auto) {
     const autoResult = await runAutoDiagnostics({
       projectName: args.project || DEFAULT_PROJECT_NAME,
       branch: args.branch || DEFAULT_PREVIEW_BRANCH,
-      imagePath: args.image || ""
+      imagePath: args.image || "",
+      timeoutMs
     });
     console.log(formatAutoDiagnosticSummary(autoResult));
     process.exitCode = autoResult.summary.pass ? 0 : 1;
@@ -338,13 +614,18 @@ const main = async () => {
 
   const previewUrl = args.url || process.env.BLOG_PREVIEW_URL || "";
   const imagePath = args.image || "";
-  const summary = await runDiagnostics({ previewUrl, imagePath });
+  const summary = await runDiagnostics({ previewUrl, imagePath, timeoutMs });
   console.log(formatDiagnosticSummary(summary));
   process.exitCode = summary.pass ? 0 : 1;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
+    if (isAbortError(error) && error.requestUrl) {
+      console.error(formatDiagnosticAbortError(error));
+      process.exitCode = 1;
+      return;
+    }
     console.error(`diagnostic-error: ${error.message}`);
     process.exitCode = 1;
   });

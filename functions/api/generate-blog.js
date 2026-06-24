@@ -1,5 +1,9 @@
 import { createProductReviewDraft } from "../../shared/productReviewGenerator.js";
-import { BLOG_WRITER_PROMPT_VERSION, buildBlogWriterPromptPayload } from "../../shared/blogWriterPrompt.js";
+import {
+  BLOG_WRITER_OUTPUT_JSON_SCHEMA,
+  BLOG_WRITER_PROMPT_VERSION,
+  buildBlogWriterPromptPayload
+} from "../../shared/blogWriterPrompt.js";
 import { evaluateBlogWriterQuality } from "../../shared/blogWriterQuality.js";
 import { createHumanQualityFactMap, evaluateHumanQuality } from "../../shared/blogWriterHumanQuality.js";
 import { createBlogWriterTrace, summarizeResultDiff } from "../../shared/blogWriterTrace.js";
@@ -30,6 +34,9 @@ const ALLOWED_LLM_REASONS = new Set([
   "openai-timeout",
   "openai-http-error",
   "openai-invalid-response",
+  "openai-refusal",
+  "openai-output-incomplete",
+  "openai-empty-output",
   "llm-schema-invalid",
   "llm-quality-rejected",
   "vision-disabled",
@@ -46,6 +53,9 @@ const STAGE_REASON_MAP = {
   "openai-timeout": "timeout",
   "openai-http-error": "http-error",
   "openai-invalid-response": "invalid-json",
+  "openai-refusal": "refusal",
+  "openai-output-incomplete": "incomplete",
+  "openai-empty-output": "empty-output",
   "llm-schema-invalid": "invalid-schema",
   "llm-quality-rejected": "quality-rejected",
   "vision-disabled": "disabled",
@@ -122,6 +132,111 @@ const extractFirstJsonObject = (value = "") => {
 const parseLlmJson = (value = "") => {
   const cleaned = stripJsonFence(value);
   return JSON.parse(cleaned);
+};
+
+const simpleHash = (value = "") => {
+  let hash = 5381;
+  for (const char of String(value || "")) {
+    hash = ((hash << 5) + hash + char.charCodeAt(0)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+};
+
+export const getOpenAiApiEndpoint = () => "chat-completions";
+
+export const extractOpenAiText = (payload = {}, { endpoint = getOpenAiApiEndpoint() } = {}) => {
+  if (payload?.refusal || payload?.choices?.[0]?.message?.refusal) {
+    return {
+      apiEndpoint: endpoint,
+      responseShape: endpoint === "responses" ? "responses-output" : "chat-choices",
+      text: "",
+      textExtracted: false,
+      extractedTextLength: 0,
+      extractedTextHash: "",
+      refusal: true,
+      finishReason: payload?.choices?.[0]?.finish_reason || null
+    };
+  }
+
+  if (endpoint === "responses") {
+    const outputText = String(payload.output_text || "");
+    const nestedText = (payload.output || [])
+      .flatMap((item) => item?.content || [])
+      .map((item) => item?.text || item?.value || "")
+      .filter(Boolean)
+      .join("\n");
+    const textValue = outputText || nestedText;
+    return {
+      apiEndpoint: "responses",
+      responseShape: textValue ? "responses-output" : "unknown",
+      text: textValue,
+      textExtracted: Boolean(textValue),
+      extractedTextLength: textValue.length,
+      extractedTextHash: textValue ? simpleHash(textValue) : "",
+      refusal: false,
+      finishReason: payload.status === "incomplete" ? "length" : payload.status || null
+    };
+  }
+
+  const textValue = String(payload?.choices?.[0]?.message?.content || "");
+  return {
+    apiEndpoint: "chat-completions",
+    responseShape: textValue ? "chat-choices" : "unknown",
+    text: textValue,
+    textExtracted: Boolean(textValue),
+    extractedTextLength: textValue.length,
+    extractedTextHash: textValue ? simpleHash(textValue) : "",
+    refusal: false,
+    finishReason: payload?.choices?.[0]?.finish_reason || null
+  };
+};
+
+const structuredResponseFormat = (name = "blog_writer_result", schema = BLOG_WRITER_OUTPUT_JSON_SCHEMA) => ({
+  type: "json_schema",
+  json_schema: {
+    name,
+    strict: true,
+    schema
+  }
+});
+
+export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    score: { type: "number" },
+    publishReady: { type: "boolean" },
+    hardFail: { type: "boolean" },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          code: { type: "string" },
+          severity: { type: "string" },
+          evidence: { type: "string" },
+          message: { type: "string" },
+          revisionInstruction: { type: "string" }
+        },
+        required: ["code", "severity", "evidence", "message", "revisionInstruction"],
+        additionalProperties: false
+      }
+    },
+    coveredFactIds: { type: "array", items: { type: "string" } },
+    missingFactIds: { type: "array", items: { type: "string" } },
+    unsupportedClaims: { type: "array", items: { type: "string" } },
+    revisionInstructions: { type: "array", items: { type: "string" } }
+  },
+  required: [
+    "score",
+    "publishReady",
+    "hardFail",
+    "issues",
+    "coveredFactIds",
+    "missingFactIds",
+    "unsupportedClaims",
+    "revisionInstructions"
+  ],
+  additionalProperties: false
 };
 
 const safeReason = (reason = "") => (ALLOWED_LLM_REASONS.has(reason) ? reason : "unknown-llm-error");
@@ -393,7 +508,7 @@ const parseLlmJsonSafely = (content = "") => {
       }
     }
     const plainBody = stripJsonFence(content);
-    if (Array.from(plainBody).length >= 300) {
+    if (Array.from(plainBody).length >= 120) {
       return {
         body: plainBody,
         sections: [],
@@ -797,7 +912,7 @@ const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, fo
         messages: buildHumanJudgeMessages({ form, draft }),
         temperature: 0,
         max_tokens: 1800,
-        response_format: { type: "json_object" }
+        response_format: structuredResponseFormat("blog_judge_result", BLOG_JUDGE_OUTPUT_JSON_SCHEMA)
       }
     });
     recordStageSuccess(llmStages, "judge", {
@@ -806,7 +921,11 @@ const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, fo
       latencyMs: Date.now() - startedAt
     });
 
-    const content = payload?.choices?.[0]?.message?.content || "";
+    const extraction = extractOpenAiText(payload);
+    if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
+    if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
+    if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
+    const content = extraction.text;
     return parseLlmJsonSafely(content);
   } catch (error) {
     recordStageFailure(llmStages, "judge", error, {
@@ -866,7 +985,7 @@ const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form
         messages: buildRevisionMessages({ form, draft, humanQuality }),
         temperature: 0.35,
         max_tokens: getWriterMaxTokens({ form, fallbackDraft: draft }),
-        response_format: { type: "json_object" }
+        response_format: structuredResponseFormat("blog_revision_result", BLOG_WRITER_OUTPUT_JSON_SCHEMA)
       }
     });
     recordStageSuccess(llmStages, "revision", {
@@ -876,7 +995,11 @@ const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form
       revisionAttempt
     });
 
-    const content = payload?.choices?.[0]?.message?.content || "";
+    const extraction = extractOpenAiText(payload);
+    if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
+    if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
+    if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
+    const content = extraction.text;
     return parseLlmJsonSafely(content);
   } catch (error) {
     recordStageFailure(llmStages, "revision", error, {
@@ -1324,7 +1447,16 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     diagnostics: {
       ...(fallbackPackage.diagnostics || {}),
       rawFinalDiff,
-      schemaRepair: normalizedSchemaRepair
+      schemaRepair: normalizedSchemaRepair,
+      responseExtraction: {
+        apiEndpoint: llmDraft.__openAiMeta?.apiEndpoint || getOpenAiApiEndpoint(),
+        responseShape: llmDraft.__openAiMeta?.responseShape || "unknown",
+        textExtracted: Boolean(llmDraft.__openAiMeta?.textExtracted),
+        extractedTextLength: llmDraft.__openAiMeta?.extractedTextLength || 0,
+        extractedTextHash: llmDraft.__openAiMeta?.extractedTextHash || "",
+        writerAttempts: llmDraft.__openAiMeta?.writerAttempts || 1,
+        schemaFailureCount: llmDraft.__openAiMeta?.schemaFailureCount || 0
+      }
     },
     publishReady,
     judgeEngine: deterministicHumanQuality.judgeEngine,
@@ -1449,56 +1581,77 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}, env = {}) =>
   };
 };
 
-const hasUsableLlmDraft = (draft = {}) =>
-  Boolean(getDraftBody(draft)) &&
-  Boolean(String(draft.finalTitle || draft.selectedTitle || "").trim() || normalizeList(draft.titleCandidates || draft.titles).length > 0);
+const hasUsableLlmDraft = (draft = {}) => Boolean(getDraftBody(draft));
 
 const requestLlmWriter = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, fallbackDraft = {}, promptPayload = {}, llmStages = null } = {}) => {
   let maxTokens = getWriterMaxTokens({ form, fallbackDraft });
   let lastDraft = null;
   let lastPayload = null;
+  let schemaFailureCount = 0;
+  const correctionMessage = {
+    role: "user",
+    content:
+      "Return only a JSON object that matches the required schema: titleCandidates with exactly 5 strings, finalTitle, sections, faq, and hashtags. Do not include body, analysis, notes, markdown, or extra fields."
+  };
 
-  for (let lengthRetry = 0; lengthRetry < 2; lengthRetry += 1) {
-    const startedAt = Date.now();
-    try {
-      const payload = await fetchOpenAiJson({
-        env,
-        body: {
-          model,
-          messages: promptPayload.messages,
-          temperature: 0.45,
-          max_tokens: maxTokens,
-          response_format: { type: "json_object" }
+  for (let schemaAttempt = 0; schemaAttempt < 2; schemaAttempt += 1) {
+    const messages = schemaAttempt === 0 ? promptPayload.messages : [...promptPayload.messages, correctionMessage];
+    for (let lengthRetry = 0; lengthRetry < 2; lengthRetry += 1) {
+      const startedAt = Date.now();
+      try {
+        const payload = await fetchOpenAiJson({
+          env,
+          body: {
+            model,
+            messages,
+            temperature: 0.45,
+            max_tokens: maxTokens,
+            response_format: structuredResponseFormat("blog_writer_result", BLOG_WRITER_OUTPUT_JSON_SCHEMA)
+          }
+        });
+        lastPayload = payload;
+        const extraction = extractOpenAiText(payload);
+        if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
+        if (extraction.finishReason === "length" && lengthRetry === 0) {
+          maxTokens = Math.min(9000, Math.ceil(maxTokens * 1.5));
+          continue;
         }
-      });
-      lastPayload = payload;
-      const content = payload?.choices?.[0]?.message?.content || "";
-      const draft = parseLlmJsonSafely(content);
-      draft.__openAiMeta = {
-        ...(payload.__openAiMeta || {}),
-        maxTokens,
-        lengthRetry
-      };
-      lastDraft = draft;
+        if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
+        if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
+        const content = extraction.text;
+        const draft = parseLlmJsonSafely(content);
+        draft.__openAiMeta = {
+          ...(payload.__openAiMeta || {}),
+          apiEndpoint: extraction.apiEndpoint,
+          responseShape: extraction.responseShape,
+          textExtracted: extraction.textExtracted,
+          extractedTextLength: extraction.extractedTextLength,
+          extractedTextHash: extraction.extractedTextHash,
+          schemaFailureCount,
+          writerAttempts: schemaAttempt + 1,
+          maxTokens,
+          lengthRetry
+        };
+        lastDraft = draft;
 
-      if (payload.__openAiMeta?.finishReason === "length" && lengthRetry === 0) {
-        maxTokens = Math.min(9000, Math.ceil(maxTokens * 1.5));
-        continue;
+        recordStageSuccess(llmStages, "writer", {
+          status: payload.__openAiMeta?.status || 200,
+          attempts: schemaAttempt + (payload.__openAiMeta?.attempts || 1),
+          latencyMs: Date.now() - startedAt,
+          finishReason: extraction.finishReason || null
+        });
+        return draft;
+      } catch (error) {
+        if (error instanceof SafeLlmError && error.reason === "llm-schema-invalid" && schemaAttempt === 0) {
+          schemaFailureCount += 1;
+          break;
+        }
+        recordStageFailure(llmStages, "writer", error, {
+          attempts: schemaAttempt + (error?.attempts || 1),
+          latencyMs: Date.now() - startedAt
+        });
+        throw error;
       }
-
-      recordStageSuccess(llmStages, "writer", {
-        status: payload.__openAiMeta?.status || 200,
-        attempts: payload.__openAiMeta?.attempts || 1,
-        latencyMs: Date.now() - startedAt,
-        finishReason: payload.__openAiMeta?.finishReason || null
-      });
-      return draft;
-    } catch (error) {
-      recordStageFailure(llmStages, "writer", error, {
-        attempts: error?.attempts || 1,
-        latencyMs: Date.now() - startedAt
-      });
-      throw error;
     }
   }
 
