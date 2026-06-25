@@ -671,7 +671,8 @@ const normalizeFaqItems = (value, fallback = []) => {
         answer: String(item?.answer || "").trim()
       };
     })
-    .filter((item) => item.question && item.answer);
+    .filter((item) => item.question && item.answer)
+    .slice(0, 2);
 };
 
 const normalizeSections = (sections = []) => {

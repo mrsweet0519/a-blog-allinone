@@ -917,6 +917,41 @@ const sectionsOnlyDraft = await callApiWithFetch({
 assert.equal(sectionsOnlyDraft.engine, "llm");
 assert.ok(sectionsOnlyDraft.body.includes(revisionMemoLines[0]));
 
+const threeFaqDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({
+                ...makeMockLlmDraft("three-faq"),
+                faq: [
+                  { question: "첫 번째 질문", answer: "첫 번째 답변" },
+                  { question: "두 번째 질문", answer: "두 번째 답변" },
+                  { question: "세 번째 질문", answer: "세 번째 답변" }
+                ]
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(threeFaqDraft.engine, "llm");
+assert.ok(threeFaqDraft.faq.length <= 2);
+assert.ok(threeFaqDraft.contentPackage.faqItems.length <= 2);
+
 const fencedDraft = await callApiWithFetch({
   body: revisionCanaryInput,
   env: {
