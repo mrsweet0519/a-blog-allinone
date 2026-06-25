@@ -662,10 +662,81 @@ assert.equal(revisionDraft.qualityDiagnostics.revisionCallCount, 2);
 assert.equal(revisionDraft.qualityDiagnostics.qualityAttempts, 3);
 assert.ok(revisionDraft.qualityDiagnostics.revisionCallCount <= 2);
 assert.equal(revisionDraft.qualityDiagnostics.attemptScores.length, 3);
+assert.equal(revisionDraft.qualityDiagnostics.attempts.filter((attempt) => attempt.selected).length, 1);
+assert.ok(revisionDraft.qualityDiagnostics.attempts.every((attempt) => "targetComplianceRatio" in attempt && "inputFactCoverage" in attempt));
+assert.equal(revisionDraft.qualityDiagnostics.revisionEffectiveness, "EFFECTIVE");
+assert.ok(revisionDraft.qualityDiagnostics.revisionGain > 0);
 assert.equal(
   revisionDraft.qualityDiagnostics.attemptScores[revisionDraft.qualityDiagnostics.selectedAttempt - 1],
   Math.max(...revisionDraft.qualityDiagnostics.attemptScores)
 );
+
+let noImprovementFetchCount = 0;
+const noImprovementDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "true",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    noImprovementFetchCount += 1;
+    if ([1, 3, 5].includes(noImprovementFetchCount)) {
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(makeMockLlmDraft("same-no-improvement")) } }]
+        }),
+        { status: 200 }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                score: 80,
+                publishReady: false,
+                scores: {
+                  titleQuality: 8,
+                  openingQuality: 8,
+                  factualGrounding: 12,
+                  specificity: 12,
+                  humanNaturalness: 12,
+                  narrativeCoherence: 8,
+                  paragraphValue: 8,
+                  keywordNaturalness: 4,
+                  imageGrounding: 5,
+                  readerUtility: 4
+                },
+                issues: [{ code: "UNIT_NEEDS_REVISION", severity: "medium", message: "needs revision" }],
+                revisionInstructions: ["Change strategy instead of repeating the same edit."],
+                coveredFactIds: revisionCanaryInput.experienceMemo.split("\n").map((_, index) => `uf${index + 1}`),
+                missingFactIds: [],
+                criticalMissingFactIds: [],
+                unsupportedClaims: [],
+                categoryContamination: [],
+                metaGuidance: [],
+                josaErrors: [],
+                genericFillerRatio: 0,
+                targetComplianceRatio: 0.95,
+                issueCodes: ["UNIT_NEEDS_REVISION"]
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    );
+  }
+});
+assert.equal(noImprovementFetchCount, 6);
+assert.equal(noImprovementDraft.qualityDiagnostics.revisionCallCount, 2);
+assert.equal(noImprovementDraft.qualityDiagnostics.selectedAttempt, 1);
+assert.equal(noImprovementDraft.qualityDiagnostics.revisionEffectiveness, "NO_IMPROVEMENT");
+assert.ok(noImprovementDraft.qualityDiagnostics.revisionDecisions.some((decision) => decision.reason === "no_improvement_rebuild"));
 
 let judgeTimeoutFetchCount = 0;
 const judgeTimeoutDraft = await callApiWithFetch({
@@ -1102,11 +1173,13 @@ assert.equal(BLOG_WRITER_OUTPUT_JSON_SCHEMA.properties.sections.items.properties
 assert.equal(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.additionalProperties, false);
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("coveredFactIds"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("missingFactIds"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("criticalMissingFactIds"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("categoryContamination"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("metaGuidance"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("josaErrors"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("genericFillerRatio"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("targetComplianceRatio"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("issueCodes"));
 
 const chatExtraction = extractOpenAiText({
   choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("extract-chat")) } }]
@@ -1301,10 +1374,31 @@ for (const input of qualityCanaryInputs) {
   assert.equal(context.informationSufficiency.level, "high");
   assert.equal(context.writerPlan.effectiveTargetCharCount, input.targetCharCount);
   assert.ok(context.writerPlan.sectionBudgets.length >= 3);
+  assert.equal(
+    context.writerPlan.sectionBudgets.reduce((total, section) => total + Number(section.targetChars || 0), 0),
+    context.writerPlan.effectiveTargetCharCount
+  );
   assert.ok(context.writerPlan.sections.some((section) => (section.requiredFactIds || []).length > 0));
+  assert.ok(context.writerPlan.sections.every((section) => Array.isArray(section.forbiddenRepeatedFactIds)));
   assert.ok((context.writerPlan.factPolicy.forbiddenClaims || []).includes("unverified price"));
   assert.ok(!productionSource.includes(input.productName));
 }
+
+const lowRequestedTargetContext = buildBlogWriterPipelineContext({
+  category: "information",
+  productName: "라온정보 생활 기록 기준",
+  mainKeyword: "생활 기록 기준",
+  subKeywords: "",
+  experienceMemo: "",
+  targetCharCount: 3200
+});
+assert.equal(lowRequestedTargetContext.informationSufficiency.level, "low");
+assert.equal(lowRequestedTargetContext.writerPlan.requestedTargetCharCount, 3200);
+assert.ok(lowRequestedTargetContext.writerPlan.effectiveTargetCharCount <= 1100);
+assert.equal(
+  lowRequestedTargetContext.writerPlan.sectionBudgets.reduce((total, section) => total + Number(section.targetChars || 0), 0),
+  lowRequestedTargetContext.writerPlan.effectiveTargetCharCount
+);
 
 const noImageContext = buildBlogWriterPipelineContext(qualityCanaryInputs[0]);
 const noImageBody = [
@@ -1400,6 +1494,18 @@ const priorityCoverage = calculateInputFactCoverage({ factMap: priorityFactMap, 
 assert.equal(priorityCoverage.criticalFactCoverage, 1);
 assert.equal(priorityCoverage.highFactCoverage, 0.9);
 assert.ok(priorityCoverage.inputFactCoverage >= 0.9);
+assert.deepEqual(priorityCoverage.criticalMissingFactIds, []);
+assert.ok(priorityCoverage.coveredFactIds.includes("critical-1"));
+
+const llmOnlyCoverage = calculateInputFactCoverage({
+  factMap: priorityFactMap,
+  body: "Unit Entity opens with a broad review but does not carry the supplied facts.",
+  coveredFactIds: ["critical-1", ...highPriorityFacts.map((fact) => fact.id)],
+  missingFactIds: []
+});
+assert.equal(llmOnlyCoverage.criticalFactCoverage, 0);
+assert.ok(llmOnlyCoverage.inputFactCoverage < 0.9);
+assert.ok(llmOnlyCoverage.criticalMissingFactIds.includes("critical-1"));
 
 const highCoverageQuality = evaluateHumanQuality({
   title: "Unit Entity Review",
@@ -1488,6 +1594,36 @@ const lowLengthQuality = evaluateHumanQuality({
 });
 assert.ok(!lowLengthQuality.caps.some((cap) => /^TARGET_LENGTH_/u.test(cap.code)));
 assert.equal(lowLengthQuality.publishReady, false);
+
+const broadKeywordEntityQuality = evaluateHumanQuality({
+  title: "지역 맛집 후기",
+  titleCandidates: ["지역 맛집 후기"],
+  body: "지역 맛집 후기를 찾는 기준만 정리했다. 지역 맛집이라는 넓은 키워드만 반복했다.",
+  faq: [],
+  hashtags: [],
+  factMap: { userFacts: [] },
+  mainKeyword: "지역 맛집",
+  primaryEntity: "Unit Entity",
+  requestedTargetCharCount: 1000,
+  effectiveTargetCharCount: 1000,
+  informationSufficiency: "high",
+  engine: "llm",
+  llmJudge: {
+    score: 100,
+    scores: {},
+    issues: [],
+    coveredFactIds: [],
+    missingFactIds: [],
+    criticalMissingFactIds: [],
+    unsupportedClaims: [],
+    categoryContamination: [],
+    metaGuidance: [],
+    josaErrors: [],
+    issueCodes: []
+  }
+});
+assert.equal(broadKeywordEntityQuality.hardFail, true);
+assert.equal(broadKeywordEntityQuality.diagnostics.entityCoverage.finalTitle, false);
 
 const unsupportedSummary = summarizeClaimLedger(
   createClaimLedger({

@@ -279,6 +279,13 @@ export const evaluateHumanQuality = ({
     if (!pattern.test(normalizedBody)) return false;
     return !new RegExp(escapeRegExp(label.replace(/\s+/gu, "")), "u").test(compact(sourceText)) && !pattern.test(sourceText);
   });
+  const llmCoveredFactIds = Array.isArray(llmJudge?.coveredFactIds) ? llmJudge.coveredFactIds.filter(Boolean) : [];
+  const llmCriticalMissingFactIds = Array.isArray(llmJudge?.criticalMissingFactIds) ? llmJudge.criticalMissingFactIds.filter(Boolean) : [];
+  const llmMissingFactIds = unique([
+    ...(Array.isArray(llmJudge?.missingFactIds) ? llmJudge.missingFactIds : []),
+    ...llmCriticalMissingFactIds
+  ]);
+  const llmIssueCodes = Array.isArray(llmJudge?.issueCodes) ? llmJudge.issueCodes.filter(Boolean) : [];
   const llmUnsupportedClaims = Array.isArray(llmJudge?.unsupportedClaims) ? llmJudge.unsupportedClaims.filter(Boolean) : [];
   const llmCategoryContamination = Array.isArray(llmJudge?.categoryContamination) ? llmJudge.categoryContamination.filter(Boolean) : [];
   const llmMetaGuidance = Array.isArray(llmJudge?.metaGuidance) ? llmJudge.metaGuidance.filter(Boolean) : [];
@@ -306,8 +313,8 @@ export const evaluateHumanQuality = ({
   const inputFactCoverage = calculateInputFactCoverage({
     factMap,
     body: normalizedBody,
-    coveredFactIds: llmJudge?.coveredFactIds || [],
-    missingFactIds: llmJudge?.missingFactIds || []
+    coveredFactIds: llmCoveredFactIds,
+    missingFactIds: llmMissingFactIds
   });
   const enforceTargetLength = informationSufficiency !== "low";
   const targetComplianceRatio =
@@ -730,6 +737,12 @@ export const evaluateHumanQuality = ({
       ],
       metaGuidance: llmMetaGuidance,
       josaErrors: llmJosaErrors,
+      issueCodes: unique([
+        ...issues.map((issue) => issue.code),
+        ...llmIssues.map((issue) => issue.code),
+        ...llmIssueCodes,
+        ...caps.map((cap) => cap.code)
+      ]),
       categoryFitScore: categoryContaminationResult.categoryFitScore
     },
     requestedTargetCharCount,

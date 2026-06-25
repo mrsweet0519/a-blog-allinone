@@ -127,12 +127,38 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
     .filter((fact) => Number(fact.confidence || 0) >= 0.85)
     .map((fact) => fact.id)
     .filter(Boolean);
+  const criticalFactIds = (factMap.userFacts || [])
+    .filter((fact) => Number(fact.confidence || 0) >= 0.85 && fact.priority === "critical")
+    .map((fact) => fact.id)
+    .filter(Boolean);
+  const highFactIds = (factMap.userFacts || [])
+    .filter((fact) => Number(fact.confidence || 0) >= 0.85 && fact.priority === "high")
+    .map((fact) => fact.id)
+    .filter(Boolean);
+  const requestedTargetCharCount = Number(targetCharCount) || writerPlan.requestedTargetCharCount || 2500;
+  const effectiveTargetCharCount = writerPlan.effectiveTargetCharCount || requestedTargetCharCount;
+  const sectionBudgets = writerPlan.sectionBudgets || [];
+  const allowedClaims = writerPlan.factPolicy?.allowedClaims || factMap.supported || [];
+  const forbiddenClaims = writerPlan.factPolicy?.forbiddenClaims || factMap.unsupportedFields || [];
+  const unknownFields = writerPlan.factPolicy?.unknownFields || factMap.unsupportedFields || [];
 
   return {
     primaryEntity,
     canonicalEntity: primaryEntity,
     mainKeyword: pipelineContext.mainKeyword || "",
     subKeywords: pipelineContext.subKeywords || [],
+    category: pipelineContext.category || "",
+    searchIntent: pipelineContext.searchIntent || null,
+    experienceStatus: pipelineContext.experienceStatus || "",
+    informationSufficiency: pipelineContext.informationSufficiency?.level || pipelineContext.informationSufficiency || "",
+    requestedTargetCharCount,
+    effectiveTargetCharCount,
+    sectionBudgets,
+    criticalFactIds,
+    highFactIds,
+    allowedClaims,
+    forbiddenClaims,
+    unknownFields,
     requiredEntityPlacements: ["finalTitle", "openingFirstSentence", "openingParagraph", "body"],
     titleRules: {
       candidateCount: 5,
@@ -147,15 +173,15 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
       doNotCountRepeatedFactTwice: true
     },
     claimBoundary: {
-      allowedClaims: writerPlan.factPolicy?.allowedClaims || factMap.supported || [],
-      forbiddenClaims: writerPlan.factPolicy?.forbiddenClaims || factMap.unsupportedFields || [],
-      unknownFields: writerPlan.factPolicy?.unknownFields || factMap.unsupportedFields || []
+      allowedClaims,
+      forbiddenClaims,
+      unknownFields
     },
     lengthContract: {
-      requestedTargetCharCount: Number(targetCharCount) || writerPlan.requestedTargetCharCount || 2500,
-      effectiveTargetCharCount: writerPlan.effectiveTargetCharCount || Number(targetCharCount) || 2500,
+      requestedTargetCharCount,
+      effectiveTargetCharCount,
       acceptableRatio: [0.85, 1.1],
-      sectionBudgets: writerPlan.sectionBudgets || []
+      sectionBudgets
     },
     sectionPlan: (writerPlan.sections || []).map((section) => ({
       sectionId: section.sectionId,
@@ -166,6 +192,7 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
       targetCharCount: section.targetCharCount || section.targetChars || 0,
       targetChars: section.targetChars || section.targetCharCount || 0,
       forbiddenDuplicateFactIds: section.forbiddenDuplicateFactIds || [],
+      forbiddenRepeatedFactIds: section.forbiddenRepeatedFactIds || section.forbiddenDuplicateFactIds || [],
       imageRefs: section.imageRefs || []
     }))
   };
@@ -238,8 +265,8 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "experienceStatus가 visited/stayed/used/eaten/attended/purchased가 아니면 실제 방문·사용 후기처럼 쓰지 마세요.",
     "imageAnalysis.mode가 label-only이면 라벨과 메모로 알 수 있는 내용만 쓰고, 사진 속 맛·가격·양·직원 응대·영업시간은 만들지 마세요.",
     "informationSufficiency가 low이면 긴 글자수를 억지로 맞추지 말고 700~1300자 안의 밀도 있는 원고로 끝내세요. low는 FAQ를 만들지 않습니다.",
-    "informationSufficiency가 high이면 effectiveTargetCharCount의 85~110% 안에 들어오도록 작성하세요. 글자수를 늘릴 때 일반론을 쓰지 말고 factMap.userFacts의 각 fact를 서로 다른 문단에서 구체적인 상황, 판단 이유, 결과로 확장하세요.",
-    "high 입력에서는 모든 핵심 경험 fact, 좋았던 점, 아쉬웠던 점, 실제 결과, 재사용·재방문·재수강 의사를 빠뜨리지 마세요. 각 섹션은 writerPlan.sections의 evidenceIds 중 하나 이상을 실제 문장에 반영해야 합니다.",
+    "informationSufficiency가 high 또는 medium이면 effectiveTargetCharCount의 85~110% 안에 들어오도록 작성하세요. 글자수를 늘릴 때 일반론을 쓰지 말고 factMap.userFacts의 각 fact를 서로 다른 문단에서 구체적인 상황, 판단 이유, 결과로 확장하세요.",
+    "high 또는 medium 입력에서는 모든 핵심 경험 fact, 좋았던 점, 아쉬웠던 점, 실제 결과, 재사용·재방문·재수강 의사를 빠뜨리지 마세요. 각 섹션은 writerPlan.sections의 evidenceIds 중 하나 이상을 실제 문장에 반영해야 합니다.",
     "문단별 역할은 겹치지 않게 나누고, 마무리 문단은 앞 문단을 반복하지 말고 실제 결과와 다음 사용/방문 판단만 정리하세요.",
     "첫 문장에는 primaryEntity 또는 mainKeyword를 넣고, 첫 문단에는 mainKeyword를 1~2회만, subKeyword는 최대 1개만 자연스럽게 연결하세요.",
     "본문 문단은 readerIntent의 서로 다른 질문에 답하고, 각 문단은 factMap evidenceIds 또는 imageRefs 중 하나 이상과 연결하세요.",
@@ -256,8 +283,8 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "최종 응답은 JSON만 반환하세요.",
     "Use writerBrief as the binding brief. Include the canonical primaryEntity in finalTitle, the first sentence, the opening paragraph, and the body. At least 4 of 5 titleCandidates must include the exact primaryEntity.",
     "Follow writerBrief.sectionPlan and sectionBudgets. Each section must cover its requiredFactIds with distinct, grounded sentences. Do not replace the primaryEntity with a broad keyword.",
-    "If writerBrief.lengthContract.effectiveTargetCharCount is high, write within 85-110% by expanding distinct user facts, not by repeating keywords, headings, FAQ, or generic filler.",
-    "Before returning JSON, self-check: inputFactCoverage >= 0.90, no unsupportedClaims, no category contamination, no meta guidance, no josa awkwardness, target length 85-110%.",
+    "If writerBrief.informationSufficiency is high or medium, write within 85-110% by expanding distinct user facts, not by repeating keywords, headings, FAQ, or generic filler. If it is low, keep an honest short draft.",
+    "Before returning JSON, self-check: inputFactCoverage >= 0.90, no unsupportedClaims, no category contamination, no meta guidance, no josa awkwardness, and target length 85-110% only for high/medium inputs.",
     toJsonBlock(payload)
   ].join("\n\n");
 };

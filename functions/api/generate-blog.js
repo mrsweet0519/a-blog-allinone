@@ -224,13 +224,15 @@ export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
     },
     coveredFactIds: { type: "array", items: { type: "string" } },
     missingFactIds: { type: "array", items: { type: "string" } },
+    criticalMissingFactIds: { type: "array", items: { type: "string" } },
     unsupportedClaims: { type: "array", items: { type: "string" } },
     categoryContamination: { type: "array", items: { type: "string" } },
     metaGuidance: { type: "array", items: { type: "string" } },
     josaErrors: { type: "array", items: { type: "string" } },
     genericFillerRatio: { type: "number" },
     targetComplianceRatio: { type: "number" },
-    revisionInstructions: { type: "array", items: { type: "string" } }
+    revisionInstructions: { type: "array", items: { type: "string" } },
+    issueCodes: { type: "array", items: { type: "string" } }
   },
   required: [
     "score",
@@ -239,13 +241,15 @@ export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
     "issues",
     "coveredFactIds",
     "missingFactIds",
+    "criticalMissingFactIds",
     "unsupportedClaims",
     "categoryContamination",
     "metaGuidance",
     "josaErrors",
     "genericFillerRatio",
     "targetComplianceRatio",
-    "revisionInstructions"
+    "revisionInstructions",
+    "issueCodes"
   ],
   additionalProperties: false
 };
@@ -1032,8 +1036,17 @@ const removeUnsafeClaimSegments = ({
 
 function getWriterMaxTokens({ form = {}, fallbackDraft = {} } = {}) {
   const packageData = fallbackDraft.contentPackage || fallbackDraft || {};
+  const informationLevel = packageData.informationSufficiency?.level || packageData.informationSufficiency || "";
+  const lowInformationTarget = Number(
+    packageData.effectiveTargetCharCount ||
+      packageData.targetLengthRange?.target ||
+      packageData.targetCharCount ||
+      900
+  );
   const target = Number(
-    form.targetCharCount ||
+    informationLevel === "low"
+      ? lowInformationTarget
+      : form.targetCharCount ||
       form.targetLength ||
       packageData.requestedTargetCharCount ||
       packageData.targetLengthRange?.target ||
@@ -1226,6 +1239,11 @@ const buildJudgePrecheck = ({ form = {}, draft = {} } = {}) => {
       inputFactCoverage: inputFactCoverage.inputFactCoverage,
       criticalFactCoverage: inputFactCoverage.criticalFactCoverage,
       highFactCoverage: inputFactCoverage.highFactCoverage,
+      totalFacts: inputFactCoverage.totalFacts,
+      criticalFacts: inputFactCoverage.criticalFacts,
+      highFacts: inputFactCoverage.highFacts,
+      coveredFactIds: inputFactCoverage.coveredFactIds,
+      criticalMissingFactIds: inputFactCoverage.criticalMissingFactIds,
       missingCriticalFactIds: inputFactCoverage.missingCriticalFactIds,
       missingHighFactIds: inputFactCoverage.missingHighFactIds,
       missingFactIds: inputFactCoverage.missingFactIds
@@ -1247,7 +1265,7 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
   {
     role: "system",
     content:
-      "Publish readiness requires all of these: primaryEntity in finalTitle/opening/body, inputFactCoverage >= 0.90, target length 85-110%, zero unsupported claims, zero category contamination, no meta guidance, no awkward josa, and natural Korean. Missing critical facts, unsupported claims, weak opening entity placement, or target length outside range must be reflected in missingFactIds, unsupportedClaims, issues, and revisionInstructions. Judge the reader-facing draft body first; FAQ is optional support and hashtags are metadata, so do not make hashtag count alone a blocking issue unless it introduces unsupported, contaminated, or meta language. Use deterministicPrecheck as a consistency check: if it shows coverage >= 0.90, targetComplianceRatio 0.85-1.10, and no claimLedger hard fail, do not assign a score below 95 unless you can name a concrete high or critical reader-facing issue."
+      "Publish readiness requires all of these: primaryEntity in finalTitle/opening/body, inputFactCoverage >= 0.90, target length 85-110% for high/medium inputs, zero unsupported claims, zero category contamination, no meta guidance, no awkward josa, and natural Korean. Missing critical facts, unsupported claims, weak opening entity placement, or target length outside range must be reflected in missingFactIds, criticalMissingFactIds, unsupportedClaims, issues, issueCodes, and revisionInstructions. Judge the reader-facing draft body first; FAQ is optional support and hashtags are metadata, so do not make hashtag count alone a blocking issue unless it introduces unsupported, contaminated, or meta language. Low-information inputs may remain honest_draft instead of forcing length. Use deterministicPrecheck as a consistency check: if it shows coverage >= 0.90, targetComplianceRatio 0.85-1.10, and no claimLedger hard fail, do not assign a score below 95 unless you can name a concrete high or critical reader-facing issue."
   },
   {
     role: "user",
@@ -1271,12 +1289,14 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
         revisionInstructions: ["string"],
         coveredFactIds: ["uf1"],
         missingFactIds: ["uf2"],
+        criticalMissingFactIds: ["uf3"],
         unsupportedClaims: ["string"],
         categoryContamination: ["string"],
         metaGuidance: ["string"],
         josaErrors: ["string"],
         genericFillerRatio: "number",
         targetComplianceRatio: "number",
+        issueCodes: ["TARGET_LENGTH_UNDER_85"],
         applicability: {
           imageGrounding: { applicable: "boolean", score: "number|null" },
           faqUtility: { applicable: "boolean", score: "number|null" }
@@ -1368,7 +1388,8 @@ const getGenericFillerParagraphIds = (humanQuality = {}, draft = {}) => {
 const getRevisionIssueCodes = (humanQuality = {}) =>
   Array.from(new Set([
     ...(humanQuality.issues || []).map((issue) => issue.code).filter(Boolean),
-    ...(humanQuality.caps || []).map((cap) => cap.code).filter(Boolean)
+    ...(humanQuality.caps || []).map((cap) => cap.code).filter(Boolean),
+    ...(humanQuality.diagnostics?.issueCodes || []).filter(Boolean)
   ]));
 
 export const getRevisionDecision = ({ humanQuality = {}, draft = {} } = {}) => {
@@ -1450,9 +1471,12 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
   const requestedTarget = humanQuality.requestedTargetCharCount || draft.contentPackage?.requestedTargetCharCount || 0;
   const actualLength = charLength(body);
   const duplicateParagraphIds = getParagraphIdsByText(body, humanQuality.diagnostics?.duplicateParagraphs || []);
+  const factCoverage = humanQuality.diagnostics?.inputFactCoverage || {};
   const revisionFocus = {
     revisionMode: revisionDecision?.mode || "targeted",
     revisionReason: revisionDecision?.reason || "",
+    sectionPlan: draft.contentPackage?.writerPlan?.sections || draft.writerPlan?.sections || [],
+    sectionBudgets: draft.contentPackage?.writerPlan?.sectionBudgets || draft.writerPlan?.sectionBudgets || [],
     currentDraft: {
       finalTitle: draft.finalTitle || draft.selectedTitle || "",
       titleCandidates: draft.titleCandidates || draft.titles || [],
@@ -1460,8 +1484,19 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
       faqItems: getDraftFaqItems(draft),
       hashtags: draft.hashtags || draft.contentPackage?.hashtags || []
     },
-    missingFactIds: humanQuality.diagnostics?.inputFactCoverage?.missingFactIds || [],
-    missingFacts: humanQuality.diagnostics?.inputFactCoverage?.missingFacts || [],
+    missingFactIds: factCoverage.missingFactIds || [],
+    criticalMissingFactIds: factCoverage.criticalMissingFactIds || factCoverage.missingCriticalFactIds || [],
+    highMissingFactIds: factCoverage.missingHighFactIds || [],
+    missingFacts: factCoverage.missingFacts || [],
+    coveredFactIds: factCoverage.coveredFactIds || [],
+    inputFactCoverage: {
+      totalFacts: factCoverage.totalFacts ?? factCoverage.totalHighConfidenceFacts ?? 0,
+      criticalFacts: factCoverage.criticalFacts ?? 0,
+      highFacts: factCoverage.highFacts ?? 0,
+      inputFactCoverage: factCoverage.inputFactCoverage ?? 0,
+      criticalFactCoverage: factCoverage.criticalFactCoverage ?? 0,
+      highFactCoverage: factCoverage.highFactCoverage ?? 0
+    },
     unsupportedClaims: humanQuality.diagnostics?.unsupportedClaims || [],
     targetLengthDelta: {
       requestedTargetCharCount: requestedTarget,
@@ -1474,6 +1509,10 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
     genericFillerParagraphIds: getGenericFillerParagraphIds(humanQuality, draft),
     duplicateParagraphIds,
     categoryContamination: humanQuality.diagnostics?.categoryContamination || [],
+    allowedClaims: draft.contentPackage?.writerPlan?.factPolicy?.allowedClaims || [],
+    forbiddenClaims: draft.contentPackage?.writerPlan?.factPolicy?.forbiddenClaims || [],
+    unknownFields: draft.contentPackage?.writerPlan?.factPolicy?.unknownFields || [],
+    issueCodes: getRevisionIssueCodes(humanQuality),
     revisionInstructions: humanQuality.revisionInstructions || [],
     outputSchema: {
       titleCandidates: ["string"],
@@ -1503,40 +1542,55 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
 };
 
 const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, draft = {}, humanQuality = {}, llmStages = null, revisionAttempt = 1, revisionDecision = null } = {}) => {
-  const startedAt = Date.now();
-  try {
-    const payload = await fetchOpenAiJson({
-      env,
-      body: {
-        model,
-        messages: buildRevisionMessages({ form, draft, humanQuality, revisionDecision }),
-        temperature: 0.35,
-        max_tokens: getWriterMaxTokens({ form, fallbackDraft: draft }),
-        response_format: structuredResponseFormat("blog_revision_result", BLOG_WRITER_OUTPUT_JSON_SCHEMA)
+  let maxTokens = getWriterMaxTokens({ form, fallbackDraft: draft });
+  for (let lengthRetry = 0; lengthRetry < 2; lengthRetry += 1) {
+    const startedAt = Date.now();
+    try {
+      const payload = await fetchOpenAiJson({
+        env,
+        body: {
+          model,
+          messages: buildRevisionMessages({ form, draft, humanQuality, revisionDecision }),
+          temperature: 0.35,
+          max_tokens: maxTokens,
+          response_format: structuredResponseFormat("blog_revision_result", BLOG_WRITER_OUTPUT_JSON_SCHEMA)
+        }
+      });
+      const extraction = extractOpenAiText(payload);
+      if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
+      if (extraction.finishReason === "length" && lengthRetry === 0) {
+        maxTokens = Math.min(9000, Math.ceil(maxTokens * 1.5));
+        continue;
       }
-    });
-    recordStageSuccess(llmStages, "revision", {
-      status: payload.__openAiMeta?.status || 200,
-      attempts: payload.__openAiMeta?.attempts || 1,
-      latencyMs: Date.now() - startedAt,
-      revisionAttempt,
-      usage: payload.__openAiMeta?.usage
-    });
-
-    const extraction = extractOpenAiText(payload);
-    if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
-    if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
-    if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
-    const content = extraction.text;
-    return parseLlmJsonSafely(content);
-  } catch (error) {
-    recordStageFailure(llmStages, "revision", error, {
-      attempts: error?.attempts || 1,
-      latencyMs: Date.now() - startedAt,
-      revisionAttempt
-    });
-    throw error;
+      if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
+      if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
+      recordStageSuccess(llmStages, "revision", {
+        status: payload.__openAiMeta?.status || 200,
+        attempts: payload.__openAiMeta?.attempts || 1,
+        latencyMs: Date.now() - startedAt,
+        revisionAttempt,
+        finishReason: extraction.finishReason || null,
+        usage: payload.__openAiMeta?.usage
+      });
+      const content = extraction.text;
+      const parsed = parseLlmJsonSafely(content);
+      parsed.__openAiMeta = {
+        ...(payload.__openAiMeta || {}),
+        finishReason: extraction.finishReason || null,
+        maxTokens,
+        lengthRetry
+      };
+      return parsed;
+    } catch (error) {
+      recordStageFailure(llmStages, "revision", error, {
+        attempts: error?.attempts || 1,
+        latencyMs: Date.now() - startedAt,
+        revisionAttempt
+      });
+      throw error;
+    }
   }
+  return null;
 };
 
 const evaluateDraftHumanQuality = ({ form = {}, draft = {}, engine = "fallback", llmJudge = null } = {}) => {
@@ -1676,15 +1730,35 @@ const buildQualityDiagnostics = ({
   revisionDecisions = []
 } = {}) => {
   const scores = attempts.map((attempt) => Number(attempt.score) || 0);
+  const initialScore = scores[0] ?? 0;
+  const revisionGain = Number(finalQualityScore || 0) - initialScore;
+  const revisionEffectiveness =
+    revisionCallCount === 0
+      ? initialScore >= 95
+        ? "UNNECESSARY"
+        : "FAILED"
+      : revisionClassifications.some((item) => item.classification === "FAILED") && revisionGain <= 0
+        ? "FAILED"
+        : revisionGain > 0
+          ? "EFFECTIVE"
+          : revisionGain < 0
+            ? "DEGRADED"
+            : "NO_IMPROVEMENT";
+  const selectedAttempts = attempts.map((attempt) => ({
+    ...attempt,
+    selected: Number(attempt.attempt) === Number(selectedAttempt)
+  }));
   return {
-    initialQualityScore: scores[0] ?? 0,
+    initialQualityScore: initialScore,
     qualityAttempts: attempts.length || 0,
     revisionUsed: revisionCallCount > 0,
     revisionCallCount,
     attemptScores: scores,
-    attempts,
+    attempts: selectedAttempts,
     revisionClassifications,
     revisionDecisions,
+    revisionEffectiveness,
+    revisionGain,
     selectedAttempt,
     finalQualityScore: Number(finalQualityScore) || 0
   };
@@ -1698,16 +1772,17 @@ const isBetterQualityAttempt = (candidate = {}, current = {}) => {
     if (candidateHasLlmJudge) return true;
     if (currentHasLlmJudge) return false;
   }
-  if (Boolean(candidate.publishReady) !== Boolean(current.publishReady)) return Boolean(candidate.publishReady);
   const candidateScore = Number(candidate.score) || 0;
   const currentScore = Number(current.score) || 0;
   if (candidateScore !== currentScore) return candidateScore > currentScore;
+  const candidateTargetDistance = Math.abs((Number(candidate.diagnostics?.targetComplianceRatio) || 0) - 1);
+  const currentTargetDistance = Math.abs((Number(current.diagnostics?.targetComplianceRatio) || 0) - 1);
+  if (candidateTargetDistance !== currentTargetDistance) return candidateTargetDistance < currentTargetDistance;
   const candidateCoverage = Number(candidate.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
   const currentCoverage = Number(current.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
   if (candidateCoverage !== currentCoverage) return candidateCoverage > currentCoverage;
-  const candidateTargetDistance = Math.abs((Number(candidate.diagnostics?.targetComplianceRatio) || 0) - 1);
-  const currentTargetDistance = Math.abs((Number(current.diagnostics?.targetComplianceRatio) || 0) - 1);
-  return candidateTargetDistance < currentTargetDistance;
+  if (Boolean(candidate.publishReady) !== Boolean(current.publishReady)) return Boolean(candidate.publishReady);
+  return false;
 };
 
 export { isBetterQualityAttempt };
@@ -1719,6 +1794,21 @@ const classifyRevisionAttempt = ({ previousQuality = {}, currentQuality = {}, fa
   return "NO_IMPROVEMENT";
 };
 
+const summarizeQualityAttempt = ({ attempt = 1, quality = {} } = {}) => {
+  const coverage = quality.diagnostics?.inputFactCoverage || {};
+  return {
+    attempt,
+    score: Number(quality.score) || 0,
+    publishReady: Boolean(quality.publishReady),
+    hardFail: Boolean(quality.hardFail),
+    targetComplianceRatio: Number(quality.diagnostics?.targetComplianceRatio || 0),
+    inputFactCoverage: Number(coverage.inputFactCoverage || 0),
+    unsupportedClaimCount: (quality.diagnostics?.unsupportedClaims || []).length,
+    genericFillerRatio: Number(quality.diagnostics?.genericFillerRatio || 0),
+    selected: false
+  };
+};
+
 const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, fallbackDraft = {}, initialDraft = {}, llmStages = null } = {}) => {
   let attempts = 1;
   let revisionCallCount = 0;
@@ -1727,6 +1817,8 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
   const revisionClassifications = [];
   const revisionDecisions = [];
   const noImprovementSignatures = new Set();
+  let forceRebuildAfterNoImprovement = false;
+  let noImprovementCount = 0;
   let currentDraft = initialDraft;
   let currentQuality = null;
   try {
@@ -1738,20 +1830,37 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       engine: "llm"
     });
   }
-  attemptSummaries.push({ attempt: attempts, score: currentQuality.score, hardFail: Boolean(currentQuality.hardFail), publishReady: Boolean(currentQuality.publishReady) });
+  attemptSummaries.push(summarizeQualityAttempt({ attempt: attempts, quality: currentQuality }));
   let bestDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
   let bestQuality = currentQuality;
 
   while (shouldUseLlmRevision(env) && attempts < 3 && !currentQuality.publishReady) {
-    const revisionDecision = getRevisionDecision({ humanQuality: currentQuality, draft: currentDraft });
+    let revisionDecision = getRevisionDecision({ humanQuality: currentQuality, draft: currentDraft });
     const revisionSignature = getRevisionSignature({ humanQuality: currentQuality, draft: currentDraft });
+    if (forceRebuildAfterNoImprovement && revisionDecision.mode !== "none") {
+      revisionDecision = {
+        ...revisionDecision,
+        previousMode: revisionDecision.mode,
+        previousReason: revisionDecision.reason,
+        mode: "rebuild",
+        reason: "no_improvement_rebuild"
+      };
+    }
     revisionDecisions.push({
       attempt: attempts,
       mode: revisionDecision.mode,
       reason: revisionDecision.reason,
+      previousMode: revisionDecision.previousMode || "",
+      previousReason: revisionDecision.previousReason || "",
       targetLengthMode: revisionDecision.targetLengthDecision?.mode || ""
     });
-    if (revisionDecision.mode === "none" || shouldStopRepeatedRevision({ signature: revisionSignature, noImprovementSignatures })) break;
+    if (
+      revisionDecision.mode === "none" ||
+      (!forceRebuildAfterNoImprovement && shouldStopRepeatedRevision({ signature: revisionSignature, noImprovementSignatures }))
+    ) {
+      break;
+    }
+    forceRebuildAfterNoImprovement = false;
     revisionCallCount += 1;
     let revisionDraft = null;
     const previousDraft = currentDraft;
@@ -1792,12 +1901,7 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       });
     }
     currentQuality = candidateQuality;
-    attemptSummaries.push({
-      attempt: attempts,
-      score: currentQuality.score,
-      hardFail: Boolean(currentQuality.hardFail),
-      publishReady: Boolean(currentQuality.publishReady)
-    });
+    attemptSummaries.push(summarizeQualityAttempt({ attempt: attempts, quality: currentQuality }));
     const classification = classifyRevisionAttempt({ previousQuality, currentQuality });
     revisionClassifications.push({ attempt: attempts, classification });
     if (isBetterQualityAttempt(currentQuality, bestQuality)) {
@@ -1812,11 +1916,15 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       break;
     }
     if (classification === "NO_IMPROVEMENT") {
+      noImprovementCount += 1;
       noImprovementSignatures.add(revisionSignature);
       currentDraft = bestDraft;
       currentQuality = bestQuality;
+      if (noImprovementCount >= 2 || attempts >= 3) break;
+      forceRebuildAfterNoImprovement = true;
       continue;
     }
+    noImprovementCount = 0;
     currentDraft = candidateDraft;
   }
 

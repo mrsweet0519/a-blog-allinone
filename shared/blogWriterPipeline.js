@@ -182,15 +182,47 @@ export const isFactReflected = (factValue = "", body = "") => {
   return hitCount / tokens.length >= threshold;
 };
 
+const getFactCoverageSignals = (fact = {}, body = "") => {
+  const factValue = fact?.value || "";
+  const aliases = fact?.aliases || [];
+  const reflected =
+    isFactReflected(factValue, body) ||
+    aliases.some((alias) => isFactReflected(alias, body));
+  const tokens = factTokens(factValue).map(normalizeSemanticToken).filter(Boolean);
+  const bodyKey = normalizeFactMatch(body);
+  const bodyTokens = new Set(factTokens(body).map(normalizeSemanticToken).filter(Boolean));
+  const anchorHits = tokens.filter((token) => bodyTokens.has(token) || bodyKey.includes(token));
+  const numericTokens = tokens.filter((token) => /\p{N}/u.test(token));
+  const numericCovered = numericTokens.every((token) => bodyTokens.has(token) || bodyKey.includes(token));
+  const anchorThreshold = tokens.length >= 5 ? 2 : 1;
+
+  return {
+    reflected,
+    anchorHitCount: anchorHits.length,
+    tokenCount: tokens.length,
+    semanticAnchor: tokens.length === 0 ? reflected : numericCovered && anchorHits.length >= anchorThreshold
+  };
+};
+
 export const calculateInputFactCoverage = ({ factMap = {}, body = "", coveredFactIds = [], missingFactIds = [] } = {}) => {
   const highConfidenceFacts = (factMap.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
   const coveredSet = new Set(coveredFactIds.filter(Boolean));
   const explicitMissingSet = new Set(missingFactIds.filter(Boolean));
-  const reflected = highConfidenceFacts.filter((fact) =>
-    (coveredSet.has(fact.id) && !explicitMissingSet.has(fact.id)) ||
-    isFactReflected(fact.value, body) ||
-    (fact.aliases || []).some((alias) => isFactReflected(alias, body))
-  );
+  const coverageDetails = highConfidenceFacts.map((fact) => {
+    const signals = getFactCoverageSignals(fact, body);
+    const llmCovered = coveredSet.has(fact.id) && !explicitMissingSet.has(fact.id) && signals.semanticAnchor;
+    const covered = !explicitMissingSet.has(fact.id) && (signals.reflected || llmCovered);
+    return {
+      id: fact.id,
+      type: fact.type,
+      priority: fact.priority,
+      covered,
+      coverageSource: signals.reflected ? "deterministic" : llmCovered ? "llm_semantic" : explicitMissingSet.has(fact.id) ? "llm_missing" : "missing",
+      anchorHitCount: signals.anchorHitCount,
+      tokenCount: signals.tokenCount
+    };
+  });
+  const reflected = highConfidenceFacts.filter((fact) => coverageDetails.some((item) => item.id === fact.id && item.covered));
   const missing = highConfidenceFacts.filter((fact) => !reflected.some((item) => item.id === fact.id));
   const reflectedIds = new Set(reflected.map((fact) => fact.id));
   const criticalFacts = highConfidenceFacts.filter((fact) => fact.priority === "critical");
@@ -204,11 +236,17 @@ export const calculateInputFactCoverage = ({ factMap = {}, body = "", coveredFac
     inputFactCoverage: highConfidenceFacts.length === 0 ? 1 : Number((reflected.length / highConfidenceFacts.length).toFixed(2)),
     criticalFactCoverage: criticalFacts.length === 0 ? 1 : Number((criticalReflected.length / criticalFacts.length).toFixed(2)),
     highFactCoverage: highFacts.length === 0 ? 1 : Number((highReflected.length / highFacts.length).toFixed(2)),
+    totalFacts: highConfidenceFacts.length,
+    criticalFacts: criticalFacts.length,
+    highFacts: highFacts.length,
+    coveredFactIds: [...reflectedIds],
     criticalFactIds: criticalFacts.map((fact) => fact.id),
     highFactIds: highFacts.map((fact) => fact.id),
+    criticalMissingFactIds: criticalFacts.filter((fact) => !reflectedIds.has(fact.id)).map((fact) => fact.id),
     missingCriticalFactIds: criticalFacts.filter((fact) => !reflectedIds.has(fact.id)).map((fact) => fact.id),
     missingHighFactIds: highFacts.filter((fact) => !reflectedIds.has(fact.id)).map((fact) => fact.id),
     missingFactIds: missing.map((fact) => fact.id),
+    coverageDetails,
     missingFacts: missing.map((fact) => ({
       id: fact.id,
       type: fact.type,
@@ -830,11 +868,14 @@ const createSectionBudgets = ({ sectionCount = 1, targetCharCount = 1800, factCo
   const closing = Math.round(safeTarget * (informationLevel === "low" ? 0.12 : 0.1));
   const middleCount = Math.max(1, safeCount - 2);
   const middle = Math.max(informationLevel === "low" ? 120 : 220, Math.round((safeTarget - opening - closing) / middleCount));
-  return Array.from({ length: safeCount }, (_, index) => {
+  const budgets = Array.from({ length: safeCount }, (_, index) => {
     if (index === 0) return opening;
     if (index === safeCount - 1) return closing;
     return middle;
   });
+  const delta = safeTarget - budgets.reduce((total, value) => total + value, 0);
+  budgets[Math.max(0, safeCount - 2)] += delta;
+  return budgets;
 };
 
 const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, targetCharCount = 1800, informationLevel = "medium" } = {}) => {
@@ -871,6 +912,7 @@ const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, tar
       targetCharCount: sectionBudgets[index] || 0,
       targetChars: sectionBudgets[index] || 0,
       forbiddenDuplicateFactIds,
+      forbiddenRepeatedFactIds: forbiddenDuplicateFactIds,
       evidenceIds,
       imageRefs
     };
@@ -884,10 +926,13 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
   const outline = resolveOutline({ category, experienceTone, informationSufficiency: resolvedInformation });
   const faqCount = resolvedInformation.level === "low" ? 0 : resolvedInformation.level === "medium" ? 1 : 2;
   const requestedTarget = Number(form.targetCharCount || form.targetLength || 0) || 0;
+  const rangeTarget = resolvedInformation.targetLengthRange?.target || 1800;
   const effectiveTargetCharCount =
-    resolvedInformation.level === "high" && requestedTarget > 0
+    resolvedInformation.level === "low"
+      ? rangeTarget
+      : requestedTarget > 0
       ? requestedTarget
-      : requestedTarget || resolvedInformation.targetLengthRange?.target || 1800;
+      : rangeTarget;
   const sections = createPlanSections({
     outline,
     factMap,
@@ -911,8 +956,10 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
       sectionId: section.sectionId,
       targetChars: section.targetCharCount,
       requiredFactIds: section.requiredFactIds || [],
+      optionalFactIds: section.optionalFactIds || [],
       purpose: section.purpose,
-      forbiddenDuplicateFactIds: section.forbiddenDuplicateFactIds || []
+      forbiddenDuplicateFactIds: section.forbiddenDuplicateFactIds || [],
+      forbiddenRepeatedFactIds: section.forbiddenRepeatedFactIds || section.forbiddenDuplicateFactIds || []
     })),
     faqCount,
     keywordPlan: createKeywordPlan({
