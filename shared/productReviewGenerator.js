@@ -862,7 +862,8 @@ export function createProductReviewDraft(form = {}) {
     subKeywords: context.subKeywords,
     requestedTargetCharCount: targetLengthContract.requestedTargetCharCount,
     effectiveTargetCharCount: targetLengthContract.effectiveTargetCharCount,
-    engine: "fallback"
+    engine: "fallback",
+    informationSufficiency: context.informationSufficiency?.level || ""
   });
   const factCoverageCap =
     inputFactCoverage.inputFactCoverage < 0.5

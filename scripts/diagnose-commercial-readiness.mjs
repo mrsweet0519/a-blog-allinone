@@ -16,6 +16,7 @@ import {
   parseTimeoutMs,
   summarizeDiagnosticResponse
 } from "./diagnose-blog-preview.mjs";
+import { normalizeBlogWriterResult } from "../shared/blogWriterResultNormalizer.js";
 
 export const COMMERCIAL_EXPORT_DIR = ".tmp-commercial-readiness";
 export const DEFAULT_COMMERCIAL_CASES = 8;
@@ -369,11 +370,7 @@ export const createCommercialReadinessInputs = ({ seed = randomUUID().slice(0, 8
 };
 
 const getPackage = (json = {}) => json.contentPackage || {};
-const getBody = (json = {}) => text(json.body || getPackage(json).blogBody || "");
-const getTitle = (json = {}) => text(json.finalTitle || json.selectedTitle || getPackage(json).finalRecommendedTitle || "");
-const getTitleCandidates = (json = {}) => json.titleCandidates || json.titles || getPackage(json).titleCandidates || [];
-const getFaqItems = (json = {}) => json.faq || json.faqItems || getPackage(json).faqItems || [];
-const getHashtags = (json = {}) => json.hashtags || getPackage(json).hashtags || [];
+const getNormalizedResult = (json = {}) => normalizeBlogWriterResult(json);
 
 const sumUsageObjects = (value = {}) => {
   if (!value || typeof value !== "object") return { input: 0, output: 0, total: 0 };
@@ -698,6 +695,7 @@ const writeCommercialExport = async ({ runId = "", cases = [], exportRoot = COMM
       },
       finalTitle: item.finalTitle,
       titleCandidates: item.titleCandidates,
+      sections: item.sections || [],
       body: item.body,
       faq: item.faq,
       hashtags: item.hashtags,
@@ -713,7 +711,7 @@ const writeCommercialExport = async ({ runId = "", cases = [], exportRoot = COMM
       hashtags: item.hashtags,
       images
     })}\n`, "utf8");
-    const { body, finalTitle, titleCandidates, faq, hashtags, inputImageContext, ...metadata } = item;
+    const { body, finalTitle, titleCandidates, sections, faq, hashtags, inputImageContext, ...metadata } = item;
     await writeFile(join(metadataDir, `${prefix}.json`), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
   }
 
@@ -765,11 +763,12 @@ export const runCommercialDiagnostics = async ({
     const packageData = getPackage(json);
     const llmStages = json.llmStages || {};
     const revisionDiagnostics = base.qualityDiagnostics || {};
-    const titleCandidates = getTitleCandidates(json);
-    const finalTitle = getTitle(json);
-    const body = getBody(json);
-    const faq = getFaqItems(json);
-    const hashtags = getHashtags(json);
+    const normalizedResult = getNormalizedResult(json);
+    const titleCandidates = normalizedResult.titleCandidates;
+    const finalTitle = normalizedResult.finalTitle;
+    const body = normalizedResult.body;
+    const faq = normalizedResult.faq;
+    const hashtags = normalizedResult.hashtags;
     const primaryEntity = packageData.primaryEntity || input.productName;
     const titleCheck = titleChecks({ title: finalTitle, titleCandidates, primaryEntity, category: input.category });
     const faqCheck = faqChecks(faq, input.category);
@@ -831,6 +830,7 @@ export const runCommercialDiagnostics = async ({
       inputImageContext: input.imageContext || [],
       finalTitle,
       titleCandidates,
+      sections: normalizedResult.sections,
       body,
       faq,
       hashtags

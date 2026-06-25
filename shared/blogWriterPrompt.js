@@ -163,7 +163,9 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
       purpose: section.purpose,
       requiredFactIds: section.requiredFactIds || [],
       optionalFactIds: section.optionalFactIds || [],
-      targetCharCount: section.targetCharCount || 0,
+      targetCharCount: section.targetCharCount || section.targetChars || 0,
+      targetChars: section.targetChars || section.targetCharCount || 0,
+      forbiddenDuplicateFactIds: section.forbiddenDuplicateFactIds || [],
       imageRefs: section.imageRefs || []
     }))
   };

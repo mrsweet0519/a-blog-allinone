@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildBlogWriterPipelineContext,
+  calculateInputFactCoverage,
+  createClaimLedger,
+  isFactReflected,
   normalizeBlogWriterInput,
-  parseSubKeywords
+  parseSubKeywords,
+  summarizeClaimLedger
 } from "../shared/blogWriterPipeline.js";
 import { getEntityCoverage } from "../shared/blogWriterEntity.js";
 import {
@@ -20,8 +26,13 @@ import {
 import {
   BLOG_JUDGE_OUTPUT_JSON_SCHEMA,
   extractOpenAiText,
+  getRevisionDecision,
+  getRevisionSignature,
+  getTargetLengthDecision,
   getOpenAiApiEndpoint,
-  onRequestPost as generateBlogOnRequestPost
+  isBetterQualityAttempt,
+  onRequestPost as generateBlogOnRequestPost,
+  shouldStopRepeatedRevision
 } from "../functions/api/generate-blog.js";
 import { BLOG_WRITER_OUTPUT_JSON_SCHEMA } from "../shared/blogWriterPrompt.js";
 import {
@@ -40,6 +51,22 @@ import {
   createQualityCanaryInputs,
   summarizeQualityCanaryResponse
 } from "../scripts/diagnose-blog-quality.mjs";
+import {
+  analyzeCommercialReadiness,
+  CommercialAnalysisBlockedError,
+  inspectHumanReviewCompleteness
+} from "../scripts/analyze-commercial-readiness.mjs";
+import {
+  bodyFromBlogWriterSections,
+  normalizeBlogWriterResult,
+  validateNormalizedBlogWriterResult
+} from "../shared/blogWriterResultNormalizer.js";
+import {
+  CommercialReviewPackageInvalidError,
+  startCommercialReviewServer,
+  validateCommercialReviewPackage
+} from "../scripts/review-commercial-results.mjs";
+import { repairCommercialReviewPackage } from "../scripts/repair-commercial-review.mjs";
 
 const ROOT = new URL("../", import.meta.url);
 
@@ -1031,6 +1058,36 @@ const incompleteDraft = await callApiWithFetch({
 assert.equal(incompleteDraft.engine, "fallback");
 assert.equal(incompleteDraft.llmStages.writer.reason, "incomplete");
 
+let lengthRetryFetchCount = 0;
+const lengthRetryDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    lengthRetryFetchCount += 1;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: lengthRetryFetchCount === 1 ? "length" : "stop",
+            message: { content: JSON.stringify(makeMockLlmDraft(`length-retry-${lengthRetryFetchCount}`)) }
+          }
+        ]
+      }),
+      { status: 200 }
+    );
+  }
+});
+assert.equal(lengthRetryFetchCount, 2);
+assert.equal(lengthRetryDraft.engine, "llm");
+assert.equal(lengthRetryDraft.contentPackage.diagnostics.responseExtraction.lengthRetry, 1);
+assert.ok(lengthRetryDraft.contentPackage.diagnostics.responseExtraction.maxTokens > 0);
+
 const diagnosticPayload = buildDiagnosticPayload();
 assert.equal(diagnosticPayload.imageCount, 0);
 assert.ok(!JSON.stringify(diagnosticPayload).includes("sk-"));
@@ -1284,6 +1341,204 @@ assert.equal(noImageQuality.diagnostics.applicability.faqUtility, false);
 assert.ok(!noImageQuality.issues.some((issue) => /NO_IMAGE/u.test(issue.code)));
 assert.equal(noImageQuality.diagnostics.inputFactCoverage.inputFactCoverage, 1);
 
+assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalCharCount: 1800, informationSufficiency: "medium" }).mode, "within_range");
+assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalCharCount: 1500, informationSufficiency: "high" }).mode, "rewrite_expand");
+assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalCharCount: 2320, informationSufficiency: "medium" }).mode, "compress");
+assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalCharCount: 900, informationSufficiency: "low" }).enforceTarget, false);
+
+const genericSectionContext = buildBlogWriterPipelineContext({
+  productName: "Unit Entity",
+  mainKeyword: "Unit Entity Review",
+  subKeywords: "fit, setup, reuse",
+  experienceStatus: "used",
+  targetCharCount: 2200,
+  experienceMemo: [
+    "shoulder strap length was adjusted and stayed stable through the afternoon",
+    "setup took ten minutes on the first use",
+    "outer pocket held a small notebook without bulging",
+    "one seam felt stiff when sitting for a long time",
+    "I would reuse it for weekday commuting"
+  ].join("\n")
+});
+assert.ok(genericSectionContext.writerPlan.sections.every((section) => Number(section.targetChars) > 0));
+for (const section of genericSectionContext.writerPlan.sections) {
+  assert.deepEqual((section.requiredFactIds || []).filter((id) => (section.forbiddenDuplicateFactIds || []).includes(id)), []);
+}
+
+const highPriorityFacts = Array.from({ length: 10 }, (_, index) => ({
+  id: `high-${index + 1}`,
+  value: `specific input fact ${index + 1} stayed grounded in the draft`,
+  priority: "high",
+  confidence: 0.92
+}));
+const priorityFactMap = {
+  userFacts: [
+    {
+      id: "critical-1",
+      value: "shoulder strap length was adjusted and stayed stable through the afternoon",
+      aliases: ["after adjusting the shoulder strap length it stayed stable all afternoon"],
+      priority: "critical",
+      confidence: 0.95
+    },
+    ...highPriorityFacts
+  ]
+};
+const nineHighFactBody = highPriorityFacts.slice(0, 9).map((fact) => fact.value).join(". ");
+const coveredPriorityBody = [
+  "Unit Entity opens with a grounded review.",
+  "After adjusting the shoulder strap length it stayed stable all afternoon.",
+  nineHighFactBody
+].join(" ");
+assert.equal(
+  isFactReflected(
+    "shoulder strap length was adjusted and stayed stable through the afternoon",
+    "after adjusting the shoulder strap length it stayed stable all afternoon"
+  ),
+  true
+);
+const priorityCoverage = calculateInputFactCoverage({ factMap: priorityFactMap, body: coveredPriorityBody });
+assert.equal(priorityCoverage.criticalFactCoverage, 1);
+assert.equal(priorityCoverage.highFactCoverage, 0.9);
+assert.ok(priorityCoverage.inputFactCoverage >= 0.9);
+
+const highCoverageQuality = evaluateHumanQuality({
+  title: "Unit Entity Review",
+  titleCandidates: ["Unit Entity Review"],
+  body: coveredPriorityBody,
+  faq: [],
+  hashtags: [],
+  factMap: priorityFactMap,
+  mainKeyword: "Unit Entity",
+  primaryEntity: "Unit Entity",
+  requestedTargetCharCount: 1000,
+  effectiveTargetCharCount: 1000,
+  informationSufficiency: "high",
+  engine: "llm",
+  llmJudge: {
+    score: 97,
+    scores: {},
+    issues: [],
+    coveredFactIds: ["critical-1", ...highPriorityFacts.slice(0, 9).map((fact) => fact.id)],
+    missingFactIds: ["high-10"],
+    unsupportedClaims: [],
+    categoryContamination: [],
+    metaGuidance: [],
+    josaErrors: []
+  }
+});
+assert.equal(highCoverageQuality.diagnostics.inputFactCoverage.criticalFactCoverage, 1);
+assert.equal(highCoverageQuality.diagnostics.inputFactCoverage.highFactCoverage, 0.9);
+assert.ok(!highCoverageQuality.issues.some((issue) => issue.code === "HIGH_FACT_COVERAGE_LOW"));
+assert.equal(highCoverageQuality.diagnostics.entityCoverage.finalTitle, true);
+assert.equal(highCoverageQuality.diagnostics.entityCoverage.openingSentence, true);
+
+const missingCriticalQuality = evaluateHumanQuality({
+  title: "Unit Entity Review",
+  titleCandidates: ["Unit Entity Review"],
+  body: `Unit Entity opens with a grounded review. ${nineHighFactBody}`,
+  faq: [],
+  hashtags: [],
+  factMap: priorityFactMap,
+  mainKeyword: "Unit Entity",
+  primaryEntity: "Unit Entity",
+  requestedTargetCharCount: 1000,
+  effectiveTargetCharCount: 1000,
+  informationSufficiency: "high",
+  engine: "llm",
+  llmJudge: {
+    score: 98,
+    scores: {},
+    issues: [],
+    coveredFactIds: highPriorityFacts.slice(0, 9).map((fact) => fact.id),
+    missingFactIds: ["critical-1", "high-10"],
+    unsupportedClaims: [],
+    categoryContamination: [],
+    metaGuidance: [],
+    josaErrors: []
+  }
+});
+assert.equal(missingCriticalQuality.hardFail, true);
+assert.equal(missingCriticalQuality.publishReady, false);
+assert.ok(missingCriticalQuality.issues.some((issue) => issue.code === "CRITICAL_FACT_MISSING"));
+
+const lowLengthQuality = evaluateHumanQuality({
+  title: "Unit Entity Review",
+  titleCandidates: ["Unit Entity Review"],
+  body: "Unit Entity opens with only the facts that were actually provided.",
+  faq: [],
+  hashtags: [],
+  factMap: { userFacts: [] },
+  mainKeyword: "Unit Entity",
+  primaryEntity: "Unit Entity",
+  requestedTargetCharCount: 2500,
+  effectiveTargetCharCount: 2500,
+  informationSufficiency: "low",
+  engine: "llm",
+  llmJudge: {
+    score: 98,
+    scores: {},
+    issues: [],
+    coveredFactIds: [],
+    missingFactIds: [],
+    unsupportedClaims: [],
+    categoryContamination: [],
+    metaGuidance: [],
+    josaErrors: []
+  }
+});
+assert.ok(!lowLengthQuality.caps.some((cap) => /^TARGET_LENGTH_/u.test(cap.code)));
+assert.equal(lowLengthQuality.publishReady, false);
+
+const unsupportedSummary = summarizeClaimLedger(
+  createClaimLedger({
+    title: "Unit Entity Review",
+    body: "Unit Entity는 가족과 함께 방문했어요.",
+    factMap: { facts: [], userFacts: [], experienceEvidence: [], contextEvidence: [] },
+    contextFacts: {},
+    imageAnalysis: {},
+    experienceStatus: "unknown"
+  })
+);
+assert.equal(unsupportedSummary.hardFail, true);
+
+assert.equal(getRevisionDecision({ humanQuality: { score: 96, hardFail: false, publishReady: true }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "none");
+assert.equal(getRevisionDecision({ humanQuality: { score: 93, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.92 } }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "targeted");
+assert.equal(getRevisionDecision({ humanQuality: { score: 82, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.92 } }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "rebuild");
+assert.equal(getRevisionDecision({ humanQuality: { score: 93, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.7 } }, draft: { body: "short body", contentPackage: { requestedTargetCharCount: 2000, informationSufficiency: { level: "high" } } } }).reason, "target_length_under_80");
+assert.equal(
+  isBetterQualityAttempt(
+    { score: 90, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 0.9 }, targetComplianceRatio: 0.95 }, judgeEngine: "llm" },
+    { score: 96, hardFail: true, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 1 }, targetComplianceRatio: 1 }, judgeEngine: "llm" }
+  ),
+  true
+);
+assert.equal(
+  isBetterQualityAttempt(
+    { score: 80, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 0.9 }, targetComplianceRatio: 0.8 }, judgeEngine: "llm" },
+    { score: 94, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 0.9 }, targetComplianceRatio: 0.96 }, judgeEngine: "llm" }
+  ),
+  false
+);
+const revisionSignature = getRevisionSignature({
+  humanQuality: {
+    score: 91,
+    diagnostics: {
+      inputFactCoverage: { missingFactIds: ["uf1"] },
+      unsupportedClaims: ["sensitive draft sentence"],
+      targetComplianceRatio: 0.82,
+      entityCoverage: { finalTitle: true, openingSentence: false, body: true },
+      genericFillerRatio: 0.35,
+      duplicateParagraphs: ["duplicate paragraph"],
+      categoryContamination: [{ term: "wrong category" }]
+    },
+    issues: [{ code: "MISSING_FACT" }],
+    revisionInstructions: ["fix only the missing fact"]
+  },
+  draft: { body: "duplicate paragraph\n\nsensitive draft sentence" }
+});
+assert.equal(shouldStopRepeatedRevision({ signature: revisionSignature, noImprovementSignatures: new Set([revisionSignature]) }), true);
+assert.ok(!revisionSignature.includes("sensitive draft sentence"));
+
 const qualityCanaryPass = summarizeQualityCanaryResponse({
   category: "fashion",
   url: "https://preview.example/api/generate-blog",
@@ -1374,5 +1629,172 @@ const qualityCanaryFail = summarizeQualityCanaryResponse({
   }
 });
 assert.equal(qualityCanaryFail.qualityResult, "FAIL");
+
+const sectionsOnlyResult = normalizeBlogWriterResult({
+  titleCandidates: ["Canonical Title One", "Canonical Title One", "Second Title"],
+  finalTitle: "",
+  sections: [
+    { heading: "Opening", paragraphs: ["First paragraph with useful details.", "Second paragraph with useful details."] },
+    { heading: null, paragraph: "Third paragraph with useful details." }
+  ],
+  faq: null,
+  hashtags: ["#one", "#one", "#two"]
+});
+assert.equal(sectionsOnlyResult.finalTitle, "Canonical Title One");
+assert.equal(sectionsOnlyResult.titleCandidates.length, 2);
+assert.ok(sectionsOnlyResult.body.includes("Opening"));
+assert.ok(sectionsOnlyResult.body.includes("Third paragraph"));
+assert.deepEqual(sectionsOnlyResult.faq, []);
+assert.deepEqual(sectionsOnlyResult.hashtags, ["#one", "#two"]);
+assert.equal(bodyFromBlogWriterSections([{ paragraphs: ["same", "same"] }]), "same");
+assert.equal(validateNormalizedBlogWriterResult({ finalTitle: "", body: "" }).valid, false);
+assert.equal(validateNormalizedBlogWriterResult({
+  finalTitle: "Valid Title",
+  titleCandidates: ["Valid Title"],
+  body: "x".repeat(300)
+}).valid, true);
+
+const nestedResult = normalizeBlogWriterResult({
+  data: {
+    draft: {
+      finalTitle: "Nested Title",
+      sections: [{ paragraphs: ["Nested body paragraph ".repeat(20)] }]
+    }
+  }
+});
+assert.equal(nestedResult.finalTitle, "Nested Title");
+assert.ok(nestedResult.body.length >= 300);
+
+const commercialReviewTemp = mkdtempSync(join(tmpdir(), "commercial-review-"));
+try {
+  mkdirSync(join(commercialReviewTemp, "blind"), { recursive: true });
+  writeFileSync(
+    join(commercialReviewTemp, "blind", "invalid.json"),
+    `${JSON.stringify({
+      caseId: "invalid-review-case",
+      inputSummary: { informationLevel: "high" },
+      finalTitle: "",
+      titleCandidates: [],
+      body: ""
+    })}\n`,
+    "utf8"
+  );
+  const invalidCases = [
+    {
+      caseId: "invalid-review-case",
+      inputSummary: { informationLevel: "high" },
+      finalTitle: "",
+      titleCandidates: [],
+      body: ""
+    }
+  ];
+  const invalidPackage = validateCommercialReviewPackage(invalidCases, commercialReviewTemp);
+  assert.equal(invalidPackage.valid, false);
+  assert.deepEqual(invalidPackage.missingTitleCases, ["invalid-review-case"]);
+  assert.deepEqual(invalidPackage.missingBodyCases, ["invalid-review-case"]);
+  await assert.rejects(
+    () => startCommercialReviewServer({ dir: commercialReviewTemp, checkOnly: true }),
+    (error) => {
+      assert.ok(error instanceof CommercialReviewPackageInvalidError);
+      assert.equal(error.details.status, "COMMERCIAL_REVIEW_PACKAGE_INVALID");
+      return true;
+    }
+  );
+
+  mkdirSync(join(commercialReviewTemp, "metadata"), { recursive: true });
+  writeFileSync(
+    join(commercialReviewTemp, "metadata", "invalid-review-case-product.json"),
+    `${JSON.stringify({
+      caseId: "invalid-review-case",
+      finalTitle: "Recovered Title",
+      titleCandidates: ["Recovered Title"],
+      sections: [{ paragraphs: ["Recovered body paragraph. ".repeat(20)] }]
+    })}\n`,
+    "utf8"
+  );
+  const repairResult = await repairCommercialReviewPackage({ dir: commercialReviewTemp });
+  assert.equal(repairResult.noApiCall, true);
+  assert.deepEqual(repairResult.repairedCases, ["invalid-review-case"]);
+  assert.equal(repairResult.packageValidation.valid, true);
+  const checkResult = await startCommercialReviewServer({ dir: commercialReviewTemp, checkOnly: true });
+  assert.equal(checkResult.status, "OK");
+} finally {
+  rmSync(commercialReviewTemp, { recursive: true, force: true });
+}
+
+const commercialAnalysisTemp = mkdtempSync(join(tmpdir(), "commercial-analysis-"));
+try {
+  mkdirSync(join(commercialAnalysisTemp, "metadata"), { recursive: true });
+  const commercialMetadata = {
+    caseId: "unit-commercial-case",
+    category: "product",
+    informationSufficiency: "high",
+    imageExpected: false,
+    engine: "llm",
+    judgeEngine: "llm",
+    writerSuccess: true,
+    judgeSuccess: true,
+    publishReady: false,
+    caseResult: "FAIL",
+    qualityScore: 80,
+    hardFail: false,
+    issueCodes: ["HASHTAGS"],
+    attemptScores: [80],
+    selectedAttempt: 1,
+    revisionCallCount: 0,
+    inputFactCoverage: 1,
+    targetComplianceRatio: 1,
+    unsupportedClaimCount: 0,
+    categoryContaminationCount: 0,
+    metaGuidanceCount: 0,
+    josaErrorCount: 0,
+    genericFillerRatio: 0,
+    latencyMs: 12,
+    tokenUsage: { total: 120 },
+    retryCounts: { writer: 1, judge: 1, revisions: [] }
+  };
+  writeFileSync(
+    join(commercialAnalysisTemp, "metadata", "unit-commercial-case.json"),
+    `${JSON.stringify(commercialMetadata, null, 2)}\n`,
+    "utf8"
+  );
+  const reviewHeaders =
+    "\"reviewerId\",\"caseId\",\"titleUsableYN\",\"openingNatural1to5\",\"humanLike1to5\",\"factReflection1to5\",\"inventedExperienceYN\",\"sectionNewInfo1to5\",\"photoConnection1to5OrNA\",\"publishWithin3MinYN\",\"reuseIntent1to5\",\"needsFix\",\"submittedAt\"";
+  writeFileSync(
+    join(commercialAnalysisTemp, "human-review.csv"),
+    `${reviewHeaders}\n\"r1\",\"unit-commercial-case\",\"\",\"\",\"\",\"\",\"\",\"\",\"N/A\",\"\",\"\",\"\",\"2026-06-24T00:00:00.000Z\"\n`,
+    "utf8"
+  );
+  const incompleteReview = inspectHumanReviewCompleteness({
+    cases: [commercialMetadata],
+    reviews: [{ caseId: "unit-commercial-case" }]
+  });
+  assert.equal(incompleteReview.complete, false);
+  assert.deepEqual(incompleteReview.incompleteCaseIds, ["unit-commercial-case"]);
+  await assert.rejects(
+    () => analyzeCommercialReadiness({ dir: commercialAnalysisTemp }),
+    (error) => {
+      assert.ok(error instanceof CommercialAnalysisBlockedError);
+      assert.equal(error.details.completeReviewCount, 0);
+      assert.deepEqual(error.details.incompleteCaseIds, ["unit-commercial-case"]);
+      return true;
+    }
+  );
+  assert.equal(existsSync(join(commercialAnalysisTemp, "analysis")), false);
+
+  writeFileSync(
+    join(commercialAnalysisTemp, "human-review.csv"),
+    `${reviewHeaders}\n\"r1\",\"unit-commercial-case\",\"Y\",\"5\",\"5\",\"5\",\"N\",\"5\",\"N/A\",\"Y\",\"5\",\"\",\"2026-06-24T00:00:00.000Z\"\n`,
+    "utf8"
+  );
+  const commercialAnalysis = await analyzeCommercialReadiness({ dir: commercialAnalysisTemp });
+  assert.equal(commercialAnalysis.summary.humanReviewCount, 1);
+  assert.equal(commercialAnalysis.summary.judgeFalseNegative, 1);
+  assert.equal(commercialAnalysis.summary.averageHumanScore, 100);
+  assert.equal(existsSync(join(commercialAnalysisTemp, "analysis", "case-matrix.csv")), true);
+  assert.equal(existsSync(join(commercialAnalysisTemp, "analysis", "next-codex-task.md")), true);
+} finally {
+  rmSync(commercialAnalysisTemp, { recursive: true, force: true });
+}
 
 console.log("local validation passed");

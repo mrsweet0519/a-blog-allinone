@@ -794,13 +794,49 @@ const buildGroundedFactParagraph = ({ primaryEntity = "", mainKeyword = "", fact
   return templates[index % templates.length];
 };
 
+const buildGroundedFactExpansionParagraph = ({ primaryEntity = "", mainKeyword = "", fact = {}, index = 0, detailed = false } = {}) => {
+  const factText = String(fact?.value || "").trim();
+  if (!factText) return "";
+  const entity = primaryEntity || mainKeyword || "이번 주제";
+  if (!detailed) {
+    return `${entity}를 볼 때 "${factText}"라는 점은 실제 판단 기준 안에서 함께 봐야 했다. 그래서 이 부분은 새 경험을 만들지 않고, 입력된 fact가 어떤 상황에서 의미가 있었는지 중심으로 정리했다.`;
+  }
+  const templates = [
+    `${entity}에서 먼저 남는 기준은 "${factText}"였다. 이 fact는 단순한 분위기 설명이 아니라 사용하거나 방문한 흐름을 판단하는 근거라서, 앞뒤 문단과 겹치지 않게 별도 판단 포인트로 정리했다.`,
+    `"${factText}"라는 내용은 ${entity}의 만족 요소와 망설임을 함께 보게 만든다. 같은 문장을 반복하기보다 이 fact가 어떤 선택 기준으로 이어지는지, 그리고 다음에 비슷한 조건이면 무엇을 먼저 확인할지까지 연결했다.`,
+    `${entity}를 다시 떠올릴 때 "${factText}"는 결론을 보강하는 핵심 근거가 된다. 그래서 추천 문구로 부풀리지 않고, 실제 입력된 경험 안에서 어떤 의미였는지를 짚는 방식으로 남겼다.`,
+    `"${factText}"는 ${entity}를 판단할 때 빠지면 글의 균형이 흔들리는 정보다. 좋은 점만 강조하거나 아쉬운 점만 키우지 않고, 해당 상황이 전체 인상에 어떤 영향을 줬는지 중심으로 정리했다.`
+  ];
+  return templates[index % templates.length];
+};
+
+export const getTargetLengthDecision = ({
+  requestedTargetCharCount = 0,
+  finalCharCount = 0,
+  informationSufficiency = "medium"
+} = {}) => {
+  const target = Number(requestedTargetCharCount) || 0;
+  const actual = Number(finalCharCount) || 0;
+  const level = typeof informationSufficiency === "string" ? informationSufficiency : informationSufficiency?.level || "";
+  const ratio = target > 0 ? actual / target : 1;
+  if (level === "low" || target <= 0) {
+    return { mode: "honest_draft", ratio: Number(ratio.toFixed(2)), enforceTarget: false };
+  }
+  if (ratio < 0.8) return { mode: "rewrite_expand", ratio: Number(ratio.toFixed(2)), enforceTarget: true };
+  if (ratio < 0.85) return { mode: "targeted_expand", ratio: Number(ratio.toFixed(2)), enforceTarget: true };
+  if (ratio > 1.15) return { mode: "compress", ratio: Number(ratio.toFixed(2)), enforceTarget: true };
+  if (ratio > 1.1) return { mode: "targeted_compress", ratio: Number(ratio.toFixed(2)), enforceTarget: true };
+  return { mode: "within_range", ratio: Number(ratio.toFixed(2)), enforceTarget: true };
+};
+
 const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "", pipelineContext = {}, targetCharCount = 0 } = {}) => {
   const primaryEntity = pipelineContext.primaryEntity || pipelineContext.mainKeyword || "";
   const mainKeyword = pipelineContext.mainKeyword || "";
   const requestedTarget = Number(targetCharCount) || Number(pipelineContext.writerPlan?.effectiveTargetCharCount) || 0;
-  const highInfo = pipelineContext.informationSufficiency?.level === "high";
-  const minTarget = highInfo && requestedTarget > 0 ? Math.ceil(requestedTarget * 0.85) : 0;
-  const detailedExpansion = highInfo && requestedTarget >= 1800;
+  const informationLevel = pipelineContext.informationSufficiency?.level || "medium";
+  const enforceTarget = informationLevel !== "low";
+  const minTarget = enforceTarget && requestedTarget > 0 ? Math.ceil(requestedTarget * 0.85) : 0;
+  const detailedExpansion = enforceTarget && requestedTarget >= 1800;
   const applied = [];
   let repairedBody = String(body || "").trim();
   let repairedTitle = ensureEntityTitle({ title: finalTitle, primaryEntity, mainKeyword });
@@ -824,7 +860,7 @@ const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "",
   const seenFactIds = new Set();
   const pushFact = (fact, index, { detailed = detailedExpansion } = {}) => {
     if (!fact?.id || seenFactIds.has(fact.id)) return;
-    const paragraph = buildGroundedFactParagraph({ primaryEntity, mainKeyword, fact, index, detailed });
+    const paragraph = buildGroundedFactExpansionParagraph({ primaryEntity, mainKeyword, fact, index, detailed });
     const currentBody = [repairedBody, ...paragraphsToAdd].filter(Boolean).join("\n\n");
     const projectedBody = [currentBody, paragraph].filter(Boolean).join("\n\n");
     const maxTarget = requestedTarget > 0 ? Math.floor(requestedTarget * 1.1) : Infinity;
@@ -839,7 +875,7 @@ const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "",
   userFacts.forEach((fact, index) => {
     const currentBody = [repairedBody, ...paragraphsToAdd].filter(Boolean).join("\n\n");
     if (minTarget > 0 && charLength(currentBody) < minTarget) {
-      const paragraph = buildGroundedFactParagraph({ primaryEntity, mainKeyword, fact, index, detailed: detailedExpansion });
+      const paragraph = buildGroundedFactExpansionParagraph({ primaryEntity, mainKeyword, fact, index, detailed: detailedExpansion });
       const projectedBody = [currentBody, paragraph].filter(Boolean).join("\n\n");
       const maxTarget = requestedTarget > 0 ? Math.floor(requestedTarget * 1.1) : Infinity;
       if (paragraph && charLength(projectedBody) <= maxTarget) {
@@ -860,6 +896,11 @@ const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "",
     applied: [...new Set(applied)],
     finalCharCount: charLength(repairedBody),
     targetComplianceRatio: requestedTarget > 0 ? Number((charLength(repairedBody) / requestedTarget).toFixed(2)) : 0,
+    targetLengthDecision: getTargetLengthDecision({
+      requestedTargetCharCount: requestedTarget,
+      finalCharCount: charLength(repairedBody),
+      informationSufficiency: informationLevel
+    }),
     inputFactCoverage: calculateInputFactCoverage({
       factMap: pipelineContext.factMap,
       body: repairedBody
@@ -876,15 +917,28 @@ const removeUnsafeClaimSegments = ({
   targetCharCount = 0
 } = {}) => {
   const applied = [];
+  const diagnostics = {
+    removals: [],
+    skippedRemovals: []
+  };
   let nextBody = String(body || "").trim();
   let nextFaqItems = Array.isArray(faqItems) ? faqItems : [];
   let nextHashtags = Array.isArray(hashtags) ? hashtags : [];
   const minTarget = Number(targetCharCount) >= 1800 ? Math.ceil(Number(targetCharCount) * 0.85) : 0;
+  const originalBodyLength = charLength(nextBody);
 
   const deduped = dedupeBodyParagraphs(nextBody);
   if (deduped.removedCount > 0) {
+    const beforeLength = charLength(nextBody);
     nextBody = deduped.body;
+    const afterLength = charLength(nextBody);
     applied.push("duplicateParagraphRemoval");
+    diagnostics.removals.push({
+      reason: "duplicateParagraphRemoval",
+      removedCount: deduped.removedCount,
+      removedCharCount: Math.max(0, beforeLength - afterLength),
+      reductionRatio: beforeLength > 0 ? Number(((beforeLength - afterLength) / beforeLength).toFixed(3)) : 0
+    });
   }
 
   const getSummary = () =>
@@ -914,31 +968,65 @@ const removeUnsafeClaimSegments = ({
   nextHashtags = nextHashtags.filter((tag) => !hasHardText(tag));
   if (nextFaqItems.length !== faqItems.length) applied.push("unsafeFaqRemoval");
   if (nextHashtags.length !== hashtags.length) applied.push("unsafeHashtagRemoval");
+  if (nextFaqItems.length !== faqItems.length) {
+    diagnostics.removals.push({
+      reason: "unsafeFaqRemoval",
+      removedCount: faqItems.length - nextFaqItems.length
+    });
+  }
+  if (nextHashtags.length !== hashtags.length) {
+    diagnostics.removals.push({
+      reason: "unsafeHashtagRemoval",
+      removedCount: hashtags.length - nextHashtags.length
+    });
+  }
 
   const paragraphs = splitBodyParagraphs(nextBody);
   for (const paragraph of paragraphs) {
     if (!hasHardText(paragraph)) continue;
     const candidateParagraphs = paragraphs.filter((item) => item !== paragraph);
     const candidateBody = joinBodyParagraphs(candidateParagraphs);
+    const beforeLength = charLength(nextBody);
+    const afterLength = charLength(candidateBody);
+    const reductionRatio = beforeLength > 0 ? (beforeLength - afterLength) / beforeLength : 0;
     const coverage = calculateInputFactCoverage({
       factMap: pipelineContext.factMap,
       body: candidateBody
     });
     const lengthOk = minTarget === 0 || charLength(candidateBody) >= minTarget;
-    if (lengthOk && Number(coverage.inputFactCoverage || 0) >= 0.9) {
+    const priorityCoverageOk = Number(coverage.criticalFactCoverage || 0) >= 1 && Number(coverage.highFactCoverage || 0) >= 0.9;
+    if (reductionRatio > 0.1) {
+      diagnostics.skippedRemovals.push({
+        reason: "unsafeClaimParagraphRemoval",
+        skippedReason: "largePostProcessingReduction",
+        removedCharCount: Math.max(0, beforeLength - afterLength),
+        reductionRatio: Number(reductionRatio.toFixed(3))
+      });
+      continue;
+    }
+    if (lengthOk && Number(coverage.inputFactCoverage || 0) >= 0.9 && priorityCoverageOk) {
       nextBody = candidateBody;
       applied.push("unsafeClaimParagraphRemoval");
+      diagnostics.removals.push({
+        reason: "unsafeClaimParagraphRemoval",
+        removedCharCount: Math.max(0, beforeLength - afterLength),
+        reductionRatio: Number(reductionRatio.toFixed(3))
+      });
       break;
     }
   }
 
   summary = getSummary();
+  const finalBodyLength = charLength(nextBody);
+  diagnostics.postProcessingReductionRatio =
+    originalBodyLength > 0 ? Number(((originalBodyLength - finalBodyLength) / originalBodyLength).toFixed(3)) : 0;
   return {
     body: nextBody,
     faqItems: nextFaqItems,
     hashtags: nextHashtags,
     applied,
-    hardFailRemaining: summary.hardFail
+    hardFailRemaining: summary.hardFail,
+    diagnostics
   };
 };
 
@@ -1136,6 +1224,10 @@ const buildJudgePrecheck = ({ form = {}, draft = {} } = {}) => {
       totalHighConfidenceFacts: inputFactCoverage.totalHighConfidenceFacts,
       reflectedFacts: inputFactCoverage.reflectedFacts,
       inputFactCoverage: inputFactCoverage.inputFactCoverage,
+      criticalFactCoverage: inputFactCoverage.criticalFactCoverage,
+      highFactCoverage: inputFactCoverage.highFactCoverage,
+      missingCriticalFactIds: inputFactCoverage.missingCriticalFactIds,
+      missingHighFactIds: inputFactCoverage.missingHighFactIds,
       missingFactIds: inputFactCoverage.missingFactIds
     },
     claimLedger: {
@@ -1252,7 +1344,147 @@ const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, fo
   }
 };
 
-const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}) => [
+const getParagraphIdsByText = (body = "", matches = []) => {
+  const matchSet = new Set((matches || []).map((item) => String(item || "").trim()).filter(Boolean));
+  if (matchSet.size === 0) return [];
+  return splitBodyParagraphs(body)
+    .map((paragraph, index) => ({
+      paragraphId: `p${index + 1}`,
+      paragraph
+    }))
+    .filter(({ paragraph }) => [...matchSet].some((item) => paragraph === item || paragraph.includes(item)))
+    .map(({ paragraphId }) => paragraphId);
+};
+
+const getGenericFillerParagraphIds = (humanQuality = {}, draft = {}) => {
+  const ratio = Number(humanQuality.diagnostics?.genericFillerRatio || 0);
+  if (ratio < 0.3) return [];
+  return splitBodyParagraphs(draft.body || draft.contentPackage?.blogBody || "")
+    .map((paragraph, index) => ({ paragraph, paragraphId: `p${index + 1}` }))
+    .filter(({ paragraph }) => paragraph.length < 220 || /same|repeat|generic|일반/u.test(paragraph))
+    .map(({ paragraphId }) => paragraphId);
+};
+
+const getRevisionIssueCodes = (humanQuality = {}) =>
+  Array.from(new Set([
+    ...(humanQuality.issues || []).map((issue) => issue.code).filter(Boolean),
+    ...(humanQuality.caps || []).map((cap) => cap.code).filter(Boolean)
+  ]));
+
+export const getRevisionDecision = ({ humanQuality = {}, draft = {} } = {}) => {
+  const score = Number(humanQuality.score) || 0;
+  const hardFail = Boolean(humanQuality.hardFail);
+  const packageData = draft.contentPackage || {};
+  const informationSufficiency = packageData.informationSufficiency?.level || packageData.informationSufficiency || "";
+  const requestedTargetCharCount =
+    humanQuality.requestedTargetCharCount ||
+    packageData.requestedTargetCharCount ||
+    packageData.targetLengthRange?.target ||
+    packageData.targetCharCount ||
+    0;
+  const diagnosticRatio = Number(humanQuality.diagnostics?.targetComplianceRatio || 0);
+  const finalCharCount =
+    diagnosticRatio > 0 && requestedTargetCharCount > 0
+      ? Math.round(Number(requestedTargetCharCount) * diagnosticRatio)
+      : charLength(draft.body || packageData.blogBody || "");
+  const targetLengthDecision = getTargetLengthDecision({
+    requestedTargetCharCount,
+    finalCharCount,
+    informationSufficiency
+  });
+  const issueCodes = getRevisionIssueCodes(humanQuality);
+  const targetOnlyLowInformation =
+    informationSufficiency === "low" &&
+    issueCodes.length > 0 &&
+    issueCodes.every((code) => /^TARGET_LENGTH_/u.test(String(code)));
+
+  if ((score >= 95 && !hardFail) || targetOnlyLowInformation) {
+    return { mode: "none", reason: "no_revision_needed", targetLengthDecision };
+  }
+  if (targetLengthDecision.mode === "rewrite_expand") {
+    return { mode: "rebuild", reason: "target_length_under_80", targetLengthDecision };
+  }
+  if (targetLengthDecision.mode === "compress") {
+    return { mode: "targeted", reason: "target_length_over_115", targetLengthDecision };
+  }
+  if (score >= 90 && score <= 94 && !hardFail) {
+    return { mode: "targeted", reason: "score_90_94", targetLengthDecision };
+  }
+  return { mode: "rebuild", reason: hardFail ? "hard_fail" : "score_below_90", targetLengthDecision };
+};
+
+export const getRevisionSignature = ({ humanQuality = {}, draft = {} } = {}) => {
+  const body = draft.body || draft.contentPackage?.blogBody || "";
+  const issueCodes = getRevisionIssueCodes(humanQuality).sort();
+  const unsupportedClaims = humanQuality.diagnostics?.unsupportedClaims || [];
+  const targetComplianceRatio = Number(humanQuality.diagnostics?.targetComplianceRatio || 0);
+  const targetBucket =
+    targetComplianceRatio < 0.8
+      ? "under_80"
+      : targetComplianceRatio < 0.85
+        ? "under_85"
+        : targetComplianceRatio > 1.15
+          ? "over_115"
+          : targetComplianceRatio > 1.1
+            ? "over_110"
+            : "ok";
+  return JSON.stringify({
+    issueCodes,
+    missingFactIds: humanQuality.diagnostics?.inputFactCoverage?.missingFactIds || [],
+    unsupportedClaimHashes: unsupportedClaims.map((item) => simpleHash(String(item || ""))),
+    targetBucket,
+    primaryEntityPlacement: humanQuality.diagnostics?.entityCoverage || {},
+    genericFillerBucket: Number(humanQuality.diagnostics?.genericFillerRatio || 0) >= 0.3 ? "high" : "ok",
+    duplicateParagraphIds: getParagraphIdsByText(body, humanQuality.diagnostics?.duplicateParagraphs || []),
+    categoryContaminationCount: (humanQuality.diagnostics?.categoryContamination || []).length,
+    revisionInstructionCount: (humanQuality.revisionInstructions || []).length
+  });
+};
+
+export const shouldStopRepeatedRevision = ({ signature = "", noImprovementSignatures = new Set() } = {}) =>
+  Boolean(signature && noImprovementSignatures.has(signature));
+
+const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revisionDecision = null } = {}) => {
+  const body = draft.body || "";
+  const targetRatio = Number(humanQuality.diagnostics?.targetComplianceRatio || 0);
+  const requestedTarget = humanQuality.requestedTargetCharCount || draft.contentPackage?.requestedTargetCharCount || 0;
+  const actualLength = charLength(body);
+  const duplicateParagraphIds = getParagraphIdsByText(body, humanQuality.diagnostics?.duplicateParagraphs || []);
+  const revisionFocus = {
+    revisionMode: revisionDecision?.mode || "targeted",
+    revisionReason: revisionDecision?.reason || "",
+    currentDraft: {
+      finalTitle: draft.finalTitle || draft.selectedTitle || "",
+      titleCandidates: draft.titleCandidates || draft.titles || [],
+      body,
+      faqItems: getDraftFaqItems(draft),
+      hashtags: draft.hashtags || draft.contentPackage?.hashtags || []
+    },
+    missingFactIds: humanQuality.diagnostics?.inputFactCoverage?.missingFactIds || [],
+    missingFacts: humanQuality.diagnostics?.inputFactCoverage?.missingFacts || [],
+    unsupportedClaims: humanQuality.diagnostics?.unsupportedClaims || [],
+    targetLengthDelta: {
+      requestedTargetCharCount: requestedTarget,
+      actualCharCount: actualLength,
+      targetComplianceRatio: targetRatio || null,
+      shortageChars: requestedTarget > 0 ? Math.max(0, Math.ceil(requestedTarget * 0.85) - actualLength) : 0,
+      excessChars: requestedTarget > 0 ? Math.max(0, actualLength - Math.floor(requestedTarget * 1.1)) : 0
+    },
+    primaryEntityPlacementIssue: humanQuality.diagnostics?.entityCoverage || {},
+    genericFillerParagraphIds: getGenericFillerParagraphIds(humanQuality, draft),
+    duplicateParagraphIds,
+    categoryContamination: humanQuality.diagnostics?.categoryContamination || [],
+    revisionInstructions: humanQuality.revisionInstructions || [],
+    outputSchema: {
+      titleCandidates: ["string"],
+      finalTitle: "string",
+      sections: [{ heading: "string|null", paragraphs: ["string"], imageRefs: ["integer"] }],
+      faq: [{ question: "string", answer: "string" }],
+      hashtags: ["string"]
+    }
+  };
+
+  return [
   {
     role: "system",
     content:
@@ -1265,49 +1497,19 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {} } = {}
   },
   {
     role: "user",
-    content: JSON.stringify({
-      factMap: draft.contentPackage?.factMap || createHumanQualityFactMap(form, form.imageAnalysis || form.imageContext || form.images || form.photoMetadata),
-      contextFacts: draft.contentPackage?.contextFacts || draft.contextFacts || null,
-      imageAnalysis: draft.contentPackage?.imageAnalysis || form.imageAnalysis || form.imageContext || form.images || form.photoMetadata || null,
-      writerPlan: draft.contentPackage?.writerPlan || null,
-      claimLedger: draft.contentPackage?.claimLedger || draft.claimLedger || [],
-      currentDraft: {
-        finalTitle: draft.finalTitle || draft.selectedTitle || "",
-        titleCandidates: draft.titleCandidates || draft.titles || [],
-        body: draft.body || "",
-        faqItems: getDraftFaqItems(draft),
-        hashtags: draft.hashtags || draft.contentPackage?.hashtags || []
-      },
-      qualityIssues: humanQuality.issues || [],
-      revisionInstructions: humanQuality.revisionInstructions || [],
-      missingFactIds: humanQuality.diagnostics?.inputFactCoverage?.missingFactIds || [],
-      missingFacts: humanQuality.diagnostics?.inputFactCoverage?.missingFacts || [],
-      unsupportedClaims: humanQuality.diagnostics?.unsupportedClaims || [],
-      primaryEntityPlacement: humanQuality.diagnostics?.entityCoverage || {},
-      categoryContamination: humanQuality.diagnostics?.categoryContamination || [],
-      genericFillerRatio: humanQuality.diagnostics?.genericFillerRatio ?? null,
-      targetComplianceRatio: humanQuality.diagnostics?.targetComplianceRatio ?? null,
-      duplicateParagraphs: humanQuality.diagnostics?.duplicateParagraphs || [],
-      lengthContract: draft.contentPackage?.targetLengthContract || null,
-      outputSchema: {
-        titleCandidates: ["string"],
-        finalTitle: "string",
-        sections: [{ heading: "string|null", paragraphs: ["string"], imageRefs: ["integer"] }],
-        faq: [{ question: "string", answer: "string" }],
-        hashtags: ["string"]
-      }
-    })
+    content: JSON.stringify(revisionFocus)
   }
-];
+  ];
+};
 
-const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, draft = {}, humanQuality = {}, llmStages = null, revisionAttempt = 1 } = {}) => {
+const requestLlmRevision = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, draft = {}, humanQuality = {}, llmStages = null, revisionAttempt = 1, revisionDecision = null } = {}) => {
   const startedAt = Date.now();
   try {
     const payload = await fetchOpenAiJson({
       env,
       body: {
         model,
-        messages: buildRevisionMessages({ form, draft, humanQuality }),
+        messages: buildRevisionMessages({ form, draft, humanQuality, revisionDecision }),
         temperature: 0.35,
         max_tokens: getWriterMaxTokens({ form, fallbackDraft: draft }),
         response_format: structuredResponseFormat("blog_revision_result", BLOG_WRITER_OUTPUT_JSON_SCHEMA)
@@ -1357,6 +1559,7 @@ const evaluateDraftHumanQuality = ({ form = {}, draft = {}, engine = "fallback",
     requestedTargetCharCount: packageData.requestedTargetCharCount || form.targetCharCount || form.targetLength || 2500,
     effectiveTargetCharCount: packageData.targetLengthRange?.target || packageData.targetCharCount || form.targetCharCount || 2500,
     engine,
+    informationSufficiency: packageData.informationSufficiency?.level || packageData.informationSufficiency || "",
     llmJudge
   });
 };
@@ -1468,7 +1671,9 @@ const buildQualityDiagnostics = ({
   attempts = [],
   revisionCallCount = 0,
   selectedAttempt = 1,
-  finalQualityScore = 0
+  finalQualityScore = 0,
+  revisionClassifications = [],
+  revisionDecisions = []
 } = {}) => {
   const scores = attempts.map((attempt) => Number(attempt.score) || 0);
   return {
@@ -1477,23 +1682,26 @@ const buildQualityDiagnostics = ({
     revisionUsed: revisionCallCount > 0,
     revisionCallCount,
     attemptScores: scores,
+    attempts,
+    revisionClassifications,
+    revisionDecisions,
     selectedAttempt,
     finalQualityScore: Number(finalQualityScore) || 0
   };
 };
 
 const isBetterQualityAttempt = (candidate = {}, current = {}) => {
+  if (Boolean(candidate.hardFail) !== Boolean(current.hardFail)) return !Boolean(candidate.hardFail);
   const candidateHasLlmJudge = candidate.judgeEngine === "llm";
   const currentHasLlmJudge = current.judgeEngine === "llm";
   if (candidateHasLlmJudge !== currentHasLlmJudge) {
-    if (candidateHasLlmJudge && !candidate.hardFail) return true;
-    if (currentHasLlmJudge && !current.hardFail) return false;
+    if (candidateHasLlmJudge) return true;
+    if (currentHasLlmJudge) return false;
   }
+  if (Boolean(candidate.publishReady) !== Boolean(current.publishReady)) return Boolean(candidate.publishReady);
   const candidateScore = Number(candidate.score) || 0;
   const currentScore = Number(current.score) || 0;
   if (candidateScore !== currentScore) return candidateScore > currentScore;
-  if (Boolean(candidate.publishReady) !== Boolean(current.publishReady)) return Boolean(candidate.publishReady);
-  if (Boolean(candidate.hardFail) !== Boolean(current.hardFail)) return !Boolean(candidate.hardFail);
   const candidateCoverage = Number(candidate.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
   const currentCoverage = Number(current.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
   if (candidateCoverage !== currentCoverage) return candidateCoverage > currentCoverage;
@@ -1502,11 +1710,23 @@ const isBetterQualityAttempt = (candidate = {}, current = {}) => {
   return candidateTargetDistance < currentTargetDistance;
 };
 
+export { isBetterQualityAttempt };
+
+const classifyRevisionAttempt = ({ previousQuality = {}, currentQuality = {}, failed = false } = {}) => {
+  if (failed) return "FAILED";
+  if (isBetterQualityAttempt(currentQuality, previousQuality)) return "EFFECTIVE";
+  if (isBetterQualityAttempt(previousQuality, currentQuality)) return "DEGRADED";
+  return "NO_IMPROVEMENT";
+};
+
 const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, fallbackDraft = {}, initialDraft = {}, llmStages = null } = {}) => {
   let attempts = 1;
   let revisionCallCount = 0;
   let selectedAttempt = 1;
   const attemptSummaries = [];
+  const revisionClassifications = [];
+  const revisionDecisions = [];
+  const noImprovementSignatures = new Set();
   let currentDraft = initialDraft;
   let currentQuality = null;
   try {
@@ -1518,13 +1738,24 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       engine: "llm"
     });
   }
-  attemptSummaries.push({ attempt: attempts, score: currentQuality.score });
+  attemptSummaries.push({ attempt: attempts, score: currentQuality.score, hardFail: Boolean(currentQuality.hardFail), publishReady: Boolean(currentQuality.publishReady) });
   let bestDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
   let bestQuality = currentQuality;
 
   while (shouldUseLlmRevision(env) && attempts < 3 && !currentQuality.publishReady) {
+    const revisionDecision = getRevisionDecision({ humanQuality: currentQuality, draft: currentDraft });
+    const revisionSignature = getRevisionSignature({ humanQuality: currentQuality, draft: currentDraft });
+    revisionDecisions.push({
+      attempt: attempts,
+      mode: revisionDecision.mode,
+      reason: revisionDecision.reason,
+      targetLengthMode: revisionDecision.targetLengthDecision?.mode || ""
+    });
+    if (revisionDecision.mode === "none" || shouldStopRepeatedRevision({ signature: revisionSignature, noImprovementSignatures })) break;
     revisionCallCount += 1;
     let revisionDraft = null;
+    const previousDraft = currentDraft;
+    const previousQuality = currentQuality;
     try {
       revisionDraft = await requestLlmRevision({
         env,
@@ -1533,33 +1764,60 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
         draft: currentDraft,
         humanQuality: currentQuality,
         llmStages,
-        revisionAttempt: revisionCallCount
+        revisionAttempt: revisionCallCount,
+        revisionDecision
       });
     } catch {
+      revisionClassifications.push({ attempt: attempts + 1, classification: "FAILED" });
       break;
     }
-    if (!hasUsableLlmDraft(revisionDraft)) break;
+    if (!hasUsableLlmDraft(revisionDraft)) {
+      revisionClassifications.push({ attempt: attempts + 1, classification: "FAILED" });
+      break;
+    }
     attempts += 1;
-    currentDraft = mergeAcceptedLlmDraft({
+    const candidateDraft = mergeAcceptedLlmDraft({
       form,
-      fallbackDraft: currentDraft,
+      fallbackDraft: previousDraft,
       llmDraft: revisionDraft
     });
+    let candidateQuality = null;
     try {
-      currentQuality = await judgeDraft({ env, model, form, draft: currentDraft, engine: "llm", llmStages });
+      candidateQuality = await judgeDraft({ env, model, form, draft: candidateDraft, engine: "llm", llmStages });
     } catch {
-      currentQuality = evaluateDraftHumanQuality({
+      candidateQuality = evaluateDraftHumanQuality({
         form,
-        draft: currentDraft,
+        draft: candidateDraft,
         engine: "llm"
       });
     }
-    attemptSummaries.push({ attempt: attempts, score: currentQuality.score });
+    currentQuality = candidateQuality;
+    attemptSummaries.push({
+      attempt: attempts,
+      score: currentQuality.score,
+      hardFail: Boolean(currentQuality.hardFail),
+      publishReady: Boolean(currentQuality.publishReady)
+    });
+    const classification = classifyRevisionAttempt({ previousQuality, currentQuality });
+    revisionClassifications.push({ attempt: attempts, classification });
     if (isBetterQualityAttempt(currentQuality, bestQuality)) {
       bestQuality = currentQuality;
       selectedAttempt = attempts;
-      bestDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
+      bestDraft = attachHumanQuality(candidateDraft, currentQuality, attempts);
     }
+    if (classification === "DEGRADED") {
+      currentDraft = bestDraft;
+      currentQuality = bestQuality;
+      noImprovementSignatures.add(revisionSignature);
+      break;
+    }
+    if (classification === "NO_IMPROVEMENT") {
+      noImprovementSignatures.add(revisionSignature);
+      currentDraft = bestDraft;
+      currentQuality = bestQuality;
+      continue;
+    }
+    currentDraft = candidateDraft;
   }
 
   return attachQualityDiagnostics(
@@ -1568,7 +1826,9 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       attempts: attemptSummaries,
       revisionCallCount,
       selectedAttempt,
-      finalQualityScore: bestQuality.score
+      finalQualityScore: bestQuality.score,
+      revisionClassifications,
+      revisionDecisions
     })
   );
 };
@@ -1686,7 +1946,8 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     subKeywords,
     requestedTargetCharCount: fallbackPackage.requestedTargetCharCount || form.targetCharCount || targetCharCount,
     effectiveTargetCharCount: targetCharCount,
-    engine: "llm"
+    engine: "llm",
+    informationSufficiency: pipelineContext.informationSufficiency?.level || ""
   });
   const claimLedger = createClaimLedger({
     title: finalTitle,
@@ -1739,6 +2000,11 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     targetComplianceRatio: requestedTargetCharCount > 0 ? Number((actualCharCount / requestedTargetCharCount).toFixed(2)) : 0,
     finishReason: llmDraft.__openAiMeta?.finishReason || null,
     postProcessingReductionRatio,
+    targetLengthDecision: getTargetLengthDecision({
+      requestedTargetCharCount,
+      finalCharCount: actualCharCount,
+      informationSufficiency: pipelineContext.informationSufficiency?.level || ""
+    }),
     informationSufficiency: pipelineContext.informationSufficiency?.level || null,
     resultMode: "honest_draft"
   };
@@ -1812,17 +2078,23 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
         applied: groundedRepair.applied,
         finalCharCount: groundedRepair.finalCharCount,
         targetComplianceRatio: groundedRepair.targetComplianceRatio,
+        targetLengthDecision: groundedRepair.targetLengthDecision,
         inputFactCoverage: {
           totalHighConfidenceFacts: groundedRepair.inputFactCoverage.totalHighConfidenceFacts,
           reflectedFacts: groundedRepair.inputFactCoverage.reflectedFacts,
           inputFactCoverage: groundedRepair.inputFactCoverage.inputFactCoverage,
-          missingFactIds: groundedRepair.inputFactCoverage.missingFactIds
+          criticalFactCoverage: groundedRepair.inputFactCoverage.criticalFactCoverage,
+          highFactCoverage: groundedRepair.inputFactCoverage.highFactCoverage,
+          missingFactIds: groundedRepair.inputFactCoverage.missingFactIds,
+          missingCriticalFactIds: groundedRepair.inputFactCoverage.missingCriticalFactIds,
+          missingHighFactIds: groundedRepair.inputFactCoverage.missingHighFactIds
         }
       },
       safetyRepair: {
         applied: safetyRepair.applied,
         finalCharCount: charLength(body),
-        hardFailRemaining: Boolean(safetyRepair.hardFailRemaining)
+        hardFailRemaining: Boolean(safetyRepair.hardFailRemaining),
+        diagnostics: safetyRepair.diagnostics
       },
       responseExtraction: {
         apiEndpoint: llmDraft.__openAiMeta?.apiEndpoint || fallbackPackage.diagnostics?.responseExtraction?.apiEndpoint || getOpenAiApiEndpoint(),
@@ -1831,7 +2103,9 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
         extractedTextLength: llmDraft.__openAiMeta?.extractedTextLength || fallbackPackage.diagnostics?.responseExtraction?.extractedTextLength || 0,
         extractedTextHash: llmDraft.__openAiMeta?.extractedTextHash || fallbackPackage.diagnostics?.responseExtraction?.extractedTextHash || "",
         writerAttempts: llmDraft.__openAiMeta?.writerAttempts || fallbackPackage.diagnostics?.responseExtraction?.writerAttempts || 1,
-        schemaFailureCount: llmDraft.__openAiMeta?.schemaFailureCount || fallbackPackage.diagnostics?.responseExtraction?.schemaFailureCount || 0
+        schemaFailureCount: llmDraft.__openAiMeta?.schemaFailureCount || fallbackPackage.diagnostics?.responseExtraction?.schemaFailureCount || 0,
+        maxTokens: llmDraft.__openAiMeta?.maxTokens || fallbackPackage.diagnostics?.responseExtraction?.maxTokens || null,
+        lengthRetry: llmDraft.__openAiMeta?.lengthRetry || fallbackPackage.diagnostics?.responseExtraction?.lengthRetry || 0
       }
     },
     publishReady,

@@ -132,6 +132,12 @@ const factTokens = (value = "") =>
       .filter((token) => Array.from(token).length >= 2)
   );
 
+const normalizeSemanticToken = (value = "") =>
+  text(value)
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}]/gu, "")
+    .replace(/(?:으로서|으로써|으로|에서|에게|까지|부터|처럼|보다|마다|이라서|라서|이고|하고|이며|거나|지만|는데|했다|했음|했어요|했지만|했고|했다가|하는|했던|해서|이다|였다|한다|된다|됐다|합니다|됩니다|이에요|예요|어요|아요|네요|죠|요|은|는|이|가|을|를|과|와|도|만|에|의|로)$/u, "");
+
 const normalizeFactMatch = (value = "") =>
   compact(value)
     .replace(/사용(?:함|했어요|했음|했다)/gu, "사용")
@@ -146,7 +152,7 @@ const normalizeFactMatch = (value = "") =>
     .replace(/편했(?:음|어요)/gu, "편")
     .replace(/않았(?:음|어요)/gu, "않았");
 
-const isFactReflected = (factValue = "", body = "") => {
+export const isFactReflected = (factValue = "", body = "") => {
   const factKey = compact(factValue);
   const bodyKey = compact(body);
   const normalizedFactKey = normalizeFactMatch(factValue);
@@ -156,11 +162,23 @@ const isFactReflected = (factValue = "", body = "") => {
   if (normalizedFactKey && normalizedBodyKey.includes(normalizedFactKey)) return true;
   const tokens = factTokens(factValue);
   if (tokens.length === 0) return false;
+  const bodyTokens = new Set(factTokens(body).map(normalizeSemanticToken).filter(Boolean));
+  const numericTokens = tokens.map(normalizeSemanticToken).filter((token) => /\p{N}/u.test(token));
+  if (
+    numericTokens.length > 0 &&
+    !numericTokens.every((token) => bodyTokens.has(token) || normalizedBodyKey.includes(token))
+  ) {
+    return false;
+  }
   const hitCount = tokens.filter((token) => {
     const normalizedToken = normalizeFactMatch(token);
-    return body.includes(token) || normalizedBodyKey.includes(normalizedToken) || normalizedBodyKey.includes(compact(token));
+    const semanticToken = normalizeSemanticToken(token);
+    return body.includes(token) ||
+      normalizedBodyKey.includes(normalizedToken) ||
+      normalizedBodyKey.includes(compact(token)) ||
+      bodyTokens.has(semanticToken);
   }).length;
-  const threshold = tokens.length >= 6 ? 0.45 : 0.55;
+  const threshold = tokens.length >= 8 ? 0.38 : tokens.length >= 5 ? 0.45 : 0.55;
   return hitCount / tokens.length >= threshold;
 };
 
@@ -169,18 +187,32 @@ export const calculateInputFactCoverage = ({ factMap = {}, body = "", coveredFac
   const coveredSet = new Set(coveredFactIds.filter(Boolean));
   const explicitMissingSet = new Set(missingFactIds.filter(Boolean));
   const reflected = highConfidenceFacts.filter((fact) =>
-    coveredSet.has(fact.id) || isFactReflected(fact.value, body)
+    (coveredSet.has(fact.id) && !explicitMissingSet.has(fact.id)) ||
+    isFactReflected(fact.value, body) ||
+    (fact.aliases || []).some((alias) => isFactReflected(alias, body))
   );
   const missing = highConfidenceFacts.filter((fact) => !reflected.some((item) => item.id === fact.id));
+  const reflectedIds = new Set(reflected.map((fact) => fact.id));
+  const criticalFacts = highConfidenceFacts.filter((fact) => fact.priority === "critical");
+  const highFacts = highConfidenceFacts.filter((fact) => fact.priority === "high");
+  const criticalReflected = criticalFacts.filter((fact) => reflectedIds.has(fact.id));
+  const highReflected = highFacts.filter((fact) => reflectedIds.has(fact.id));
 
   return {
     totalHighConfidenceFacts: highConfidenceFacts.length,
     reflectedFacts: reflected.length,
     inputFactCoverage: highConfidenceFacts.length === 0 ? 1 : Number((reflected.length / highConfidenceFacts.length).toFixed(2)),
+    criticalFactCoverage: criticalFacts.length === 0 ? 1 : Number((criticalReflected.length / criticalFacts.length).toFixed(2)),
+    highFactCoverage: highFacts.length === 0 ? 1 : Number((highReflected.length / highFacts.length).toFixed(2)),
+    criticalFactIds: criticalFacts.map((fact) => fact.id),
+    highFactIds: highFacts.map((fact) => fact.id),
+    missingCriticalFactIds: criticalFacts.filter((fact) => !reflectedIds.has(fact.id)).map((fact) => fact.id),
+    missingHighFactIds: highFacts.filter((fact) => !reflectedIds.has(fact.id)).map((fact) => fact.id),
     missingFactIds: missing.map((fact) => fact.id),
     missingFacts: missing.map((fact) => ({
       id: fact.id,
       type: fact.type,
+      priority: fact.priority,
       value: fact.value
     }))
   };
@@ -609,6 +641,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
     id: fact.id,
     type: fact.type,
     value: fact.value,
+    aliases: uniqueTexts([normalizeFactMatch(fact.value), compact(fact.value)]).filter((alias) => alias && alias !== fact.value),
     priority: ["actual_usage", "positive_experience", "concern_or_drawback", "future_intent"].includes(fact.type) ? "critical" : "high",
     confidence: fact.confidence,
     source: fact.source
@@ -788,14 +821,15 @@ const distributeFactsForSection = (facts = [], sectionIndex = 0, sectionCount = 
   return { required, optional };
 };
 
-const createSectionBudgets = ({ sectionCount = 1, targetCharCount = 1800 } = {}) => {
+const createSectionBudgets = ({ sectionCount = 1, targetCharCount = 1800, factCount = 0, informationLevel = "medium" } = {}) => {
   const safeCount = Math.max(1, Number(sectionCount) || 1);
   const safeTarget = Math.max(700, Number(targetCharCount) || 1800);
   if (safeCount === 1) return [safeTarget];
-  const opening = Math.round(safeTarget * 0.15);
-  const closing = Math.round(safeTarget * 0.1);
+  const denseFacts = Number(factCount || 0) >= safeCount;
+  const opening = Math.round(safeTarget * (informationLevel === "low" ? 0.18 : denseFacts ? 0.14 : 0.16));
+  const closing = Math.round(safeTarget * (informationLevel === "low" ? 0.12 : 0.1));
   const middleCount = Math.max(1, safeCount - 2);
-  const middle = Math.max(180, Math.round((safeTarget - opening - closing) / middleCount));
+  const middle = Math.max(informationLevel === "low" ? 120 : 220, Math.round((safeTarget - opening - closing) / middleCount));
   return Array.from({ length: safeCount }, (_, index) => {
     if (index === 0) return opening;
     if (index === safeCount - 1) return closing;
@@ -803,18 +837,21 @@ const createSectionBudgets = ({ sectionCount = 1, targetCharCount = 1800 } = {})
   });
 };
 
-const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, targetCharCount = 1800 } = {}) => {
+const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, targetCharCount = 1800, informationLevel = "medium" } = {}) => {
   const facts = factMap?.facts || [];
   const userFacts = (factMap?.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
   const contextEvidence = collectContextEvidenceIds(contextFacts);
   const imageEvidence = factMap?.imageEvidence || [];
-  const sectionBudgets = createSectionBudgets({ sectionCount: outline.length, targetCharCount });
+  const sectionBudgets = createSectionBudgets({ sectionCount: outline.length, targetCharCount, factCount: userFacts.length, informationLevel });
+  const assignedSoFar = new Set();
 
   return outline.map((heading, index) => {
     const fact = facts[index % Math.max(facts.length, 1)];
     const assigned = distributeFactsForSection(userFacts, index, outline.length);
     const requiredFactIds = assigned.required.map((item) => item.id).filter(Boolean);
     const optionalFactIds = assigned.optional.map((item) => item.id).filter(Boolean);
+    const forbiddenDuplicateFactIds = [...assignedSoFar].filter((id) => !requiredFactIds.includes(id));
+    requiredFactIds.forEach((id) => assignedSoFar.add(id));
     const evidenceIds = uniqueTexts([
       ...requiredFactIds,
       fact?.id,
@@ -832,6 +869,8 @@ const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, tar
       requiredFactIds,
       optionalFactIds,
       targetCharCount: sectionBudgets[index] || 0,
+      targetChars: sectionBudgets[index] || 0,
+      forbiddenDuplicateFactIds,
       evidenceIds,
       imageRefs
     };
@@ -849,7 +888,13 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
     resolvedInformation.level === "high" && requestedTarget > 0
       ? requestedTarget
       : requestedTarget || resolvedInformation.targetLengthRange?.target || 1800;
-  const sections = createPlanSections({ outline, factMap, contextFacts, targetCharCount: effectiveTargetCharCount });
+  const sections = createPlanSections({
+    outline,
+    factMap,
+    contextFacts,
+    targetCharCount: effectiveTargetCharCount,
+    informationLevel: resolvedInformation.level
+  });
   const contaminationPolicy = CATEGORY_CONTAMINATION_MATRIX[category] || { allow: [], forbid: [] };
 
   return {
@@ -864,7 +909,10 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
     effectiveTargetCharCount,
     sectionBudgets: sections.map((section) => ({
       sectionId: section.sectionId,
-      targetChars: section.targetCharCount
+      targetChars: section.targetCharCount,
+      requiredFactIds: section.requiredFactIds || [],
+      purpose: section.purpose,
+      forbiddenDuplicateFactIds: section.forbiddenDuplicateFactIds || []
     })),
     faqCount,
     keywordPlan: createKeywordPlan({

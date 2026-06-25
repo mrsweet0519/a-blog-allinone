@@ -5,6 +5,10 @@ import { extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "./diagnose-blog-preview.mjs";
 import { COMMERCIAL_EXPORT_DIR } from "./diagnose-commercial-readiness.mjs";
+import {
+  normalizeBlogWriterResult,
+  validateNormalizedBlogWriterResult
+} from "../shared/blogWriterResultNormalizer.js";
 
 const text = (value) => String(value ?? "").trim();
 const csvCell = (value = "") => `"${String(value ?? "").replace(/"/gu, '""')}"`;
@@ -57,9 +61,68 @@ const loadBlindCases = async (exportDir = "") => {
   const cases = [];
   for (const file of files) {
     const content = JSON.parse(await readFile(join(blindDir, file), "utf8"));
-    cases.push(content);
+    const normalized = normalizeBlogWriterResult(content);
+    cases.push({
+      ...content,
+      ...normalized,
+      caseId: content.caseId,
+      inputSummary: content.inputSummary || {},
+      images: content.images || normalized.images || [],
+      sourceFile: file
+    });
   }
   return cases;
+};
+
+export class CommercialReviewPackageInvalidError extends Error {
+  constructor(details = {}) {
+    super("COMMERCIAL_REVIEW_PACKAGE_INVALID");
+    this.name = "CommercialReviewPackageInvalidError";
+    this.details = details;
+  }
+}
+
+export const validateCommercialReviewPackage = (cases = [], exportDir = "") => {
+  const invalidCases = [];
+  const missingTitleCases = [];
+  const missingBodyCases = [];
+  const shortBodyCases = [];
+  const missingTitleCandidateCases = [];
+  const caseDetails = cases.map((item) => {
+    const informationLevel = item.inputSummary?.informationLevel || item.informationLevel || "high";
+    const validation = validateNormalizedBlogWriterResult(item, { informationLevel });
+    if (!validation.valid) invalidCases.push(item.caseId);
+    if (validation.errors.includes("missingTitle")) missingTitleCases.push(item.caseId);
+    if (validation.errors.includes("missingBody")) missingBodyCases.push(item.caseId);
+    if (validation.errors.includes("shortBody")) shortBodyCases.push(item.caseId);
+    if (validation.errors.includes("missingTitleCandidates")) missingTitleCandidateCases.push(item.caseId);
+    return {
+      caseId: item.caseId,
+      finalTitlePresent: validation.finalTitleLength >= 10,
+      titleLength: validation.finalTitleLength,
+      titleCandidatesCount: validation.titleCandidatesCount,
+      bodyPresent: validation.bodyLength > 0,
+      bodyLength: validation.bodyLength,
+      faqCount: Array.isArray(item.faq) ? item.faq.length : 0,
+      imageCount: Array.isArray(item.images) ? item.images.length : 0,
+      valid: validation.valid,
+      errors: validation.errors
+    };
+  });
+  const valid = invalidCases.length === 0 && cases.length > 0;
+  return {
+    status: valid ? "OK" : "COMMERCIAL_REVIEW_PACKAGE_INVALID",
+    valid,
+    exportDir,
+    caseCount: cases.length,
+    invalidCases,
+    missingTitleCases,
+    missingBodyCases,
+    shortBodyCases,
+    missingTitleCandidateCases,
+    repairCommand: `npm.cmd run repair:commercial-review -- --dir="${exportDir}"`,
+    cases: caseDetails
+  };
 };
 
 const reviewToCsv = (reviews = []) => [
@@ -132,6 +195,7 @@ const html = `<!doctype html>
     <div class="toolbar">
       <h1>Commercial Blind Review</h1>
       <span id="progress" class="muted"></span>
+      <span id="packageStatus" class="muted"></span>
       <button id="prev">이전</button>
       <button id="next">다음</button>
       <button id="save" class="primary">저장</button>
@@ -181,6 +245,7 @@ const html = `<!doctype html>
     ];
     let cases = [];
     let reviews = [];
+    let packageValidation = null;
     let current = 0;
 
     const qs = (id) => document.getElementById(id);
@@ -231,6 +296,7 @@ const html = `<!doctype html>
       const item = cases[current];
       if (!item) return;
       qs("progress").textContent = (current + 1) + " / " + cases.length;
+      qs("packageStatus").textContent = "Package valid | title " + (item.finalTitle || "").length + " | body " + (item.body || "").length + " | FAQ " + (item.faq || []).length + " | images " + (item.images || []).length;
       qs("caseTitle").textContent = item.caseId;
       qs("inputSummary").textContent = [item.inputSummary.category, item.inputSummary.productName, item.inputSummary.mainKeyword, item.inputSummary.targetCharCount + "자"].join(" · ");
       qs("finalTitle").textContent = item.finalTitle || "";
@@ -254,6 +320,7 @@ const html = `<!doctype html>
     fetch("/data").then((res) => res.json()).then((data) => {
       cases = data.cases || [];
       reviews = data.reviews || [];
+      packageValidation = data.packageValidation || null;
       render();
     });
   </script>
@@ -264,6 +331,10 @@ export const startCommercialReviewServer = async ({ dir = "", port = 4177, host 
   const exportDir = resolve(dir || await findLatestExportDir());
   const cases = await loadBlindCases(exportDir);
   if (!cases.length) throw new Error(`No blind review cases found in ${exportDir}.`);
+  const packageValidation = validateCommercialReviewPackage(cases, exportDir);
+  if (!packageValidation.valid) {
+    throw new CommercialReviewPackageInvalidError(packageValidation);
+  }
   const existingReviews = await readJsonIfExists(join(exportDir, "human-review.json"), []);
 
   if (checkOnly) {
@@ -271,6 +342,7 @@ export const startCommercialReviewServer = async ({ dir = "", port = 4177, host 
       exportDir,
       caseCount: cases.length,
       existingReviewCount: existingReviews.length,
+      packageValidation,
       status: "OK"
     };
   }
@@ -284,7 +356,7 @@ export const startCommercialReviewServer = async ({ dir = "", port = 4177, host 
       }
       if (req.method === "GET" && url.pathname === "/data") {
         const reviews = await readJsonIfExists(join(exportDir, "human-review.json"), []);
-        response(res, 200, JSON.stringify({ cases, reviews }), { "content-type": "application/json; charset=utf-8" });
+        response(res, 200, JSON.stringify({ cases, reviews, packageValidation }), { "content-type": "application/json; charset=utf-8" });
         return;
       }
       if (req.method === "GET" && url.pathname.startsWith("/asset/")) {
@@ -300,6 +372,11 @@ export const startCommercialReviewServer = async ({ dir = "", port = 4177, host 
         return;
       }
       if (req.method === "POST" && url.pathname === "/review") {
+        const currentValidation = validateCommercialReviewPackage(cases, exportDir);
+        if (!currentValidation.valid) {
+          response(res, 409, JSON.stringify(currentValidation), { "content-type": "application/json; charset=utf-8" });
+          return;
+        }
         const body = JSON.parse(await readRequestBody(req));
         const reviews = Array.isArray(body.reviews) ? body.reviews : [];
         await saveReviews({ exportDir, reviews });
@@ -316,6 +393,7 @@ export const startCommercialReviewServer = async ({ dir = "", port = 4177, host 
   return {
     exportDir,
     caseCount: cases.length,
+    packageValidation,
     url: `http://${host}:${port}`,
     server
   };
@@ -335,6 +413,11 @@ const main = async () => {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
+    if (error instanceof CommercialReviewPackageInvalidError) {
+      console.error(JSON.stringify(error.details, null, 2));
+      process.exitCode = 1;
+      return;
+    }
     console.error(`commercial-review-error: ${error.message}`);
     process.exitCode = 1;
   });

@@ -248,7 +248,8 @@ export const evaluateHumanQuality = ({
   effectiveTargetCharCount = 2500,
   engine = "fallback",
   llmJudge = null,
-  primaryEntity = ""
+  primaryEntity = "",
+  informationSufficiency = ""
 } = {}) => {
   const normalizedTitle = text(title || titleCandidates[0] || "");
   const titles = unique(titleCandidates.length > 0 ? titleCandidates : [normalizedTitle]);
@@ -308,6 +309,7 @@ export const evaluateHumanQuality = ({
     coveredFactIds: llmJudge?.coveredFactIds || [],
     missingFactIds: llmJudge?.missingFactIds || []
   });
+  const enforceTargetLength = informationSufficiency !== "low";
   const targetComplianceRatio =
     Number(requestedTargetCharCount) > 0
       ? Number((Array.from(normalizedBody).length / Number(requestedTargetCharCount)).toFixed(2))
@@ -561,6 +563,26 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "현재 카테고리의 금지 표현을 삭제하고 입력 fact에 맞는 표현으로 바꾸세요."
     });
   }
+  if (inputFactCoverage.criticalFactCoverage < 1) {
+    caps.push({ score: 60, code: "CRITICAL_FACT_MISSING" });
+    addIssue(issues, {
+      code: "CRITICAL_FACT_MISSING",
+      severity: "critical",
+      evidence: inputFactCoverage.missingCriticalFactIds.join(", "),
+      message: "critical user facts are missing from the body.",
+      revisionInstruction: "Cover every critical user fact once with grounded, non-duplicated sentences."
+    });
+  }
+  if (inputFactCoverage.highFactCoverage < 0.9) {
+    caps.push({ score: 80, code: "HIGH_FACT_COVERAGE_LOW" });
+    addIssue(issues, {
+      code: "HIGH_FACT_COVERAGE_LOW",
+      severity: "high",
+      evidence: inputFactCoverage.missingHighFactIds.join(", "),
+      message: "high-priority user facts are below the 90% coverage requirement.",
+      revisionInstruction: "Add the missing high-priority facts without inventing new claims."
+    });
+  }
   if (inputFactCoverage.inputFactCoverage < 0.7) {
     caps.push({ score: inputFactCoverage.inputFactCoverage < 0.5 ? 65 : 80, code: "LOW_INPUT_FACT_COVERAGE" });
     addIssue(issues, {
@@ -579,7 +601,7 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "누락된 사용자 fact를 중복 없이 한 번씩 반영하세요."
     });
   }
-  if (Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio < 0.85) {
+  if (enforceTargetLength && Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio < 0.85) {
     caps.push({ score: 89, code: "TARGET_LENGTH_UNDER_85" });
     addIssue(issues, {
       code: "TARGET_LENGTH_UNDER_85",
@@ -588,7 +610,7 @@ export const evaluateHumanQuality = ({
       message: "충분한 정보 입력인데 요청 글자수의 85%에 미달했습니다.",
       revisionInstruction: "새 경험을 만들지 말고 누락된 fact와 구체적 상황을 서로 다른 문단에 반영해 목표 길이의 85~110%로 확장하세요."
     });
-  } else if (Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio > 1.15) {
+  } else if (enforceTargetLength && Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio > 1.15) {
     caps.push({ score: 89, code: "TARGET_LENGTH_OVER_115" });
     addIssue(issues, {
       code: "TARGET_LENGTH_OVER_115",
@@ -642,13 +664,21 @@ export const evaluateHumanQuality = ({
     duplicateSignals.duplicates.length === 0 &&
     !awkwardTitle &&
     inputFactCoverage.inputFactCoverage >= 0.9 &&
-    (Number(requestedTargetCharCount) < 1800 || (targetComplianceRatio >= 0.85 && targetComplianceRatio <= 1.1)) &&
+    inputFactCoverage.criticalFactCoverage >= 1 &&
+    inputFactCoverage.highFactCoverage >= 0.9 &&
+    informationSufficiency !== "low" &&
+    (!enforceTargetLength || Number(requestedTargetCharCount) < 1800 || (targetComplianceRatio >= 0.85 && targetComplianceRatio <= 1.1)) &&
     !hasCategoryContamination &&
     genericRatio < 0.3;
 
   const llmIssues = (Array.isArray(llmJudge?.issues) ? llmJudge.issues.map(toIssue) : []).filter((issue) => {
     if (!hasImageInput && isNoImageIssue(issue)) return false;
-    if (/MISSING_FACT|LOW_INPUT_FACT|FACT_COVERAGE/u.test(String(issue.code || "")) && Number(inputFactCoverage.inputFactCoverage || 0) >= 0.9) {
+    if (
+      /MISSING_FACT|LOW_INPUT_FACT|FACT_COVERAGE/u.test(String(issue.code || "")) &&
+      Number(inputFactCoverage.inputFactCoverage || 0) >= 0.9 &&
+      Number(inputFactCoverage.criticalFactCoverage || 0) >= 1 &&
+      Number(inputFactCoverage.highFactCoverage || 0) >= 0.9
+    ) {
       return false;
     }
     return true;
