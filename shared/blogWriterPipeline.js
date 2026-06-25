@@ -997,7 +997,7 @@ const EXPERIENCE_CLAIM_PATTERN =
   /다녀왔|다녀온|방문했|방문함|들렀|갔다|가봤|머물렀|묵었|숙박했|먹었|마셨|써봤|사용해봤|사용함|구매했|수강했|참여했|체험했|이용했|편했|기억남|기억났|남았|좋았/u;
 const CONTEXT_CLAIM_PATTERN =
   /가족|아이|아이와|아이랑|아기|유아|어린이|자녀|친구|동료|동행|일행|부모|부모님|엄마|아빠|남편|아내|단체|모임/u;
-const IMAGE_CLAIM_PATTERN = /사진|이미지|화면|보이는|보였|눈에\s*보|시각/u;
+const IMAGE_CLAIM_PATTERN = /사진|이미지|화면(?:에|에서)\s*(?:보|나오)|눈에\s*보|시각/u;
 
 const splitClaimUnits = ({ title = "", body = "", faq = [], hashtags = [] } = {}) =>
   uniqueTexts([

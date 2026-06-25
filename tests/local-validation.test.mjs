@@ -1637,6 +1637,48 @@ const unsupportedSummary = summarizeClaimLedger(
 );
 assert.equal(unsupportedSummary.hardFail, true);
 
+const screenBasedClassSummary = summarizeClaimLedger(
+  createClaimLedger({
+    title: "Unit Class Review",
+    body: "Unit Class는 화면을 따라 하는 시간과 혼자 수정해보는 시간이 분리되어 있었다.",
+    factMap: {
+      facts: [
+        {
+          id: "uf1",
+          value: "화면을 따라 하는 시간과 혼자 수정해보는 시간이 분리되어 있었다",
+          confidence: 0.95
+        }
+      ],
+      userFacts: [
+        {
+          id: "uf1",
+          value: "화면을 따라 하는 시간과 혼자 수정해보는 시간이 분리되어 있었다",
+          confidence: 0.95,
+          priority: "critical"
+        }
+      ],
+      experienceEvidence: ["uf1"],
+      contextEvidence: []
+    },
+    contextFacts: {},
+    imageAnalysis: {},
+    experienceStatus: "attended"
+  })
+);
+assert.equal(screenBasedClassSummary.hardFail, false);
+
+const unsupportedPhotoSummary = summarizeClaimLedger(
+  createClaimLedger({
+    title: "Unit Entity Review",
+    body: "사진에서 붉은 국물이 또렷하게 보였어요.",
+    factMap: { facts: [], userFacts: [], experienceEvidence: [], contextEvidence: [], imageEvidence: [] },
+    contextFacts: {},
+    imageAnalysis: {},
+    experienceStatus: "unknown"
+  })
+);
+assert.equal(unsupportedPhotoSummary.hardFail, true);
+
 assert.equal(getRevisionDecision({ humanQuality: { score: 96, hardFail: false, publishReady: true }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "none");
 assert.equal(getRevisionDecision({ humanQuality: { score: 93, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.92 } }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "targeted");
 assert.equal(getRevisionDecision({ humanQuality: { score: 82, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.92 } }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "rebuild");
