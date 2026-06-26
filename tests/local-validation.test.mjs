@@ -59,6 +59,11 @@ import {
   inspectHumanReviewCompleteness
 } from "../scripts/analyze-commercial-readiness.mjs";
 import {
+  createCommercialHumanReviewDecision,
+  shouldRequestHumanCommercialReview,
+  writeAutomaticFailureAnalysis
+} from "../scripts/diagnose-commercial-readiness.mjs";
+import {
   bodyFromBlogWriterSections,
   normalizeBlogWriterResult,
   validateNormalizedBlogWriterResult
@@ -2104,6 +2109,59 @@ try {
 
 const commercialAnalysisTemp = mkdtempSync(join(tmpdir(), "commercial-analysis-"));
 try {
+  const failHumanReviewDecision = createCommercialHumanReviewDecision({
+    aggregate: {
+      automaticResult: "FAIL",
+      recommendation: "REJECT",
+      fallbackHighMedium: 1
+    },
+    exportPath: "unit-export"
+  });
+  assert.equal(shouldRequestHumanCommercialReview({ aggregate: { automaticResult: "FAIL", recommendation: "REJECT" } }), false);
+  assert.equal(failHumanReviewDecision.required, false);
+  assert.equal(failHumanReviewDecision.status, "SKIPPED_AUTOMATIC_FAIL");
+  assert.equal(failHumanReviewDecision.reviewCommand, "");
+  const passHumanReviewDecision = createCommercialHumanReviewDecision({
+    aggregate: {
+      automaticResult: "PASS",
+      recommendation: "CONDITIONAL"
+    },
+    exportPath: "unit-export"
+  });
+  assert.equal(shouldRequestHumanCommercialReview({ aggregate: { automaticResult: "PASS", recommendation: "CONDITIONAL" } }), true);
+  assert.equal(passHumanReviewDecision.required, true);
+  assert.ok(passHumanReviewDecision.reviewCommand.includes("review:commercial"));
+  const automaticAnalysisTemp = mkdtempSync(join(tmpdir(), "commercial-auto-analysis-"));
+  try {
+    const automaticAnalysis = await writeAutomaticFailureAnalysis({
+      exportPath: automaticAnalysisTemp,
+      aggregate: {
+        automaticResult: "FAIL",
+        recommendation: "REJECT",
+        highMediumCount: 1,
+        publishReadyHighMedium: 0,
+        fallbackHighMedium: 1,
+        averageQualityScore: 70,
+        minQualityScore: 70
+      },
+      summaries: [
+        {
+          caseId: "unit-auto-fail",
+          informationLevel: "high",
+          engine: "fallback",
+          judgeEngine: "deterministic",
+          targetComplianceRatio: 0.6,
+          failureCategory: "target length"
+        }
+      ]
+    });
+    assert.ok(automaticAnalysis.nextTaskPath.endsWith("next-codex-task.md"));
+    assert.equal(existsSync(join(automaticAnalysisTemp, "analysis", "next-codex-task.md")), true);
+    assert.ok(readFileSync(join(automaticAnalysisTemp, "analysis", "next-codex-task.md"), "utf8").includes("Automatic commercial readiness failed"));
+  } finally {
+    rmSync(automaticAnalysisTemp, { recursive: true, force: true });
+  }
+
   mkdirSync(join(commercialAnalysisTemp, "metadata"), { recursive: true });
   const commercialMetadata = {
     caseId: "unit-commercial-case",

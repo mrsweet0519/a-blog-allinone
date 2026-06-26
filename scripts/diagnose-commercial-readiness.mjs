@@ -569,6 +569,130 @@ const summarizeAggregate = (cases = []) => {
   };
 };
 
+export const shouldRequestHumanCommercialReview = ({ aggregate = {} } = {}) =>
+  aggregate.automaticResult === "PASS" ||
+  aggregate.automaticResult === "PARTIAL" ||
+  aggregate.recommendation === "CONDITIONAL";
+
+export const createCommercialHumanReviewDecision = ({ aggregate = {}, exportPath = "" } = {}) => {
+  if (shouldRequestHumanCommercialReview({ aggregate })) {
+    return {
+      required: true,
+      status: "PENDING",
+      reason: "Automatic commercial checks are sufficient for blind human review.",
+      reviewCommand: exportPath ? `npm.cmd run review:commercial -- --dir="${exportPath}"` : "npm.cmd run review:commercial"
+    };
+  }
+  return {
+    required: false,
+    status: "SKIPPED_AUTOMATIC_FAIL",
+    reason: "Automatic commercial checks failed; fix automatic blockers before blind human review.",
+    reviewCommand: ""
+  };
+};
+
+const automaticFailureRootCauses = ({ summaries = [], aggregate = {} } = {}) => {
+  const highMedium = summaries.filter((item) => item.informationLevel !== "low");
+  const causes = [];
+  const addCause = ({ rootCause, cases = [], severity = "high", recommendedLayer = rootCause, expectedImpact = "" } = {}) => {
+    const affectedCases = [...new Set(cases.map((item) => item.caseId || item).filter(Boolean))];
+    if (affectedCases.length === 0) return;
+    causes.push({
+      rootCause,
+      affectedCases,
+      frequency: affectedCases.length,
+      severity,
+      recommendedLayer,
+      expectedImpact: expectedImpact || "Improve repeated automatic commercial readiness failures without case-specific exceptions.",
+      regressionRisk: rootCause === "LLM_CONNECTION" ? "medium" : "low"
+    });
+  };
+
+  addCause({
+    rootCause: "LLM_CONNECTION",
+    cases: highMedium.filter((item) => item.engine !== "llm" || item.judgeEngine !== "llm"),
+    severity: Number(aggregate.fallbackHighMedium || 0) > 0 ? "critical" : "high",
+    recommendedLayer: "INFRASTRUCTURE",
+    expectedImpact: "Restore the LLM/judge route before judging production content quality."
+  });
+  addCause({
+    rootCause: "TARGET_LENGTH",
+    cases: highMedium.filter((item) =>
+      item.engine === "llm" &&
+      (Number(item.targetComplianceRatio || 0) < 0.85 ||
+        Number(item.targetComplianceRatio || 0) > 1.1 ||
+        /target length/iu.test(item.failureCategory || ""))
+    ),
+    recommendedLayer: "TARGET_LENGTH"
+  });
+  addCause({
+    rootCause: "REVISION_STRATEGY",
+    cases: highMedium.filter((item) =>
+      item.engine === "llm" &&
+      (Number(item.revisionCallCount || 0) > 0 && item.publishReady !== true ||
+        /NO_IMPROVEMENT|DEGRADED|FAILED|UNNECESSARY/u.test(String(item.revisionEffectiveness || "")))
+    ),
+    recommendedLayer: "REVISION_STRATEGY"
+  });
+  addCause({
+    rootCause: "UNSUPPORTED_CLAIM",
+    cases: highMedium.filter((item) => Number(item.unsupportedClaimCount || 0) > 0),
+    severity: "critical",
+    recommendedLayer: "FACT_MAP"
+  });
+
+  return causes.filter((item) => item.frequency >= 3 || item.severity === "critical");
+};
+
+const automaticNextTaskMarkdown = ({ aggregate = {}, rootCauses = [] } = {}) => `# Next Codex Task
+
+Automatic commercial readiness failed before blind human review. Do not request human evaluation until automatic blockers are fixed.
+
+## Automatic Result
+
+- automaticResult: ${aggregate.automaticResult || "UNKNOWN"}
+- recommendation: ${aggregate.recommendation || "UNKNOWN"}
+- fallbackHighMedium: ${aggregate.fallbackHighMedium ?? 0}
+- publishReadyHighMedium: ${aggregate.publishReadyHighMedium ?? 0}/${aggregate.highMediumCount ?? 0}
+- averageQualityScore: ${aggregate.averageQualityScore ?? 0}
+- minQualityScore: ${aggregate.minQualityScore ?? 0}
+
+## Scope
+
+${rootCauses.length ? rootCauses.map((item) => `- ${item.rootCause}: ${item.frequency} cases; recommended layer ${item.recommendedLayer}; severity ${item.severity}`).join("\n") : "- No repeated production-code root cause met the automatic threshold."}
+
+## Policy
+
+- Do not lower judge thresholds.
+- Do not add case-specific exceptions.
+- Do not push or merge main.
+- If LLM_CONNECTION is present, restore the operational LLM route before requesting human review.
+
+## Verification
+
+- npm.cmd run test:local
+- npm.cmd run build
+- npm.cmd run diagnose:commercial -- --cases=8 --export --timeout-ms=240000
+`;
+
+export const writeAutomaticFailureAnalysis = async ({ exportPath = "", summaries = [], aggregate = {} } = {}) => {
+  if (!exportPath || aggregate.automaticResult !== "FAIL") return null;
+  const analysisDir = join(exportPath, "analysis");
+  const rootCauses = automaticFailureRootCauses({ summaries, aggregate });
+  await mkdir(analysisDir, { recursive: true });
+  await writeFile(
+    join(analysisDir, "automatic-failure-analysis.json"),
+    `${JSON.stringify({ summary: aggregate, rootCauses }, null, 2)}\n`,
+    "utf8"
+  );
+  await writeFile(join(analysisDir, "next-codex-task.md"), automaticNextTaskMarkdown({ aggregate, rootCauses }), "utf8");
+  return {
+    analysisDir,
+    nextTaskPath: join(analysisDir, "next-codex-task.md"),
+    rootCauses
+  };
+};
+
 const summarizeForConsole = (item = {}) => ({
   caseId: item.caseId,
   category: item.category,
@@ -887,6 +1011,11 @@ export const runCommercialDiagnostics = async ({
   const referenceInfo = await inspectReferenceDir(referenceDir);
   const runId = `commercial-readiness-${new Date().toISOString().replace(/[:.]/gu, "-")}-${seed}`;
   const exportPath = exportResults ? await writeCommercialExport({ runId, cases: summaries, referenceInfo }) : "";
+  const humanReview = createCommercialHumanReviewDecision({ aggregate, exportPath });
+  const automaticAnalysis =
+    exportPath && !humanReview.required
+      ? await writeAutomaticFailureAnalysis({ exportPath, summaries, aggregate })
+      : null;
 
   return {
     previewUrl: baseUrl,
@@ -902,11 +1031,8 @@ export const runCommercialDiagnostics = async ({
     commonFailureCategories,
     hardFailCount: summaries.filter((item) => item.hardFail).length,
     cases: summaries.map(summarizeForConsole),
-    humanReview: {
-      required: true,
-      status: "PENDING",
-      reviewCommand: exportPath ? `npm.cmd run review:commercial -- --dir="${exportPath}"` : "npm.cmd run review:commercial"
-    },
+    humanReview,
+    automaticAnalysis,
     referenceComparison: referenceInfo || { provided: false },
     mainMerge: {
       recommendation: aggregate.recommendation,
