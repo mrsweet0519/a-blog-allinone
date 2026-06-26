@@ -314,6 +314,7 @@ const normalizeIssueCode = (value = "") => {
 const collectIssueCodes = ({ humanQuality = {}, qualityIssues = [], claimLedgerSummary = {} } = {}) =>
   uniqueTexts([
     ...(Array.isArray(humanQuality.issues) ? humanQuality.issues.map((issue) => normalizeIssueCode(issue?.code)) : []),
+    ...(Array.isArray(humanQuality.diagnostics?.issueCodes) ? humanQuality.diagnostics.issueCodes.map(normalizeIssueCode) : []),
     ...(Array.isArray(qualityIssues) ? qualityIssues.map(normalizeIssueCode) : []),
     ...((claimLedgerSummary.hardFailures || []).map((item) => `CLAIM_${normalizeIssueCode(item?.claimType)}`))
   ].filter(Boolean));
@@ -414,6 +415,7 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
   const qualityDiagnostics = json.qualityDiagnostics || packageData.qualityDiagnostics || {};
   const llmStages = json.llmStages || packageData.llmStages || {};
   const targetLengthContract = packageData.targetLengthContract || {};
+  const targetLengthDiagnostics = packageData.diagnostics?.targetLength || {};
   const schemaRepair = packageData.diagnostics?.schemaRepair || {};
   const responseExtraction = packageData.diagnostics?.responseExtraction || {};
   const groundedRepair = packageData.diagnostics?.groundedRepair || {};
@@ -452,11 +454,16 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
     resultMode: json.resultMode || packageData.resultMode || packageData.summary?.resultMode || null,
     requestedTargetCharCount:
       numericOrNull(packageData.requestedTargetCharCount ?? packageData.targetLengthContract?.requestedTargetCharCount ?? packageData.summary?.requestedTargetCharCount),
+    effectiveTargetCharCount:
+      numericOrNull(packageData.effectiveTargetCharCount ?? targetLengthContract.effectiveTargetCharCount ?? targetLengthDiagnostics.effectiveTargetCharCount),
     actualCharCount:
       numericOrNull(json.actualBodyCharCount ?? packageData.actualBodyCharCount ?? packageData.actualCharCount ?? packageData.summary?.actualBodyCharCount),
     rawWriterCharCount: numericOrNull(targetLengthContract.rawWriterCharCount),
     finalCharCount: numericOrNull(targetLengthContract.finalCharCount ?? targetLengthContract.actualCharCount),
     targetComplianceRatio: numericOrNull(targetLengthContract.targetComplianceRatio),
+    sectionBudgetTotal: numericOrNull(targetLengthContract.sectionBudgetTotal ?? targetLengthDiagnostics.sectionBudgetTotal),
+    sectionActualTotal: numericOrNull(targetLengthContract.sectionActualTotal ?? targetLengthDiagnostics.sectionActualTotal),
+    targetLengthFailureReason: targetLengthContract.targetLengthFailureReason || targetLengthDiagnostics.targetLengthFailureReason || "",
     finishReason: targetLengthContract.finishReason || llmStages.writer?.finishReason || "",
     postProcessingReductionRatio: numericOrNull(targetLengthContract.postProcessingReductionRatio),
     schemaRepairUsed: Boolean(schemaRepair.schemaRepairUsed),
@@ -544,9 +551,13 @@ export const formatDiagnosticSummary = (summary = {}) => [
   `genericFillerRatio: ${summary.genericFillerRatio ?? "unknown"}`,
   `josaErrorCount: ${summary.josaErrorCount ?? "unknown"}`,
   `changedCharacterRatio: ${summary.changedCharacterRatio ?? "unknown"}`,
+  `effectiveTargetCharCount: ${summary.effectiveTargetCharCount ?? "unknown"}`,
   `rawWriterCharCount: ${summary.rawWriterCharCount ?? "unknown"}`,
   `finalCharCount: ${summary.finalCharCount ?? "unknown"}`,
   `targetComplianceRatio: ${summary.targetComplianceRatio ?? "unknown"}`,
+  `sectionBudgetTotal: ${summary.sectionBudgetTotal ?? "unknown"}`,
+  `sectionActualTotal: ${summary.sectionActualTotal ?? "unknown"}`,
+  `targetLengthFailureReason: ${summary.targetLengthFailureReason || "none"}`,
   `finishReason: ${summary.finishReason || "unknown"}`,
   `postProcessingReductionRatio: ${summary.postProcessingReductionRatio ?? "unknown"}`,
   `schemaRepairUsed: ${summary.schemaRepairUsed}`,

@@ -843,36 +843,59 @@ const createKeywordPlan = ({ targetLengthRange = {}, mainKeyword = "", subKeywor
   };
 };
 
-const distributeFactsForSection = (facts = [], sectionIndex = 0, sectionCount = 1) => {
+const distributeFactsForSection = (facts = [], sectionIndex = 0, sectionCount = 1, assignedFactIds = new Set()) => {
   if (facts.length === 0) return { required: [], optional: [] };
-  const middleCount = Math.max(1, sectionCount - 2);
-  const bucketSize = Math.max(1, Math.ceil(facts.length / middleCount));
-  const start = sectionIndex <= 0 ? 0 : Math.max(0, (sectionIndex - 1) * bucketSize);
-  const required =
-    sectionIndex === 0
-      ? facts.slice(0, Math.min(2, facts.length))
-      : sectionIndex === sectionCount - 1
-        ? facts.slice(Math.max(0, facts.length - 2))
-        : facts.slice(start, start + bucketSize);
+  const safeSectionCount = Math.max(1, Number(sectionCount) || 1);
+  const alreadyAssigned = assignedFactIds instanceof Set ? assignedFactIds : new Set();
+  const openingCount = safeSectionCount >= 4 ? Math.min(2, facts.length) : Math.min(1, facts.length);
+  const remainingFacts = facts.filter((fact) => fact?.id && !alreadyAssigned.has(fact.id));
+  const middleCount = Math.max(1, safeSectionCount - 2);
+  const middleBucketSize = Math.max(1, Math.ceil(Math.max(1, facts.length - openingCount) / middleCount));
+  let preferred = [];
+  if (sectionIndex === 0) {
+    preferred = facts.slice(0, openingCount);
+  } else if (sectionIndex === safeSectionCount - 1) {
+    preferred = facts.slice(Math.max(openingCount, facts.length - Math.max(1, Math.ceil(middleBucketSize / 2))));
+  } else {
+    const start = openingCount + (sectionIndex - 1) * middleBucketSize;
+    preferred = facts.slice(start, start + middleBucketSize);
+  }
+  const required = preferred.filter((fact) => fact?.id && !alreadyAssigned.has(fact.id));
+  if (required.length === 0 && remainingFacts.length > 0 && sectionIndex < safeSectionCount - 1) {
+    required.push(remainingFacts[0]);
+  }
   const requiredIds = new Set(required.map((fact) => fact.id).filter(Boolean));
-  const optional = facts.filter((fact) => !requiredIds.has(fact.id)).slice(0, 3);
+  const optional = facts
+    .filter((fact) => fact?.id && !requiredIds.has(fact.id) && !alreadyAssigned.has(fact.id))
+    .slice(0, 3);
   return { required, optional };
 };
 
-const createSectionBudgets = ({ sectionCount = 1, targetCharCount = 1800, factCount = 0, informationLevel = "medium" } = {}) => {
+const createSectionBudgets = ({
+  sectionCount = 1,
+  targetCharCount = 1800,
+  factCount = 0,
+  informationLevel = "medium",
+  sectionFactCounts = []
+} = {}) => {
   const safeCount = Math.max(1, Number(sectionCount) || 1);
   const safeTarget = Math.max(700, Number(targetCharCount) || 1800);
   if (safeCount === 1) return [safeTarget];
-  const denseFacts = Number(factCount || 0) >= safeCount;
-  const opening = Math.round(safeTarget * (informationLevel === "low" ? 0.18 : denseFacts ? 0.14 : 0.16));
-  const closing = Math.round(safeTarget * (informationLevel === "low" ? 0.12 : 0.1));
-  const middleCount = Math.max(1, safeCount - 2);
-  const middle = Math.max(informationLevel === "low" ? 120 : 220, Math.round((safeTarget - opening - closing) / middleCount));
-  const budgets = Array.from({ length: safeCount }, (_, index) => {
-    if (index === 0) return opening;
-    if (index === safeCount - 1) return closing;
-    return middle;
+  const safeFactCounts = Array.from({ length: safeCount }, (_, index) => Number(sectionFactCounts[index] || 0));
+  const denseFacts = Number(factCount || 0) >= safeCount || safeFactCounts.some((count) => count > 1);
+  const weights = Array.from({ length: safeCount }, (_, index) => {
+    const assignedFacts = safeFactCounts[index] || 0;
+    if (informationLevel === "low") {
+      if (index === 0) return 0.9;
+      if (index === safeCount - 1) return 0.65;
+      return 1 + Math.min(0.35, assignedFacts * 0.15);
+    }
+    if (index === 0) return denseFacts ? 0.9 : 1;
+    if (index === safeCount - 1) return 0.75;
+    return 1 + Math.min(0.8, assignedFacts * 0.28);
   });
+  const totalWeight = weights.reduce((total, value) => total + value, 0) || 1;
+  const budgets = weights.map((weight) => Math.max(1, Math.round((safeTarget * weight) / totalWeight)));
   const delta = safeTarget - budgets.reduce((total, value) => total + value, 0);
   budgets[Math.max(0, safeCount - 2)] += delta;
   return budgets;
@@ -883,16 +906,30 @@ const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, tar
   const userFacts = (factMap?.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
   const contextEvidence = collectContextEvidenceIds(contextFacts);
   const imageEvidence = factMap?.imageEvidence || [];
-  const sectionBudgets = createSectionBudgets({ sectionCount: outline.length, targetCharCount, factCount: userFacts.length, informationLevel });
   const assignedSoFar = new Set();
+  const assignments = outline.map((_, index) => {
+    const assigned = distributeFactsForSection(userFacts, index, outline.length, assignedSoFar);
+    assigned.required.forEach((fact) => {
+      if (fact?.id) assignedSoFar.add(fact.id);
+    });
+    return assigned;
+  });
+  const sectionBudgets = createSectionBudgets({
+    sectionCount: outline.length,
+    targetCharCount,
+    factCount: userFacts.length,
+    informationLevel,
+    sectionFactCounts: assignments.map((assigned) => assigned.required.length)
+  });
+  const previouslyRequired = new Set();
 
   return outline.map((heading, index) => {
     const fact = facts[index % Math.max(facts.length, 1)];
-    const assigned = distributeFactsForSection(userFacts, index, outline.length);
+    const assigned = assignments[index] || { required: [], optional: [] };
     const requiredFactIds = assigned.required.map((item) => item.id).filter(Boolean);
     const optionalFactIds = assigned.optional.map((item) => item.id).filter(Boolean);
-    const forbiddenDuplicateFactIds = [...assignedSoFar].filter((id) => !requiredFactIds.includes(id));
-    requiredFactIds.forEach((id) => assignedSoFar.add(id));
+    const forbiddenDuplicateFactIds = [...previouslyRequired].filter((id) => !requiredFactIds.includes(id));
+    requiredFactIds.forEach((id) => previouslyRequired.add(id));
     const evidenceIds = uniqueTexts([
       ...requiredFactIds,
       fact?.id,

@@ -269,10 +269,11 @@ const revisionEffectiveness = (metadata = {}) => {
   const selectedIndex = Math.max(0, number(metadata.selectedAttempt, attempts.length || 1) - 1);
   const selectedScore = attempts[selectedIndex] ?? number(metadata.qualityScore);
   const revisionGain = selectedScore - initialScore;
-  let classification = "UNNECESSARY";
+  let classification = initialScore >= 95 ? "NOT_NEEDED" : "FAILED";
   if (number(metadata.revisionCallCount) > 0) {
-    if (selectedScore < initialScore) classification = "DEGRADED";
-    else if (revisionGain > 0) classification = "EFFECTIVE";
+    if (initialScore >= 95) classification = "UNNECESSARY";
+    else if (selectedScore < initialScore) classification = "DEGRADED";
+    else if (revisionGain >= 3) classification = "EFFECTIVE";
     else classification = "NO_IMPROVEMENT";
   } else if (initialScore < 95 && metadata.publishReady !== true) {
     classification = "FAILED";
@@ -288,7 +289,7 @@ const revisionEffectiveness = (metadata = {}) => {
   };
 };
 
-const failureLayers = (metadata = {}, crossClassification = "") => {
+const failureLayers = (metadata = {}, crossClassification = "", revisionClassification = "") => {
   const codes = metadata.issueCodes || [];
   const codeText = codes.join(" ");
   const layers = [];
@@ -300,7 +301,7 @@ const failureLayers = (metadata = {}, crossClassification = "") => {
   if (metadata.imageExpected && metadata.visionMode !== "vision") layers.push("VISION");
   if (!metadata.judgeSuccess) layers.push(/SCHEMA|JSON/u.test(codeText) ? "JUDGE_RELIABILITY" : "JUDGE_RELIABILITY");
   if (crossClassification === "JUDGE_FALSE_NEGATIVE" || crossClassification === "JUDGE_FALSE_POSITIVE") layers.push("JUDGE_CALIBRATION");
-  if (number(metadata.revisionCallCount) > 0 && metadata.publishReady !== true) layers.push("REVISION_STRATEGY");
+  if ((number(metadata.revisionCallCount) > 0 && metadata.publishReady !== true) || revisionClassification === "UNNECESSARY") layers.push("REVISION_STRATEGY");
   if (number(metadata.metaGuidanceCount) > 0 || number(metadata.josaErrorCount) > 0 || number(metadata.genericFillerRatio) > 0.1) layers.push("POST_PROCESSING");
   if (!layers.length && metadata.publishReady !== true) layers.push("HUMAN_PREFERENCE_ONLY");
   return [...new Set(layers)];
@@ -355,6 +356,14 @@ const matrixHeaders = [
   "revisionCallCount",
   "inputFactCoverage",
   "targetComplianceRatio",
+  "effectiveTargetCharCount",
+  "rawWriterCharCount",
+  "finalCharCount",
+  "sectionBudgetTotal",
+  "sectionActualTotal",
+  "targetLengthFailureReason",
+  "postProcessingReductionRatio",
+  "finishReason",
   "unsupportedClaimCount",
   "categoryContaminationCount",
   "metaGuidanceCount",
@@ -480,6 +489,14 @@ export const analyzeCommercialReadiness = async ({ dir = "" } = {}) => {
       revisionCallCount: number(metadata.revisionCallCount),
       inputFactCoverage: number(metadata.inputFactCoverage),
       targetComplianceRatio: number(metadata.targetComplianceRatio),
+      effectiveTargetCharCount: number(metadata.effectiveTargetCharCount),
+      rawWriterCharCount: number(metadata.rawWriterCharCount),
+      finalCharCount: number(metadata.finalCharCount || metadata.actualCharCount),
+      sectionBudgetTotal: number(metadata.sectionBudgetTotal),
+      sectionActualTotal: number(metadata.sectionActualTotal),
+      targetLengthFailureReason: metadata.targetLengthFailureReason || "",
+      postProcessingReductionRatio: number(metadata.postProcessingReductionRatio),
+      finishReason: metadata.finishReason || "",
       unsupportedClaimCount: number(metadata.unsupportedClaimCount),
       categoryContaminationCount: number(metadata.categoryContaminationCount),
       metaGuidanceCount: number(metadata.metaGuidanceCount),
@@ -492,7 +509,7 @@ export const analyzeCommercialReadiness = async ({ dir = "" } = {}) => {
       scoreGap: round(human.humanScore - number(metadata.qualityScore), 2),
       ...judge,
       crossClassification,
-      failureLayers: failureLayers(metadata, crossClassification),
+      failureLayers: failureLayers(metadata, crossClassification, revision.classification),
       revisionClassification: revision.classification,
       targetLengthClass: targetLengthClass(metadata, human)
     };

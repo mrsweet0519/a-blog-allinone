@@ -28,7 +28,9 @@ import {
   extractOpenAiText,
   getRevisionDecision,
   getRevisionSignature,
+  getSectionLengthDiagnostics,
   getTargetLengthDecision,
+  getTargetLengthFailureReason,
   getOpenAiApiEndpoint,
   isBetterQualityAttempt,
   onRequestPost as generateBlogOnRequestPost,
@@ -664,12 +666,70 @@ assert.ok(revisionDraft.qualityDiagnostics.revisionCallCount <= 2);
 assert.equal(revisionDraft.qualityDiagnostics.attemptScores.length, 3);
 assert.equal(revisionDraft.qualityDiagnostics.attempts.filter((attempt) => attempt.selected).length, 1);
 assert.ok(revisionDraft.qualityDiagnostics.attempts.every((attempt) => "targetComplianceRatio" in attempt && "inputFactCoverage" in attempt));
+assert.equal(revisionDraft.qualityDiagnostics.attempts[0].strategy, "none");
+assert.ok(revisionDraft.qualityDiagnostics.attempts.slice(1).every((attempt) => ["partial", "rebuild"].includes(attempt.strategy)));
 assert.equal(revisionDraft.qualityDiagnostics.revisionEffectiveness, "EFFECTIVE");
 assert.ok(revisionDraft.qualityDiagnostics.revisionGain > 0);
 assert.equal(
   revisionDraft.qualityDiagnostics.attemptScores[revisionDraft.qualityDiagnostics.selectedAttempt - 1],
   Math.max(...revisionDraft.qualityDiagnostics.attemptScores)
 );
+
+let noRevisionNeededFetchCount = 0;
+const noRevisionNeededDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "true",
+    OPENAI_API_KEY: "local-quality-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () => {
+    noRevisionNeededFetchCount += 1;
+    if (noRevisionNeededFetchCount === 1) {
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(makeMockLlmDraft("no-revision-needed")) } }]
+        }),
+        { status: 200 }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                score: 98,
+                publishReady: true,
+                hardFail: false,
+                scores: {},
+                issues: [],
+                coveredFactIds: revisionMemoLines.map((_, index) => `uf${index + 1}`),
+                missingFactIds: [],
+                criticalMissingFactIds: [],
+                unsupportedClaims: [],
+                categoryContamination: [],
+                metaGuidance: [],
+                josaErrors: [],
+                genericFillerRatio: 0,
+                targetComplianceRatio: 0.98,
+                revisionInstructions: [],
+                issueCodes: []
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    );
+  }
+});
+assert.equal(noRevisionNeededFetchCount, 2);
+assert.equal(noRevisionNeededDraft.qualityDiagnostics.revisionCallCount, 0);
+assert.equal(noRevisionNeededDraft.qualityDiagnostics.revisionEffectiveness, "NOT_NEEDED");
+assert.equal(noRevisionNeededDraft.qualityDiagnostics.revisionReason, "initial-publish-ready");
 
 let noImprovementFetchCount = 0;
 const noImprovementDraft = await callApiWithFetch({
@@ -1193,6 +1253,12 @@ assert.equal(lengthRetryFetchCount, 2);
 assert.equal(lengthRetryDraft.engine, "llm");
 assert.equal(lengthRetryDraft.contentPackage.diagnostics.responseExtraction.lengthRetry, 1);
 assert.ok(lengthRetryDraft.contentPackage.diagnostics.responseExtraction.maxTokens > 0);
+assert.equal(
+  lengthRetryDraft.contentPackage.targetLengthContract.sectionBudgetTotal,
+  lengthRetryDraft.contentPackage.effectiveTargetCharCount
+);
+assert.ok(lengthRetryDraft.contentPackage.targetLengthContract.sectionActualTotal > 0);
+assert.ok("targetLengthFailureReason" in lengthRetryDraft.contentPackage.targetLengthContract);
 
 const diagnosticPayload = buildDiagnosticPayload();
 assert.equal(diagnosticPayload.imageCount, 0);
@@ -1474,6 +1540,64 @@ assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalChar
 assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalCharCount: 1500, informationSufficiency: "high" }).mode, "rewrite_expand");
 assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalCharCount: 2320, informationSufficiency: "medium" }).mode, "compress");
 assert.equal(getTargetLengthDecision({ requestedTargetCharCount: 2000, finalCharCount: 900, informationSufficiency: "low" }).enforceTarget, false);
+assert.equal(
+  getTargetLengthFailureReason({
+    requestedTargetCharCount: 2000,
+    effectiveTargetCharCount: 2000,
+    rawWriterCharCount: 1800,
+    finalCharCount: 1500,
+    sectionBudgetTotal: 2000,
+    sectionActualTotal: 1500,
+    finishReason: "length",
+    informationSufficiency: "high"
+  }),
+  "output-token-limit"
+);
+assert.equal(
+  getTargetLengthFailureReason({
+    requestedTargetCharCount: 2000,
+    effectiveTargetCharCount: 2000,
+    rawWriterCharCount: 1900,
+    finalCharCount: 1500,
+    sectionBudgetTotal: 2000,
+    sectionActualTotal: 1500,
+    postProcessingReductionRatio: 0.21,
+    informationSufficiency: "medium"
+  }),
+  "post-processing-over-reduced"
+);
+assert.equal(
+  getTargetLengthFailureReason({
+    requestedTargetCharCount: 2000,
+    effectiveTargetCharCount: 2000,
+    rawWriterCharCount: 1500,
+    finalCharCount: 1500,
+    sectionBudgetTotal: 1600,
+    sectionActualTotal: 1500,
+    informationSufficiency: "high"
+  }),
+  "section-budget-too-small"
+);
+assert.equal(
+  getTargetLengthFailureReason({
+    requestedTargetCharCount: 2000,
+    effectiveTargetCharCount: 2000,
+    rawWriterCharCount: 1500,
+    finalCharCount: 1500,
+    sectionBudgetTotal: 2000,
+    sectionActualTotal: 1500,
+    informationSufficiency: "high"
+  }),
+  "writer-under-generated"
+);
+assert.equal(
+  getTargetLengthFailureReason({
+    requestedTargetCharCount: 2000,
+    finalCharCount: 900,
+    informationSufficiency: "low"
+  }),
+  "information-sufficiency-low"
+);
 
 const genericSectionContext = buildBlogWriterPipelineContext({
   productName: "Unit Entity",
@@ -1493,6 +1617,17 @@ assert.ok(genericSectionContext.writerPlan.sections.every((section) => Number(se
 for (const section of genericSectionContext.writerPlan.sections) {
   assert.deepEqual((section.requiredFactIds || []).filter((id) => (section.forbiddenDuplicateFactIds || []).includes(id)), []);
 }
+assert.equal(new Set(genericSectionContext.writerPlan.sections.flatMap((section) => section.requiredFactIds || [])).size, genericSectionContext.writerPlan.sections.flatMap((section) => section.requiredFactIds || []).length);
+const sectionLengthDiagnostics = getSectionLengthDiagnostics({
+  sections: genericSectionContext.writerPlan.sections.map((section) => ({
+    heading: section.heading,
+    paragraphs: [`${genericSectionContext.primaryEntity} section text ${"a".repeat(Math.max(20, Math.floor(Number(section.targetChars || 0) / 2)))}`],
+    imageRefs: []
+  })),
+  sectionBudgets: genericSectionContext.writerPlan.sectionBudgets
+});
+assert.equal(sectionLengthDiagnostics.sectionBudgetTotal, genericSectionContext.writerPlan.effectiveTargetCharCount);
+assert.ok(sectionLengthDiagnostics.sectionActualTotal > 0);
 
 const highPriorityFacts = Array.from({ length: 10 }, (_, index) => ({
   id: `high-${index + 1}`,
@@ -1630,6 +1765,38 @@ const lowLengthQuality = evaluateHumanQuality({
 assert.ok(!lowLengthQuality.caps.some((cap) => /^TARGET_LENGTH_/u.test(cap.code)));
 assert.equal(lowLengthQuality.publishReady, false);
 
+const targetIssueFilteredBody = `Unit Entity ${"a".repeat(910)}`;
+const targetIssueFilteredQuality = evaluateHumanQuality({
+  title: "Unit Entity Review",
+  titleCandidates: ["Unit Entity Review"],
+  body: targetIssueFilteredBody,
+  faq: [],
+  hashtags: [],
+  factMap: { userFacts: [] },
+  mainKeyword: "Unit Entity",
+  primaryEntity: "Unit Entity",
+  requestedTargetCharCount: 1000,
+  effectiveTargetCharCount: 1000,
+  informationSufficiency: "high",
+  engine: "llm",
+  llmJudge: {
+    score: 96,
+    scores: {},
+    issues: [{ code: "TARGET_LENGTH_UNDER_85", severity: "high", message: "stale target issue" }],
+    coveredFactIds: [],
+    missingFactIds: [],
+    criticalMissingFactIds: [],
+    unsupportedClaims: [],
+    categoryContamination: [],
+    metaGuidance: [],
+    josaErrors: [],
+    issueCodes: ["TARGET_LENGTH_UNDER_85"]
+  }
+});
+assert.ok(targetIssueFilteredQuality.diagnostics.targetComplianceRatio >= 0.85);
+assert.ok(!targetIssueFilteredQuality.diagnostics.issueCodes.includes("TARGET_LENGTH_UNDER_85"));
+assert.ok(!targetIssueFilteredQuality.issues.some((issue) => issue.code === "TARGET_LENGTH_UNDER_85"));
+
 const broadKeywordEntityQuality = evaluateHumanQuality({
   title: "지역 맛집 후기",
   titleCandidates: ["지역 맛집 후기"],
@@ -1714,7 +1881,7 @@ const unsupportedPhotoSummary = summarizeClaimLedger(
 );
 assert.equal(unsupportedPhotoSummary.hardFail, true);
 
-assert.equal(getRevisionDecision({ humanQuality: { score: 96, hardFail: false, publishReady: true }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "none");
+assert.equal(getRevisionDecision({ humanQuality: { score: 96, hardFail: false, publishReady: true, diagnostics: { targetComplianceRatio: 0.95 } }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "none");
 assert.equal(getRevisionDecision({ humanQuality: { score: 93, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.92 } }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "targeted");
 assert.equal(getRevisionDecision({ humanQuality: { score: 82, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.92 } }, draft: { body: coveredPriorityBody, contentPackage: { requestedTargetCharCount: 1000, informationSufficiency: { level: "high" } } } }).mode, "rebuild");
 assert.equal(getRevisionDecision({ humanQuality: { score: 93, hardFail: false, publishReady: false, diagnostics: { targetComplianceRatio: 0.7 } }, draft: { body: "short body", contentPackage: { requestedTargetCharCount: 2000, informationSufficiency: { level: "high" } } } }).reason, "target_length_under_80");

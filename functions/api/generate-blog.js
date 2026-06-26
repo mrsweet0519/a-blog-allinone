@@ -834,6 +834,70 @@ export const getTargetLengthDecision = ({
   return { mode: "within_range", ratio: Number(ratio.toFixed(2)), enforceTarget: true };
 };
 
+export const getSectionLengthDiagnostics = ({ sections = [], sectionBudgets = [], body = "" } = {}) => {
+  const normalizedSections = normalizeSections(sections);
+  const budgets = Array.isArray(sectionBudgets) ? sectionBudgets : [];
+  const rows = normalizedSections.map((section, index) => {
+    const budget = budgets[index] || {};
+    const targetChars = Number(budget.targetChars || budget.targetCharCount || 0) || 0;
+    const actualChars = charLength([section.heading, ...(section.paragraphs || [])].filter(Boolean).join("\n\n"));
+    return {
+      sectionId: budget.sectionId || `s${index + 1}`,
+      targetChars,
+      actualChars,
+      shortageChars: targetChars > 0 ? Math.max(0, Math.ceil(targetChars * 0.85) - actualChars) : 0,
+      excessChars: targetChars > 0 ? Math.max(0, actualChars - Math.floor(targetChars * 1.15)) : 0,
+      requiredFactIds: budget.requiredFactIds || [],
+      optionalFactIds: budget.optionalFactIds || [],
+      forbiddenRepeatedFactIds: budget.forbiddenRepeatedFactIds || budget.forbiddenDuplicateFactIds || []
+    };
+  });
+  return {
+    sections: rows,
+    sectionBudgetTotal: budgets.reduce((total, section) => total + (Number(section?.targetChars || section?.targetCharCount || 0) || 0), 0),
+    sectionActualTotal: rows.length > 0
+      ? rows.reduce((total, section) => total + (Number(section.actualChars) || 0), 0)
+      : charLength(body),
+    totalShortageChars: rows.reduce((total, section) => total + (Number(section.shortageChars) || 0), 0),
+    totalExcessChars: rows.reduce((total, section) => total + (Number(section.excessChars) || 0), 0)
+  };
+};
+
+export const getTargetLengthFailureReason = ({
+  requestedTargetCharCount = 0,
+  effectiveTargetCharCount = 0,
+  rawWriterCharCount = 0,
+  finalCharCount = 0,
+  sectionBudgetTotal = 0,
+  sectionActualTotal = 0,
+  postProcessingReductionRatio = 0,
+  finishReason = "",
+  informationSufficiency = "medium",
+  revisionCallCount = 0,
+  revisionGain = null
+} = {}) => {
+  const decision = getTargetLengthDecision({
+    requestedTargetCharCount,
+    finalCharCount,
+    informationSufficiency
+  });
+  if (!decision.enforceTarget) return decision.mode === "honest_draft" ? "information-sufficiency-low" : "";
+  if (decision.mode === "within_range") return "";
+  if (String(finishReason || "").toLowerCase() === "length") return "output-token-limit";
+  if (Number(postProcessingReductionRatio || 0) > 0.1) return "post-processing-over-reduced";
+  if (Number(sectionBudgetTotal || 0) > 0 && Number(effectiveTargetCharCount || requestedTargetCharCount || 0) > 0) {
+    const target = Number(effectiveTargetCharCount || requestedTargetCharCount || 0);
+    if (Number(sectionBudgetTotal) < Math.ceil(target * 0.95)) return "section-budget-too-small";
+  }
+  const minTarget = Math.ceil(Number(requestedTargetCharCount || 0) * 0.85);
+  if (minTarget > 0 && Number(rawWriterCharCount || 0) < minTarget) return "writer-under-generated";
+  if (minTarget > 0 && Number(sectionActualTotal || 0) > 0 && Number(sectionActualTotal) < minTarget) {
+    return "writer-under-generated";
+  }
+  if (Number(revisionCallCount || 0) > 0 && Number(revisionGain || 0) <= 0) return "revision-did-not-expand";
+  return "unknown";
+};
+
 const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "", pipelineContext = {}, targetCharCount = 0 } = {}) => {
   const primaryEntity = pipelineContext.primaryEntity || pipelineContext.mainKeyword || "";
   const mainKeyword = pipelineContext.mainKeyword || "";
@@ -1420,14 +1484,23 @@ export const getRevisionDecision = ({ humanQuality = {}, draft = {} } = {}) => {
     issueCodes.length > 0 &&
     issueCodes.every((code) => /^TARGET_LENGTH_/u.test(String(code)));
 
-  if ((score >= 95 && !hardFail) || targetOnlyLowInformation) {
+  if (targetOnlyLowInformation) {
     return { mode: "none", reason: "no_revision_needed", targetLengthDecision };
   }
   if (targetLengthDecision.mode === "rewrite_expand") {
     return { mode: "rebuild", reason: "target_length_under_80", targetLengthDecision };
   }
+  if (targetLengthDecision.mode === "targeted_expand") {
+    return { mode: "targeted", reason: "target_length_under_85", targetLengthDecision };
+  }
   if (targetLengthDecision.mode === "compress") {
     return { mode: "targeted", reason: "target_length_over_115", targetLengthDecision };
+  }
+  if (targetLengthDecision.mode === "targeted_compress") {
+    return { mode: "targeted", reason: "target_length_over_110", targetLengthDecision };
+  }
+  if (score >= 95 && !hardFail) {
+    return { mode: "none", reason: "no_revision_needed", targetLengthDecision };
   }
   if (score >= 90 && score <= 94 && !hardFail) {
     return { mode: "targeted", reason: "score_90_94", targetLengthDecision };
@@ -1473,11 +1546,23 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
   const actualLength = charLength(body);
   const duplicateParagraphIds = getParagraphIdsByText(body, humanQuality.diagnostics?.duplicateParagraphs || []);
   const factCoverage = humanQuality.diagnostics?.inputFactCoverage || {};
+  const sectionPlan = draft.contentPackage?.writerPlan?.sections || draft.writerPlan?.sections || [];
+  const sectionBudgets = draft.contentPackage?.writerPlan?.sectionBudgets || draft.writerPlan?.sectionBudgets || [];
+  const sectionLengthDiagnostics = getSectionLengthDiagnostics({
+    sections: draft.sections || draft.contentPackage?.sections || [],
+    sectionBudgets,
+    body
+  });
+  const shortageChars = requestedTarget > 0 ? Math.max(0, Math.ceil(requestedTarget * 0.85) - actualLength) : 0;
+  const excessChars = requestedTarget > 0 ? Math.max(0, actualLength - Math.floor(requestedTarget * 1.1)) : 0;
   const revisionFocus = {
+    currentScore: Number(humanQuality.score) || 0,
+    targetScore: 95,
     revisionMode: revisionDecision?.mode || "targeted",
     revisionReason: revisionDecision?.reason || "",
-    sectionPlan: draft.contentPackage?.writerPlan?.sections || draft.writerPlan?.sections || [],
-    sectionBudgets: draft.contentPackage?.writerPlan?.sectionBudgets || draft.writerPlan?.sectionBudgets || [],
+    sectionPlan,
+    sectionBudgets,
+    sectionLengthDiagnostics: sectionLengthDiagnostics.sections,
     currentDraft: {
       finalTitle: draft.finalTitle || draft.selectedTitle || "",
       titleCandidates: draft.titleCandidates || draft.titles || [],
@@ -1489,6 +1574,11 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
     criticalMissingFactIds: factCoverage.criticalMissingFactIds || factCoverage.missingCriticalFactIds || [],
     highMissingFactIds: factCoverage.missingHighFactIds || [],
     missingFacts: factCoverage.missingFacts || [],
+    missingFactValues: (factCoverage.missingFacts || []).map((fact) => ({
+      id: fact.id,
+      priority: fact.priority || "",
+      value: fact.value || ""
+    })),
     coveredFactIds: factCoverage.coveredFactIds || [],
     inputFactCoverage: {
       totalFacts: factCoverage.totalFacts ?? factCoverage.totalHighConfidenceFacts ?? 0,
@@ -1503,8 +1593,11 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
       requestedTargetCharCount: requestedTarget,
       actualCharCount: actualLength,
       targetComplianceRatio: targetRatio || null,
-      shortageChars: requestedTarget > 0 ? Math.max(0, Math.ceil(requestedTarget * 0.85) - actualLength) : 0,
-      excessChars: requestedTarget > 0 ? Math.max(0, actualLength - Math.floor(requestedTarget * 1.1)) : 0
+      shortageChars,
+      excessChars,
+      requiredAdditionalCharacterRange: shortageChars > 0 ? [shortageChars, Math.max(shortageChars, Math.floor(requestedTarget * 1.1) - actualLength)] : [0, 0],
+      sectionBudgetTotal: sectionLengthDiagnostics.sectionBudgetTotal,
+      sectionActualTotal: sectionLengthDiagnostics.sectionActualTotal
     },
     primaryEntityPlacementIssue: humanQuality.diagnostics?.entityCoverage || {},
     genericFillerParagraphIds: getGenericFillerParagraphIds(humanQuality, draft),
@@ -1528,12 +1621,12 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
   {
     role: "system",
     content:
-      "당신은 네이버 블로그 원고를 개선하는 한국어 편집자입니다. 새 경험을 만들지 말고 Fact Map, 이미지 분석, 현재 원고, qualityIssues, revisionInstructions만 근거로 재작성하세요. 글자수 늘리기, 키워드 횟수 맞추기, 같은 문단 반복은 금지입니다. JSON만 반환하세요."
+      "당신은 네이버 블로그 원고를 개선하는 한국어 편집자입니다. 새 경험, 입력하지 않은 동행자·가족·아이, 효과, 가격, 운영 정보를 만들지 말고 Fact Map, 이미지 분석, 현재 원고, qualityIssues, revisionInstructions만 근거로 재작성하세요. 글자수 늘리기, 키워드 횟수 맞추기, FAQ 강제 추가, 같은 문단 반복, 일반론 확대는 금지입니다. JSON만 반환하세요."
   },
   {
     role: "system",
     content:
-      "Revision policy: if score is 90-94, repair the failing sections only; if score is below 90 or hardFail is true, rebuild the section plan and rewrite the whole draft. Always fix missingFactIds, unsupportedClaims, primaryEntity placement, target length shortage/excess, generic filler, duplicated paragraphs, and category contamination. Do not invent new experiences. Return only titleCandidates, finalTitle, sections, faq, and hashtags."
+      "Revision policy: if score is 90-94, repair the failing sections only; if score is below 90 or hardFail is true, rebuild the section plan and rewrite the whole draft. Use sectionLengthDiagnostics to add or remove grounded text in the sections with shortageChars or excessChars. Always fix missingFactIds, unsupportedClaims, primaryEntity placement, target length shortage/excess, generic filler, duplicated paragraphs, and category contamination. Do not invent new experiences. Return only titleCandidates, finalTitle, sections, faq, and hashtags."
   },
   {
     role: "user",
@@ -1722,6 +1815,12 @@ const attachQualityDiagnostics = (draft = {}, qualityDiagnostics = {}) => ({
     : draft.contentPackage
 });
 
+const normalizeRevisionStrategy = (mode = "") => {
+  if (mode === "targeted") return "partial";
+  if (mode === "rebuild") return "rebuild";
+  return "none";
+};
+
 const buildQualityDiagnostics = ({
   attempts = [],
   revisionCallCount = 0,
@@ -1733,18 +1832,36 @@ const buildQualityDiagnostics = ({
   const scores = attempts.map((attempt) => Number(attempt.score) || 0);
   const initialScore = scores[0] ?? 0;
   const revisionGain = Number(finalQualityScore || 0) - initialScore;
+  const hasFailedRevision = revisionClassifications.some((item) => item.classification === "FAILED");
+  const unnecessaryRevision = revisionCallCount > 0 && initialScore >= 95;
   const revisionEffectiveness =
-    revisionCallCount === 0
-      ? initialScore >= 95
+    hasFailedRevision
+      ? "FAILED"
+      : unnecessaryRevision
         ? "UNNECESSARY"
-        : "FAILED"
-      : revisionClassifications.some((item) => item.classification === "FAILED") && revisionGain <= 0
-        ? "FAILED"
-        : revisionGain > 0
-          ? "EFFECTIVE"
-          : revisionGain < 0
-            ? "DEGRADED"
-            : "NO_IMPROVEMENT";
+        : revisionCallCount === 0
+          ? initialScore >= 95
+            ? "NOT_NEEDED"
+            : "FAILED"
+          : revisionGain >= 3
+            ? "EFFECTIVE"
+            : revisionGain >= 0
+              ? "NO_IMPROVEMENT"
+              : "DEGRADED";
+  const revisionReason =
+    hasFailedRevision
+      ? "revision-call-failed"
+      : unnecessaryRevision
+        ? "initial-score-95-plus-revised"
+        : revisionCallCount === 0
+          ? initialScore >= 95
+            ? "initial-publish-ready"
+            : "revision-not-run"
+          : revisionGain >= 3
+            ? "score-gain-3-plus"
+            : revisionGain >= 0
+              ? "score-gain-below-3"
+              : "selected-score-degraded";
   const selectedAttempts = attempts.map((attempt) => ({
     ...attempt,
     selected: Number(attempt.attempt) === Number(selectedAttempt)
@@ -1760,6 +1877,7 @@ const buildQualityDiagnostics = ({
     revisionDecisions,
     revisionEffectiveness,
     revisionGain,
+    revisionReason,
     selectedAttempt,
     finalQualityScore: Number(finalQualityScore) || 0
   };
@@ -1790,15 +1908,19 @@ export { isBetterQualityAttempt };
 
 const classifyRevisionAttempt = ({ previousQuality = {}, currentQuality = {}, failed = false } = {}) => {
   if (failed) return "FAILED";
+  const scoreGain = (Number(currentQuality.score) || 0) - (Number(previousQuality.score) || 0);
+  if (scoreGain < 0) return "DEGRADED";
+  if (scoreGain === 0) return "NO_IMPROVEMENT";
   if (isBetterQualityAttempt(currentQuality, previousQuality)) return "EFFECTIVE";
   if (isBetterQualityAttempt(previousQuality, currentQuality)) return "DEGRADED";
   return "NO_IMPROVEMENT";
 };
 
-const summarizeQualityAttempt = ({ attempt = 1, quality = {} } = {}) => {
+const summarizeQualityAttempt = ({ attempt = 1, quality = {}, strategy = "none" } = {}) => {
   const coverage = quality.diagnostics?.inputFactCoverage || {};
   return {
     attempt,
+    strategy,
     score: Number(quality.score) || 0,
     publishReady: Boolean(quality.publishReady),
     hardFail: Boolean(quality.hardFail),
@@ -1847,8 +1969,10 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
         reason: "no_improvement_rebuild"
       };
     }
+    const revisionStrategy = normalizeRevisionStrategy(revisionDecision.mode);
     revisionDecisions.push({
-      attempt: attempts,
+      attempt: attempts + 1,
+      strategy: revisionStrategy,
       mode: revisionDecision.mode,
       reason: revisionDecision.reason,
       previousMode: revisionDecision.previousMode || "",
@@ -1878,11 +2002,11 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
         revisionDecision
       });
     } catch {
-      revisionClassifications.push({ attempt: attempts + 1, classification: "FAILED" });
+      revisionClassifications.push({ attempt: attempts + 1, strategy: revisionStrategy, classification: "FAILED" });
       break;
     }
     if (!hasUsableLlmDraft(revisionDraft)) {
-      revisionClassifications.push({ attempt: attempts + 1, classification: "FAILED" });
+      revisionClassifications.push({ attempt: attempts + 1, strategy: revisionStrategy, classification: "FAILED" });
       break;
     }
     attempts += 1;
@@ -1902,9 +2026,9 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
       });
     }
     currentQuality = candidateQuality;
-    attemptSummaries.push(summarizeQualityAttempt({ attempt: attempts, quality: currentQuality }));
+    attemptSummaries.push(summarizeQualityAttempt({ attempt: attempts, quality: currentQuality, strategy: revisionStrategy }));
     const classification = classifyRevisionAttempt({ previousQuality, currentQuality });
-    revisionClassifications.push({ attempt: attempts, classification });
+    revisionClassifications.push({ attempt: attempts, strategy: revisionStrategy, classification });
     if (isBetterQualityAttempt(currentQuality, bestQuality)) {
       bestQuality = currentQuality;
       selectedAttempt = attempts;
@@ -2097,8 +2221,24 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   const rawWriterCharCount = Array.from(String(rawLlmBody || body || "")).length;
   const postProcessingReductionRatio =
     rawWriterCharCount > 0
-      ? Number(((rawWriterCharCount - actualCharCount) / rawWriterCharCount).toFixed(3))
+      ? Number((Math.max(0, rawWriterCharCount - actualCharCount) / rawWriterCharCount).toFixed(3))
       : 0;
+  const sectionLengthDiagnostics = getSectionLengthDiagnostics({
+    sections: llmSections,
+    sectionBudgets: pipelineContext.writerPlan?.sectionBudgets || [],
+    body
+  });
+  const targetLengthFailureReason = getTargetLengthFailureReason({
+    requestedTargetCharCount,
+    effectiveTargetCharCount: targetCharCount,
+    rawWriterCharCount,
+    finalCharCount: actualCharCount,
+    sectionBudgetTotal: sectionLengthDiagnostics.sectionBudgetTotal,
+    sectionActualTotal: sectionLengthDiagnostics.sectionActualTotal,
+    postProcessingReductionRatio,
+    finishReason: llmDraft.__openAiMeta?.finishReason || null,
+    informationSufficiency: pipelineContext.informationSufficiency?.level || ""
+  });
   const targetLengthContract = {
     ...(fallbackPackage.targetLengthContract || {}),
     requestedTargetCharCount,
@@ -2107,8 +2247,16 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     actualCharCount,
     finalCharCount: actualCharCount,
     targetComplianceRatio: requestedTargetCharCount > 0 ? Number((actualCharCount / requestedTargetCharCount).toFixed(2)) : 0,
+    sectionBudgetTotal: sectionLengthDiagnostics.sectionBudgetTotal,
+    sectionActualTotal: sectionLengthDiagnostics.sectionActualTotal,
+    sectionLengthDiagnostics: sectionLengthDiagnostics.sections,
     finishReason: llmDraft.__openAiMeta?.finishReason || null,
     postProcessingReductionRatio,
+    targetLengthFailureReason,
+    postProcessingReductionReason:
+      postProcessingReductionRatio > 0.1
+        ? [...new Set(postProcessingSteps.filter((step) => /repair|removal|dedupe|safety|grounded|schema/u.test(step)))].join("|") || "post-processing"
+        : "",
     targetLengthDecision: getTargetLengthDecision({
       requestedTargetCharCount,
       finalCharCount: actualCharCount,
@@ -2205,6 +2353,18 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
         hardFailRemaining: Boolean(safetyRepair.hardFailRemaining),
         diagnostics: safetyRepair.diagnostics
       },
+      targetLength: {
+        requestedTargetCharCount,
+        effectiveTargetCharCount: targetCharCount,
+        rawWriterCharCount,
+        finalCharCount: actualCharCount,
+        targetComplianceRatio: targetLengthContract.targetComplianceRatio,
+        sectionBudgetTotal: sectionLengthDiagnostics.sectionBudgetTotal,
+        sectionActualTotal: sectionLengthDiagnostics.sectionActualTotal,
+        targetLengthFailureReason,
+        postProcessingReductionRatio,
+        finishReason: llmDraft.__openAiMeta?.finishReason || null
+      },
       responseExtraction: {
         apiEndpoint: llmDraft.__openAiMeta?.apiEndpoint || fallbackPackage.diagnostics?.responseExtraction?.apiEndpoint || getOpenAiApiEndpoint(),
         responseShape: llmDraft.__openAiMeta?.responseShape || fallbackPackage.diagnostics?.responseExtraction?.responseShape || "unknown",
@@ -2287,6 +2447,61 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
 const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}, env = {}) => {
   const humanQuality = evaluateDraftHumanQuality({ form, draft: fallbackDraft, engine: "fallback" });
   const decorated = attachHumanQuality(fallbackDraft, humanQuality, 1);
+  const fallbackPackage = decorated.contentPackage || {};
+  const fallbackBody = decorated.body || fallbackPackage.blogBody || "";
+  const fallbackActualCharCount = charLength(fallbackBody);
+  const fallbackRequestedTarget =
+    fallbackPackage.requestedTargetCharCount ||
+    form.targetCharCount ||
+    form.targetLength ||
+    fallbackPackage.targetLengthRange?.target ||
+    fallbackPackage.targetCharCount ||
+    0;
+  const fallbackEffectiveTarget =
+    fallbackPackage.effectiveTargetCharCount ||
+    fallbackPackage.targetLengthRange?.target ||
+    fallbackPackage.targetCharCount ||
+    fallbackRequestedTarget;
+  const fallbackInformationSufficiency =
+    fallbackPackage.informationSufficiency?.level ||
+    fallbackPackage.informationSufficiency ||
+    "medium";
+  const fallbackSectionLengthDiagnostics = getSectionLengthDiagnostics({
+    sections: fallbackPackage.sections || decorated.sections || [],
+    sectionBudgets: fallbackPackage.writerPlan?.sectionBudgets || [],
+    body: fallbackBody
+  });
+  const fallbackTargetLengthFailureReason = getTargetLengthFailureReason({
+    requestedTargetCharCount: fallbackRequestedTarget,
+    effectiveTargetCharCount: fallbackEffectiveTarget,
+    rawWriterCharCount: fallbackActualCharCount,
+    finalCharCount: fallbackActualCharCount,
+    sectionBudgetTotal: fallbackSectionLengthDiagnostics.sectionBudgetTotal,
+    sectionActualTotal: fallbackSectionLengthDiagnostics.sectionActualTotal,
+    informationSufficiency: fallbackInformationSufficiency
+  });
+  const fallbackTargetLengthContract = {
+    ...(fallbackPackage.targetLengthContract || {}),
+    requestedTargetCharCount: fallbackRequestedTarget,
+    effectiveTargetCharCount: fallbackEffectiveTarget,
+    rawWriterCharCount: fallbackActualCharCount,
+    actualCharCount: fallbackActualCharCount,
+    finalCharCount: fallbackActualCharCount,
+    targetComplianceRatio: fallbackRequestedTarget > 0 ? Number((fallbackActualCharCount / fallbackRequestedTarget).toFixed(2)) : 0,
+    sectionBudgetTotal: fallbackSectionLengthDiagnostics.sectionBudgetTotal,
+    sectionActualTotal: fallbackSectionLengthDiagnostics.sectionActualTotal,
+    sectionLengthDiagnostics: fallbackSectionLengthDiagnostics.sections,
+    finishReason: null,
+    postProcessingReductionRatio: 0,
+    targetLengthFailureReason: fallbackTargetLengthFailureReason,
+    targetLengthDecision: getTargetLengthDecision({
+      requestedTargetCharCount: fallbackRequestedTarget,
+      finalCharCount: fallbackActualCharCount,
+      informationSufficiency: fallbackInformationSufficiency
+    }),
+    informationSufficiency: fallbackInformationSufficiency,
+    resultMode: "fallback_draft"
+  };
   const safeLlm = createSafeLlmDiagnostics({
     env,
     used: false,
@@ -2304,8 +2519,12 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}, env = {}) =>
       resultMode: "fallback_draft",
       engine: "fallback",
       bodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
-      actualBodyCharCount: Array.from(String(decorated.body || "")).length,
-      targetCharCount: decorated.contentPackage?.targetLengthRange?.target || decorated.contentPackage?.targetCharCount || null,
+      actualBodyCharCount: fallbackActualCharCount,
+      targetCharCount: fallbackEffectiveTarget || null,
+      requestedTargetCharCount: fallbackRequestedTarget,
+      effectiveTargetCharCount: fallbackEffectiveTarget,
+      actualCharCount: fallbackActualCharCount,
+      targetComplianceRatio: fallbackTargetLengthContract.targetComplianceRatio,
       judgeEngine: humanQuality.judgeEngine,
       isMock: humanQuality.isMock,
       rawQualityScore: decorated.rawQualityScore ?? decorated.contentPackage?.rawQualityScore ?? humanQuality.rawQualityScore,
@@ -2318,14 +2537,38 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}, env = {}) =>
           resultMode: "fallback_draft",
           engine: "fallback",
           actualBodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
-          actualBodyCharCount: Array.from(String(decorated.body || "")).length,
+          actualBodyCharCount: fallbackActualCharCount,
+          actualCharCount: fallbackActualCharCount,
+          targetLengthContract: fallbackTargetLengthContract,
+          requestedTargetCharCount: fallbackRequestedTarget,
+          effectiveTargetCharCount: fallbackEffectiveTarget,
+          targetComplianceRatio: fallbackTargetLengthContract.targetComplianceRatio,
+          diagnostics: {
+            ...(decorated.contentPackage.diagnostics || {}),
+            targetLength: {
+              requestedTargetCharCount: fallbackRequestedTarget,
+              effectiveTargetCharCount: fallbackEffectiveTarget,
+              rawWriterCharCount: fallbackActualCharCount,
+              finalCharCount: fallbackActualCharCount,
+              targetComplianceRatio: fallbackTargetLengthContract.targetComplianceRatio,
+              sectionBudgetTotal: fallbackSectionLengthDiagnostics.sectionBudgetTotal,
+              sectionActualTotal: fallbackSectionLengthDiagnostics.sectionActualTotal,
+              targetLengthFailureReason: fallbackTargetLengthFailureReason,
+              postProcessingReductionRatio: 0,
+              finishReason: null
+            }
+          },
           summary: {
             ...(decorated.contentPackage.summary || {}),
             resultMode: "fallback_draft",
             engine: "fallback",
             bodyLength: decorated.bodyLength || String(decorated.body || "").replace(/\s+/g, "").length,
-            actualBodyCharCount: Array.from(String(decorated.body || "")).length,
-            targetCharCount: decorated.contentPackage.targetLengthRange?.target || decorated.contentPackage.targetCharCount || null,
+            actualBodyCharCount: fallbackActualCharCount,
+            targetCharCount: fallbackEffectiveTarget || null,
+            requestedTargetCharCount: fallbackRequestedTarget,
+            effectiveTargetCharCount: fallbackEffectiveTarget,
+            actualCharCount: fallbackActualCharCount,
+            targetComplianceRatio: fallbackTargetLengthContract.targetComplianceRatio,
             judgeEngine: humanQuality.judgeEngine,
             isMock: humanQuality.isMock,
             rawQualityScore: decorated.rawQualityScore ?? decorated.contentPackage?.rawQualityScore ?? humanQuality.rawQualityScore,

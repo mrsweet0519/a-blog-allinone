@@ -285,7 +285,7 @@ export const evaluateHumanQuality = ({
     ...(Array.isArray(llmJudge?.missingFactIds) ? llmJudge.missingFactIds : []),
     ...llmCriticalMissingFactIds
   ]);
-  const llmIssueCodes = Array.isArray(llmJudge?.issueCodes) ? llmJudge.issueCodes.filter(Boolean) : [];
+  const rawLlmIssueCodes = Array.isArray(llmJudge?.issueCodes) ? llmJudge.issueCodes.filter(Boolean) : [];
   const llmUnsupportedClaims = Array.isArray(llmJudge?.unsupportedClaims) ? llmJudge.unsupportedClaims.filter(Boolean) : [];
   const llmCategoryContamination = Array.isArray(llmJudge?.categoryContamination) ? llmJudge.categoryContamination.filter(Boolean) : [];
   const llmMetaGuidance = Array.isArray(llmJudge?.metaGuidance) ? llmJudge.metaGuidance.filter(Boolean) : [];
@@ -321,6 +321,17 @@ export const evaluateHumanQuality = ({
     Number(requestedTargetCharCount) > 0
       ? Number((Array.from(normalizedBody).length / Number(requestedTargetCharCount)).toFixed(2))
       : 1;
+  const targetLengthIssueApplies = (code = "") => {
+    const normalizedCode = String(code || "").toUpperCase();
+    if (!/TARGET|LENGTH/u.test(normalizedCode)) return true;
+    if (!enforceTargetLength || Number(requestedTargetCharCount) <= 0) return false;
+    if (/UNDER_?80|BELOW_?80/u.test(normalizedCode)) return targetComplianceRatio < 0.8;
+    if (/UNDER|BELOW/u.test(normalizedCode)) return targetComplianceRatio < 0.85;
+    if (/OVER_?115|ABOVE_?115/u.test(normalizedCode)) return targetComplianceRatio > 1.15;
+    if (/OVER|ABOVE/u.test(normalizedCode)) return targetComplianceRatio > 1.1;
+    return targetComplianceRatio < 0.85 || targetComplianceRatio > 1.1;
+  };
+  const llmIssueCodes = rawLlmIssueCodes.filter(targetLengthIssueApplies);
   const primaryEntityMissing = Boolean(
     entityForCoverage &&
       (!entityCoverage.finalTitle || !entityCoverage.openingSentence || !entityCoverage.body)
@@ -608,7 +619,7 @@ export const evaluateHumanQuality = ({
       revisionInstruction: "누락된 사용자 fact를 중복 없이 한 번씩 반영하세요."
     });
   }
-  if (enforceTargetLength && Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio < 0.85) {
+  if (enforceTargetLength && Number(requestedTargetCharCount) > 0 && targetComplianceRatio < 0.85) {
     caps.push({ score: 89, code: "TARGET_LENGTH_UNDER_85" });
     addIssue(issues, {
       code: "TARGET_LENGTH_UNDER_85",
@@ -617,7 +628,7 @@ export const evaluateHumanQuality = ({
       message: "충분한 정보 입력인데 요청 글자수의 85%에 미달했습니다.",
       revisionInstruction: "새 경험을 만들지 말고 누락된 fact와 구체적 상황을 서로 다른 문단에 반영해 목표 길이의 85~110%로 확장하세요."
     });
-  } else if (enforceTargetLength && Number(requestedTargetCharCount) >= 1800 && targetComplianceRatio > 1.15) {
+  } else if (enforceTargetLength && Number(requestedTargetCharCount) > 0 && targetComplianceRatio > 1.15) {
     caps.push({ score: 89, code: "TARGET_LENGTH_OVER_115" });
     addIssue(issues, {
       code: "TARGET_LENGTH_OVER_115",
@@ -674,12 +685,13 @@ export const evaluateHumanQuality = ({
     inputFactCoverage.criticalFactCoverage >= 1 &&
     inputFactCoverage.highFactCoverage >= 0.9 &&
     informationSufficiency !== "low" &&
-    (!enforceTargetLength || Number(requestedTargetCharCount) < 1800 || (targetComplianceRatio >= 0.85 && targetComplianceRatio <= 1.1)) &&
+    (!enforceTargetLength || Number(requestedTargetCharCount) <= 0 || (targetComplianceRatio >= 0.85 && targetComplianceRatio <= 1.1)) &&
     !hasCategoryContamination &&
     genericRatio < 0.3;
 
   const llmIssues = (Array.isArray(llmJudge?.issues) ? llmJudge.issues.map(toIssue) : []).filter((issue) => {
     if (!hasImageInput && isNoImageIssue(issue)) return false;
+    if (!targetLengthIssueApplies(issue.code)) return false;
     if (
       /MISSING_FACT|LOW_INPUT_FACT|FACT_COVERAGE/u.test(String(issue.code || "")) &&
       Number(inputFactCoverage.inputFactCoverage || 0) >= 0.9 &&
