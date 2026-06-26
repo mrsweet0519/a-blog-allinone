@@ -17,6 +17,8 @@ import {
 import { ANEUNYEOJA_WRITER_PROFILE_ID } from "../../shared/writerProfiles/aneunyeoja.js";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_OPENAI_SMOKE_MODEL = "gpt-4.1-mini";
+const DEFAULT_OPENAI_FULL_MODEL = "gpt-4.1";
 const DEFAULT_OPENAI_VISION_MODEL = "gpt-4o-mini";
 const LLM_ENABLED_PATTERN = /^(1|true|yes|on)$/iu;
 const VISION_SUPPORTED_MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -258,9 +260,31 @@ const safeReason = (reason = "") => (ALLOWED_LLM_REASONS.has(reason) ? reason : 
 
 const isLlmEnabled = (env = {}) => LLM_ENABLED_PATTERN.test(String(env.BLOG_WRITER_LLM_ENABLED || "").trim());
 
-const getOpenAiModel = (env = {}) => env.OPENAI_MODEL || env.BLOG_WRITER_OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
-const getLlmEnvironmentStatus = (env = {}) => {
-  const model = String(getOpenAiModel(env) || "").trim();
+const getCommercialDiagnosticMode = (form = {}) => {
+  const mode = String(form.diagnosticRunMode || form.commercialRunMode || "").trim().toLowerCase();
+  if (mode === "smoke" || mode === "canary3" || mode === "canary") return mode;
+  const caseCount = Number(form.diagnosticCaseCount || form.commercialCaseCount || 0) || 0;
+  if (mode === "full" || caseCount >= 8) return "full";
+  return "";
+};
+
+export const getOpenAiModel = (env = {}, form = {}) => {
+  const commercialMode = getCommercialDiagnosticMode(form);
+  if (commercialMode === "smoke" || commercialMode === "canary3" || commercialMode === "canary") {
+    return env.OPENAI_MODEL_SMOKE || env.OPENAI_MODEL || env.BLOG_WRITER_OPENAI_MODEL || DEFAULT_OPENAI_SMOKE_MODEL;
+  }
+  if (commercialMode === "full") {
+    return env.OPENAI_MODEL_FULL || env.OPENAI_MODEL || env.BLOG_WRITER_OPENAI_MODEL || DEFAULT_OPENAI_FULL_MODEL;
+  }
+  return env.OPENAI_MODEL || env.BLOG_WRITER_OPENAI_MODEL || env.OPENAI_MODEL_FULL || env.OPENAI_MODEL_SMOKE || DEFAULT_OPENAI_MODEL;
+};
+
+export const getOpenAiJudgeModel = (env = {}, form = {}, writerModel = "") =>
+  env.OPENAI_MODEL_JUDGE || writerModel || getOpenAiModel(env, form);
+
+const getLlmEnvironmentStatus = (env = {}, form = {}) => {
+  const model = String(getOpenAiModel(env, form) || "").trim();
+  const judgeModel = String(getOpenAiJudgeModel(env, form, model) || "").trim();
   const enabled = isLlmEnabled(env);
   const judgeEnabled = isEnabledFlag(env.BLOG_WRITER_LLM_JUDGE_ENABLED);
   const revisionEnabled = isEnabledFlag(env.BLOG_WRITER_LLM_REVISION_ENABLED);
@@ -277,23 +301,24 @@ const getLlmEnvironmentStatus = (env = {}) => {
     keyPresent,
     modelPresent,
     model,
+    judgeModel,
     reason
   };
 };
-const isMockEnvironment = (env = {}) =>
+const isMockEnvironment = (env = {}, form = {}) =>
   /^(unit-test-key|mock-key|test-key)$/u.test(String(env.OPENAI_API_KEY || "")) ||
-  /^(unit-model|mock-model)$/u.test(String(getOpenAiModel(env) || ""));
+  /^(unit-model|mock-model)$/u.test(String(getOpenAiModel(env, form) || ""));
 
-const shouldUseLlm = (env = {}) =>
-  !getLlmEnvironmentStatus(env).reason;
+const shouldUseLlm = (env = {}, form = {}) =>
+  !getLlmEnvironmentStatus(env, form).reason;
 
-const shouldUseLlmJudge = (env = {}) =>
-  shouldUseLlm(env) &&
-  getLlmEnvironmentStatus(env).judgeEnabled;
+const shouldUseLlmJudge = (env = {}, form = {}) =>
+  shouldUseLlm(env, form) &&
+  getLlmEnvironmentStatus(env, form).judgeEnabled;
 
-const shouldUseLlmRevision = (env = {}) =>
-  shouldUseLlmJudge(env) &&
-  getLlmEnvironmentStatus(env).revisionEnabled;
+const shouldUseLlmRevision = (env = {}, form = {}) =>
+  shouldUseLlmJudge(env, form) &&
+  getLlmEnvironmentStatus(env, form).revisionEnabled;
 
 const shouldUseVision = (env = {}) =>
   Boolean(env.OPENAI_API_KEY) &&
@@ -314,8 +339,8 @@ const classifyOpenAiStatus = (status = 0, responseText = "") => {
 
 const toStageReason = (reason = "") => STAGE_REASON_MAP[reason] || "unknown";
 
-const createLlmStages = (env = {}) => {
-  const envStatus = getLlmEnvironmentStatus(env);
+const createLlmStages = (env = {}, form = {}) => {
+  const envStatus = getLlmEnvironmentStatus(env, form);
   const disabledReason = envStatus.reason ? toStageReason(envStatus.reason) : "disabled";
   return {
     writer: {
@@ -568,8 +593,8 @@ const getErrorDiagnostics = (error) => ({
   status: error instanceof SafeLlmError ? error.status : null
 });
 
-const createSafeLlmDiagnostics = ({ env = {}, used = false, reason = null, status = null, attempted = false, accepted = false, judgeUsed = false } = {}) => {
-  const envStatus = getLlmEnvironmentStatus(env);
+const createSafeLlmDiagnostics = ({ env = {}, form = {}, used = false, reason = null, status = null, attempted = false, accepted = false, judgeUsed = false } = {}) => {
+  const envStatus = getLlmEnvironmentStatus(env, form);
   return {
     used: Boolean(used),
     attempted: Boolean(attempted || used),
@@ -581,9 +606,10 @@ const createSafeLlmDiagnostics = ({ env = {}, used = false, reason = null, statu
     keyPresent: envStatus.keyPresent,
     modelPresent: envStatus.modelPresent,
     model: envStatus.model,
+    judgeModel: envStatus.judgeModel,
     reason: reason ? safeReason(reason) : null,
     status: safeNumericStatus(status),
-    isMock: isMockEnvironment(env),
+    isMock: isMockEnvironment(env, form),
     judgeUsed: Boolean(judgeUsed)
   };
 };
@@ -611,21 +637,22 @@ const createSafeVisionDiagnostics = ({ form = {}, result = {} } = {}) => {
   };
 };
 
-const logSafeGenerateBlogEvent = ({ result = {}, env = {}, status = 200 } = {}) => {
+const logSafeGenerateBlogEvent = ({ result = {}, env = {}, form = {}, status = 200 } = {}) => {
   try {
     const packageData = result.contentPackage || {};
     const trace = packageData.trace || result.trace || {};
     const llm = result.llm || {};
+    const envStatus = getLlmEnvironmentStatus(env, form);
     console.log(JSON.stringify({
       route: "/api/generate-blog",
       engine: result.engine || packageData.engine || trace.engine || "fallback",
       judgeEngine: result.judgeEngine || packageData.judgeEngine || trace.judgeEngine || "deterministic",
-      enabled: getLlmEnvironmentStatus(env).enabled,
-      judgeEnabled: getLlmEnvironmentStatus(env).judgeEnabled,
-      revisionEnabled: getLlmEnvironmentStatus(env).revisionEnabled,
-      visionEnabled: getLlmEnvironmentStatus(env).visionEnabled,
-      keyPresent: getLlmEnvironmentStatus(env).keyPresent,
-      modelPresent: getLlmEnvironmentStatus(env).modelPresent,
+      enabled: envStatus.enabled,
+      judgeEnabled: envStatus.judgeEnabled,
+      revisionEnabled: envStatus.revisionEnabled,
+      visionEnabled: envStatus.visionEnabled,
+      keyPresent: envStatus.keyPresent,
+      modelPresent: envStatus.modelPresent,
       llmReason: llm.reason || null,
       visionMode: trace.visionMode || packageData.imageAnalysis?.mode || result.imageAnalysis?.mode || "none",
       status
@@ -1394,7 +1421,7 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
 ];
 
 const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, draft = {}, llmStages = null } = {}) => {
-  if (!shouldUseLlmJudge(env)) return null;
+  if (!shouldUseLlmJudge(env, form)) return null;
   const startedAt = Date.now();
   try {
     const payload = await fetchOpenAiJson({
@@ -1793,7 +1820,7 @@ const judgeDraft = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, d
     llmStages
   });
   if (llmJudge) {
-    llmJudge.isMock = isMockEnvironment(env);
+    llmJudge.isMock = isMockEnvironment(env, form);
     llmJudge.model = model;
   }
   return evaluateDraftHumanQuality({
@@ -1932,7 +1959,15 @@ const summarizeQualityAttempt = ({ attempt = 1, quality = {}, strategy = "none" 
   };
 };
 
-const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, fallbackDraft = {}, initialDraft = {}, llmStages = null } = {}) => {
+const improveDraftWithQualityAttempts = async ({
+  env = {},
+  model = DEFAULT_OPENAI_MODEL,
+  judgeModel = model,
+  form = {},
+  fallbackDraft = {},
+  initialDraft = {},
+  llmStages = null
+} = {}) => {
   let attempts = 1;
   let revisionCallCount = 0;
   let selectedAttempt = 1;
@@ -1945,7 +1980,7 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
   let currentDraft = initialDraft;
   let currentQuality = null;
   try {
-    currentQuality = await judgeDraft({ env, model, form, draft: currentDraft, engine: "llm", llmStages });
+    currentQuality = await judgeDraft({ env, model: judgeModel, form, draft: currentDraft, engine: "llm", llmStages });
   } catch {
     currentQuality = evaluateDraftHumanQuality({
       form,
@@ -1957,7 +1992,7 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
   let bestDraft = attachHumanQuality(currentDraft, currentQuality, attempts);
   let bestQuality = currentQuality;
 
-  while (shouldUseLlmRevision(env) && attempts < 3 && !currentQuality.publishReady) {
+  while (shouldUseLlmRevision(env, form) && attempts < 3 && !currentQuality.publishReady) {
     let revisionDecision = getRevisionDecision({ humanQuality: currentQuality, draft: currentDraft });
     const revisionSignature = getRevisionSignature({ humanQuality: currentQuality, draft: currentDraft });
     if (forceRebuildAfterNoImprovement && revisionDecision.mode !== "none") {
@@ -2017,7 +2052,7 @@ const improveDraftWithQualityAttempts = async ({ env = {}, model = DEFAULT_OPENA
     });
     let candidateQuality = null;
     try {
-      candidateQuality = await judgeDraft({ env, model, form, draft: candidateDraft, engine: "llm", llmStages });
+      candidateQuality = await judgeDraft({ env, model: judgeModel, form, draft: candidateDraft, engine: "llm", llmStages });
     } catch {
       candidateQuality = evaluateDraftHumanQuality({
         form,
@@ -2504,9 +2539,10 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}, env = {}) =>
   };
   const safeLlm = createSafeLlmDiagnostics({
     env,
+    form,
     used: false,
     attempted: llm.attempted,
-    reason: llm.reason || getLlmEnvironmentStatus(env).reason || "unknown-llm-error",
+    reason: llm.reason || getLlmEnvironmentStatus(env, form).reason || "unknown-llm-error",
     status: llm.status
   });
   return {
@@ -2578,7 +2614,7 @@ const withFallbackRoute = (fallbackDraft = {}, llm = {}, form = {}, env = {}) =>
         }
       : decorated.contentPackage,
     llm: safeLlm,
-    llmStages: llm.llmStages || createLlmStages(env),
+    llmStages: llm.llmStages || createLlmStages(env, form),
     vision: createSafeVisionDiagnostics({ form, result: decorated })
   };
 };
@@ -2670,27 +2706,28 @@ const requestLlmWriter = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form =
 
 export async function onRequestPost(context) {
   const env = context?.env ?? {};
-  const llmStages = createLlmStages(env);
   const rawForm = await parseJsonRequest(context.request);
   const visionForm = await enrichFormWithVision(rawForm, env);
   const form = normalizeBlogWriterInput(visionForm);
+  const llmStages = createLlmStages(env, form);
   const fallbackDraft = createProductReviewDraft(form);
   const promptPayload = buildBlogWriterPromptPayload({
     form,
     fallbackDraft
   });
 
-  if (!shouldUseLlm(env)) {
+  if (!shouldUseLlm(env, form)) {
     const fallback = withFallbackRoute(fallbackDraft, {
-      reason: getLlmEnvironmentStatus(env).reason || "unknown-llm-error",
+      reason: getLlmEnvironmentStatus(env, form).reason || "unknown-llm-error",
       llmStages
     }, form, env);
-    logSafeGenerateBlogEvent({ result: fallback, env, status: 200 });
+    logSafeGenerateBlogEvent({ result: fallback, env, form, status: 200 });
     return jsonResponse(fallback);
   }
 
   try {
-    const model = getOpenAiModel(env);
+    const model = getOpenAiModel(env, form);
+    const judgeModel = getOpenAiJudgeModel(env, form, model);
     const llmDraft = await requestLlmWriter({
       env,
       model,
@@ -2707,7 +2744,7 @@ export async function onRequestPost(context) {
         reason: "llm-schema-invalid",
         llmStages
       }, form, env);
-      logSafeGenerateBlogEvent({ result: fallback, env, status: 200 });
+      logSafeGenerateBlogEvent({ result: fallback, env, form, status: 200 });
       return jsonResponse(fallback);
     }
 
@@ -2717,10 +2754,11 @@ export async function onRequestPost(context) {
       llmDraft
     });
     try {
-      if (shouldUseLlmJudge(env)) {
+      if (shouldUseLlmJudge(env, form)) {
         acceptedDraft = await improveDraftWithQualityAttempts({
           env,
           model,
+          judgeModel,
           form,
           fallbackDraft,
           initialDraft: acceptedDraft,
@@ -2740,9 +2778,10 @@ export async function onRequestPost(context) {
       ...acceptedDraft,
       generationRoute: "llm",
       engine: "llm",
-      isMock: Boolean(acceptedDraft.isMock || isMockEnvironment(env)),
+      isMock: Boolean(acceptedDraft.isMock || isMockEnvironment(env, form)),
       llm: createSafeLlmDiagnostics({
         env,
+        form,
         used: true,
         attempted: true,
         accepted: true,
@@ -2752,7 +2791,7 @@ export async function onRequestPost(context) {
       llmStages,
       vision: createSafeVisionDiagnostics({ form, result: acceptedDraft })
     };
-    logSafeGenerateBlogEvent({ result, env, status: 200 });
+    logSafeGenerateBlogEvent({ result, env, form, status: 200 });
     return jsonResponse(result);
   } catch (error) {
     const errorDiagnostics = getErrorDiagnostics(error);
@@ -2762,7 +2801,7 @@ export async function onRequestPost(context) {
       status: errorDiagnostics.status,
       llmStages
     }, form, env);
-    logSafeGenerateBlogEvent({ result: fallback, env, status: 200 });
+    logSafeGenerateBlogEvent({ result: fallback, env, form, status: 200 });
     return jsonResponse(fallback);
   }
 }

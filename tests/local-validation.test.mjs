@@ -31,6 +31,8 @@ import {
   getSectionLengthDiagnostics,
   getTargetLengthDecision,
   getTargetLengthFailureReason,
+  getOpenAiJudgeModel,
+  getOpenAiModel,
   getOpenAiApiEndpoint,
   isBetterQualityAttempt,
   onRequestPost as generateBlogOnRequestPost,
@@ -60,6 +62,13 @@ import {
 } from "../scripts/analyze-commercial-readiness.mjs";
 import {
   createCommercialHumanReviewDecision,
+  estimateCommercialRun,
+  formatCommercialRunEstimate,
+  formatCommercialUsageInstructions,
+  isQuotaExceededDiagnostic,
+  resolveCommercialRunMode,
+  runCommercialDiagnostics,
+  selectCommercialInputs,
   shouldRequestHumanCommercialReview,
   writeAutomaticFailureAnalysis
 } from "../scripts/diagnose-commercial-readiness.mjs";
@@ -2131,6 +2140,122 @@ try {
   assert.equal(shouldRequestHumanCommercialReview({ aggregate: { automaticResult: "PASS", recommendation: "CONDITIONAL" } }), true);
   assert.equal(passHumanReviewDecision.required, true);
   assert.ok(passHumanReviewDecision.reviewCommand.includes("review:commercial"));
+
+  const noCommercialMode = resolveCommercialRunMode({ auto: "1" }, {});
+  assert.equal(noCommercialMode.runnable, false);
+  assert.equal(noCommercialMode.blockedReason, "missing-execution-mode");
+  assert.ok(formatCommercialUsageInstructions({ decision: noCommercialMode }).includes("--smoke"));
+
+  const smokeMode = resolveCommercialRunMode({ smoke: "1" }, {});
+  assert.equal(smokeMode.runnable, true);
+  assert.equal(smokeMode.caseCount, 1);
+  assert.equal(smokeMode.selectedModel, "gpt-4.1-mini");
+  const smokeInputs = selectCommercialInputs({ mode: smokeMode.mode, cases: smokeMode.caseCount, seed: "unit-smoke", skipImages: true });
+  assert.equal(smokeInputs.length, 1);
+  assert.equal(smokeInputs[0].informationLevel, "high");
+
+  const canaryMode = resolveCommercialRunMode({ canary3: "1" }, {});
+  assert.equal(canaryMode.runnable, true);
+  assert.equal(canaryMode.caseCount, 3);
+  const canaryInputs = selectCommercialInputs({ mode: canaryMode.mode, cases: canaryMode.caseCount, seed: "unit-canary", skipImages: true });
+  assert.deepEqual(canaryInputs.map((item) => item.caseId), [
+    "product-high-no-image",
+    "restaurant-high-vision",
+    "education-high-no-image"
+  ]);
+
+  const compatModelMode = resolveCommercialRunMode({ smoke: "1" }, { OPENAI_MODEL: "compat-model" });
+  assert.equal(compatModelMode.selectedModel, "compat-model");
+  assert.equal(getOpenAiModel({}, { diagnosticRunMode: "smoke" }), "gpt-4.1-mini");
+  assert.equal(getOpenAiModel({}, { diagnosticRunMode: "canary3" }), "gpt-4.1-mini");
+  assert.equal(getOpenAiModel({}, { diagnosticRunMode: "full", diagnosticCaseCount: 8 }), "gpt-4.1");
+  assert.equal(getOpenAiModel({ OPENAI_MODEL: "compat-model" }, { diagnosticRunMode: "smoke" }), "compat-model");
+  assert.equal(getOpenAiModel({ OPENAI_MODEL_SMOKE: "smoke-model", OPENAI_MODEL: "compat-model" }, { diagnosticRunMode: "smoke" }), "smoke-model");
+  assert.equal(getOpenAiModel({ OPENAI_MODEL_FULL: "full-model", OPENAI_MODEL: "compat-model" }, { diagnosticCaseCount: 8 }), "full-model");
+  assert.equal(getOpenAiJudgeModel({ OPENAI_MODEL_JUDGE: "judge-model" }, { diagnosticRunMode: "smoke" }, "writer-model"), "judge-model");
+  const fullWithoutYes = resolveCommercialRunMode({ cases: "8" }, {});
+  assert.equal(fullWithoutYes.runnable, false);
+  assert.equal(fullWithoutYes.blockedReason, "confirmation-required");
+  const fullWithYes = resolveCommercialRunMode({ cases: "8", yes: "1" }, {});
+  assert.equal(fullWithYes.runnable, true);
+  assert.equal(fullWithYes.selectedModel, "gpt-4.1");
+
+  const estimateOnlyMode = resolveCommercialRunMode({ "estimate-only": "1" }, {});
+  assert.equal(estimateOnlyMode.estimateOnly, true);
+  assert.equal(estimateOnlyMode.caseCount, 8);
+  const estimate = estimateCommercialRun({
+    inputs: canaryInputs,
+    mode: "canary3",
+    selectedModel: canaryMode.selectedModel,
+    judgeModel: canaryMode.judgeModel,
+    maxCostWarningTokens: 1
+  });
+  assert.equal(estimate.casesCount, 3);
+  assert.equal(estimate.maxCostWarningTriggered, true);
+  const estimateText = formatCommercialRunEstimate(estimate);
+  assert.ok(estimateText.includes("expected writer calls"));
+  assert.ok(estimateText.includes("expected token range"));
+  assert.ok(!estimateText.includes("sk-"));
+  assert.ok(!estimateText.toLowerCase().includes("prompt:"));
+
+  let estimateFetchCalled = false;
+  const estimateOnlyDiagnostics = await runCommercialDiagnostics({
+    mode: "smoke",
+    cases: 1,
+    estimateOnly: true,
+    fetchJson: async () => {
+      estimateFetchCalled = true;
+      throw new Error("estimate-only must not call fetch");
+    }
+  });
+  assert.equal(estimateFetchCalled, false);
+  assert.equal(estimateOnlyDiagnostics.automaticResult, "ESTIMATE_ONLY");
+  assert.equal(estimateOnlyDiagnostics.caseCount, 0);
+
+  assert.equal(isQuotaExceededDiagnostic({ base: { llmReason: "openai-quota-exceeded" }, json: {} }), true);
+  let quotaFetchCalls = 0;
+  const quotaDiagnostics = await runCommercialDiagnostics({
+    previewUrl: "https://preview.example",
+    mode: "canary3",
+    cases: 3,
+    timeoutMs: 5,
+    seed: "unit-quota",
+    skipImages: true,
+    fetchJson: async (_url, payload) => {
+      quotaFetchCalls += 1;
+      assert.equal(payload.diagnosticRunMode, "canary3");
+      assert.equal(payload.diagnosticCaseCount, 3);
+      return {
+        status: 200,
+        json: {
+          engine: "fallback",
+          judgeEngine: "deterministic",
+          isMock: false,
+          llm: { used: false, keyPresent: true, reason: "openai-quota-exceeded", status: 429 },
+          llmStages: {
+            writer: { success: false, reason: "quota-exceeded", attempts: 1 },
+            judge: { success: false, reason: "skipped", attempts: 0 },
+            revisions: []
+          },
+          contentPackage: {
+            finalTitle: "quota blocked diagnostic title",
+            titleCandidates: ["quota blocked diagnostic title"],
+            sections: [{ paragraphs: ["quota blocked diagnostic body"] }],
+            qualityScore: 0,
+            publishReady: false
+          }
+        }
+      };
+    }
+  });
+  assert.equal(quotaFetchCalls, 1);
+  assert.equal(quotaDiagnostics.requestedCaseCount, 3);
+  assert.equal(quotaDiagnostics.caseCount, 1);
+  assert.equal(quotaDiagnostics.automaticResult, "BLOCKED_QUOTA");
+  assert.equal(quotaDiagnostics.quotaBlocked.blocked, true);
+  assert.equal(quotaDiagnostics.humanReview.required, false);
+  assert.ok(quotaDiagnostics.quotaBlocked.guidance.some((item) => item.includes("Billing balance")));
+
   const automaticAnalysisTemp = mkdtempSync(join(tmpdir(), "commercial-auto-analysis-"));
   try {
     const automaticAnalysis = await writeAutomaticFailureAnalysis({

@@ -20,6 +20,9 @@ import { normalizeBlogWriterResult } from "../shared/blogWriterResultNormalizer.
 
 export const COMMERCIAL_EXPORT_DIR = ".tmp-commercial-readiness";
 export const DEFAULT_COMMERCIAL_CASES = 8;
+export const SMOKE_COMMERCIAL_CASES = 1;
+export const CANARY_COMMERCIAL_CASES = 3;
+export const DEFAULT_MAX_COST_WARNING_TOKENS = 160_000;
 const DEFAULT_WAIT_MS = 2500;
 
 const text = (value) => String(value ?? "").trim();
@@ -369,6 +372,214 @@ export const createCommercialReadinessInputs = ({ seed = randomUUID().slice(0, 8
   });
 };
 
+const hasArg = (args = {}, key = "") => Object.prototype.hasOwnProperty.call(args, key);
+const argEnabled = (args = {}, key = "") => {
+  if (!hasArg(args, key)) return false;
+  const value = args[key];
+  if (value === false || value === 0) return false;
+  return !/^(0|false|no|off)$/iu.test(text(value));
+};
+
+const parseCommercialCaseCount = (value = DEFAULT_COMMERCIAL_CASES) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { valid: false, caseCount: 0 };
+  }
+  return {
+    valid: true,
+    caseCount: Math.max(1, Math.min(DEFAULT_COMMERCIAL_CASES, Math.trunc(parsed)))
+  };
+};
+
+export const parseMaxCostWarningTokens = (value = undefined) => {
+  if (value === undefined || value === null || value === false) return 0;
+  if (value === true || value === "1" || value === "") return DEFAULT_MAX_COST_WARNING_TOKENS;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : DEFAULT_MAX_COST_WARNING_TOKENS;
+};
+
+export const resolveCommercialModel = ({ mode = "cases", caseCount = DEFAULT_COMMERCIAL_CASES, args = {}, env = process.env } = {}) => {
+  const fullCommercial = Number(caseCount || 0) >= DEFAULT_COMMERCIAL_CASES || mode === "full";
+  const explicitModel = text(args.model);
+  const writerModel =
+    explicitModel ||
+    (fullCommercial ? text(env.OPENAI_MODEL_FULL) : text(env.OPENAI_MODEL_SMOKE)) ||
+    text(env.OPENAI_MODEL) ||
+    (fullCommercial ? "gpt-4.1" : "gpt-4.1-mini");
+  const judgeModel = text(env.OPENAI_MODEL_JUDGE) || writerModel;
+  return {
+    writerModel,
+    judgeModel
+  };
+};
+
+export const resolveCommercialRunMode = (args = {}, env = process.env) => {
+  const smoke = argEnabled(args, "smoke");
+  const canary3 = argEnabled(args, "canary3");
+  const hasCases = hasArg(args, "cases");
+  const estimateOnly = argEnabled(args, "estimate-only");
+  const explicitModeCount = [smoke, canary3, hasCases].filter(Boolean).length;
+
+  if (explicitModeCount > 1) {
+    return {
+      runnable: false,
+      estimateOnly,
+      blockedReason: "multiple-execution-modes",
+      message: "Choose only one commercial diagnostic mode: --smoke, --canary3, or --cases=N."
+    };
+  }
+
+  if (!estimateOnly && explicitModeCount === 0) {
+    return {
+      runnable: false,
+      estimateOnly: false,
+      blockedReason: "missing-execution-mode",
+      message: "Commercial diagnostics did not run because no execution mode was selected."
+    };
+  }
+
+  let mode = "full";
+  let caseCount = DEFAULT_COMMERCIAL_CASES;
+  if (smoke) {
+    mode = "smoke";
+    caseCount = SMOKE_COMMERCIAL_CASES;
+  } else if (canary3) {
+    mode = "canary3";
+    caseCount = CANARY_COMMERCIAL_CASES;
+  } else if (hasCases) {
+    const parsed = parseCommercialCaseCount(args.cases);
+    if (!parsed.valid) {
+      return {
+        runnable: false,
+        estimateOnly,
+        blockedReason: "invalid-case-count",
+        message: "--cases must be a positive number."
+      };
+    }
+    caseCount = parsed.caseCount;
+    mode = caseCount >= DEFAULT_COMMERCIAL_CASES ? "full" : "cases";
+  }
+
+  const fullCommercial = caseCount >= DEFAULT_COMMERCIAL_CASES;
+  const requiresConfirmation = fullCommercial && !estimateOnly;
+  const confirmed = argEnabled(args, "yes");
+  const models = resolveCommercialModel({ mode, caseCount, args, env });
+  if (requiresConfirmation && !confirmed) {
+    return {
+      runnable: false,
+      estimateOnly,
+      mode,
+      caseCount,
+      fullCommercial,
+      requiresConfirmation,
+      confirmed,
+      selectedModel: models.writerModel,
+      judgeModel: models.judgeModel,
+      blockedReason: "confirmation-required",
+      message: "Full commercial diagnostics require explicit --yes approval."
+    };
+  }
+
+  return {
+    runnable: !estimateOnly,
+    estimateOnly,
+    mode,
+    caseCount,
+    fullCommercial,
+    requiresConfirmation,
+    confirmed,
+    selectedModel: models.writerModel,
+    judgeModel: models.judgeModel,
+    blockedReason: estimateOnly ? "estimate-only" : "",
+    message: estimateOnly ? "Estimate only; no OpenAI calls will be made." : "Commercial diagnostics can run."
+  };
+};
+
+export const selectCommercialInputs = ({ mode = "cases", cases = DEFAULT_COMMERCIAL_CASES, seed = randomUUID().slice(0, 8), skipImages = false } = {}) => {
+  const inputs = createCommercialReadinessInputs({ seed, skipImages });
+  if (mode === "smoke") {
+    const highNoImage = inputs.find((input) => input.informationLevel === "high" && Number(input.imageCount || 0) === 0);
+    return [highNoImage || inputs.find((input) => input.informationLevel === "high") || inputs[0]].filter(Boolean);
+  }
+  if (mode === "canary3") {
+    const desired = ["product-high-no-image", "restaurant-high-vision", "education-high-no-image"];
+    const selected = desired.map((caseId) => inputs.find((input) => input.caseId === caseId)).filter(Boolean);
+    if (selected.length >= CANARY_COMMERCIAL_CASES) return selected.slice(0, CANARY_COMMERCIAL_CASES);
+    return inputs.filter((input) => input.informationLevel !== "low").slice(0, CANARY_COMMERCIAL_CASES);
+  }
+  const parsed = parseCommercialCaseCount(cases);
+  const count = parsed.valid ? parsed.caseCount : DEFAULT_COMMERCIAL_CASES;
+  return inputs.slice(0, count);
+};
+
+export const estimateCommercialRun = ({
+  inputs = [],
+  mode = "cases",
+  caseCount = inputs.length || DEFAULT_COMMERCIAL_CASES,
+  selectedModel = "",
+  judgeModel = "",
+  maxCostWarningTokens = 0
+} = {}) => {
+  const count = Math.max(0, Number(inputs.length || caseCount || 0));
+  const visionCount = inputs.filter((input) => Number(input.imageCount || 0) > 0).length;
+  const minTokens = Math.round(count * 12_000 + visionCount * 4_000);
+  const maxTokens = Math.round(count * 46_000 + visionCount * 10_000);
+  const risk = maxTokens >= DEFAULT_MAX_COST_WARNING_TOKENS || count >= DEFAULT_COMMERCIAL_CASES ? "high" : count >= CANARY_COMMERCIAL_CASES ? "medium" : "low";
+  const warningThreshold = Math.max(0, Number(maxCostWarningTokens || 0));
+  return {
+    mode,
+    casesCount: count,
+    visionCasesCount: visionCount,
+    expectedWriterCalls: { min: count, max: count * 3 },
+    expectedJudgeCalls: { min: count, max: count * 3 },
+    expectedRevisionCalls: { min: 0, max: count * 2 },
+    expectedTokenRange: { min: minTokens, max: maxTokens },
+    selectedModel: selectedModel || "unknown",
+    judgeModel: judgeModel || selectedModel || "unknown",
+    estimatedRisk: risk,
+    maxCostWarningTokens: warningThreshold,
+    maxCostWarningTriggered: warningThreshold > 0 && maxTokens >= warningThreshold
+  };
+};
+
+const formatNumber = (value = 0) => Number(value || 0).toLocaleString("en-US");
+const formatRange = ({ min = 0, max = 0 } = {}) => Number(min) === Number(max) ? formatNumber(min) : `${formatNumber(min)}-${formatNumber(max)}`;
+
+export const formatCommercialRunEstimate = (estimate = {}) => {
+  const item = estimate || {};
+  return [
+    "=== Commercial Readiness Cost Estimate ===",
+    `mode: ${item.mode || "unknown"}`,
+    `cases count: ${item.casesCount ?? 0}`,
+    `vision cases count: ${item.visionCasesCount ?? 0}`,
+    `expected writer calls: ${formatRange(item.expectedWriterCalls)}`,
+    `expected judge calls: ${formatRange(item.expectedJudgeCalls)}`,
+    `expected revision calls: ${formatRange(item.expectedRevisionCalls)}`,
+    `expected token range: ${formatRange(item.expectedTokenRange)}`,
+    `selected model: ${item.selectedModel || "unknown"}`,
+    `judge model: ${item.judgeModel || "unknown"}`,
+    `estimated risk: ${item.estimatedRisk || "unknown"}`,
+    item.maxCostWarningTriggered
+      ? `warning: expected max tokens exceed --max-cost-warning=${formatNumber(item.maxCostWarningTokens)}`
+      : ""
+  ].filter(Boolean).join("\n");
+};
+
+export const formatCommercialUsageInstructions = ({ decision = {}, estimate = null } = {}) => [
+  "=== Commercial Readiness Cost Guard ===",
+  decision.message || "Commercial diagnostics did not run.",
+  "No commercial cases were executed.",
+  "",
+  "Run one of:",
+  "npm.cmd run diagnose:commercial -- --smoke --export",
+  "npm.cmd run diagnose:commercial -- --canary3 --export",
+  "npm.cmd run diagnose:commercial -- --cases=3 --export",
+  "npm.cmd run diagnose:commercial -- --estimate-only --canary3",
+  "npm.cmd run diagnose:commercial -- --cases=8 --export --timeout-ms=240000 --yes",
+  estimate ? "" : "",
+  estimate ? formatCommercialRunEstimate(estimate) : ""
+].filter((line) => line !== "").join("\n");
+
 const getPackage = (json = {}) => json.contentPackage || {};
 const getNormalizedResult = (json = {}) => normalizeBlogWriterResult(json);
 
@@ -393,6 +604,47 @@ const collectTokenUsage = (json = {}) => {
     usage = addUsage(usage, sumUsageObjects(stage?.usage || stage?.tokenUsage));
   });
   return usage;
+};
+
+export const COMMERCIAL_QUOTA_GUIDANCE = [
+  "Billing balance 확인",
+  "Usage limits 확인",
+  "모델을 gpt-4.1-mini로 낮춰 smoke test부터 실행",
+  "commercial full test는 보류"
+];
+
+const quotaPattern = /openai-quota-exceeded|quota[-_\s]?exceeded|insufficient[-_\s]?quota|billing[-_\s]?hard[-_\s]?limit/iu;
+
+export const isQuotaExceededDiagnostic = ({ base = {}, json = {} } = {}) => {
+  const stages = json.llmStages || getPackage(json).llmStages || {};
+  const revisions = Array.isArray(stages.revisions) ? stages.revisions : [];
+  const values = [
+    base.llmReason,
+    base.llmStatus,
+    base.llmStages?.writer?.reason,
+    base.llmStages?.judge?.reason,
+    json.llm?.reason,
+    json.llm?.status,
+    json.error?.code,
+    json.error?.type,
+    json.error?.message,
+    json.message,
+    stages.writer?.reason,
+    stages.judge?.reason,
+    ...revisions.map((stage) => stage?.reason)
+  ];
+  return values.some((value) => quotaPattern.test(String(value ?? "")));
+};
+
+const applyQuotaBlockedAggregate = ({ aggregate = {}, quotaBlocked = {} } = {}) => {
+  if (!quotaBlocked.blocked) return aggregate;
+  return {
+    ...aggregate,
+    automaticResult: "BLOCKED_QUOTA",
+    recommendation: "REJECT",
+    recommendationReason: "OpenAI quota exceeded; stopped remaining commercial readiness cases.",
+    quotaGuidance: COMMERCIAL_QUOTA_GUIDANCE
+  };
 };
 
 const titleChecks = ({ title = "", titleCandidates = [], primaryEntity = "", category = "" } = {}) => {
@@ -672,11 +924,13 @@ ${rootCauses.length ? rootCauses.map((item) => `- ${item.rootCause}: ${item.freq
 
 - npm.cmd run test:local
 - npm.cmd run build
-- npm.cmd run diagnose:commercial -- --cases=8 --export --timeout-ms=240000
+- npm.cmd run diagnose:commercial -- --smoke --export --timeout-ms=240000
+- npm.cmd run diagnose:commercial -- --canary3 --export --timeout-ms=240000
+- npm.cmd run diagnose:commercial -- --estimate-only --cases=8 --max-cost-warning
 `;
 
 export const writeAutomaticFailureAnalysis = async ({ exportPath = "", summaries = [], aggregate = {} } = {}) => {
-  if (!exportPath || aggregate.automaticResult !== "FAIL") return null;
+  if (!exportPath || !["FAIL", "BLOCKED_QUOTA"].includes(aggregate.automaticResult)) return null;
   const analysisDir = join(exportPath, "analysis");
   const rootCauses = automaticFailureRootCauses({ summaries, aggregate });
   await mkdir(analysisDir, { recursive: true });
@@ -878,20 +1132,81 @@ export const runCommercialDiagnostics = async ({
   previewUrl = "",
   timeoutMs = 240_000,
   cases = DEFAULT_COMMERCIAL_CASES,
+  mode = "cases",
+  estimateOnly = false,
   exportResults = false,
   skipImages = false,
   seed = randomUUID().slice(0, 8),
-  referenceDir = ""
+  referenceDir = "",
+  selectedModel = "",
+  judgeModel = "",
+  maxCostWarningTokens = 0,
+  fetchJson = fetchDiagnosticJson
 } = {}) => {
+  const inputs = selectCommercialInputs({ mode, cases, seed, skipImages });
+  const costEstimate = estimateCommercialRun({
+    inputs,
+    mode,
+    caseCount: inputs.length,
+    selectedModel,
+    judgeModel,
+    maxCostWarningTokens
+  });
+  const runId = `commercial-readiness-${new Date().toISOString().replace(/[:.]/gu, "-")}-${seed}`;
+  if (estimateOnly) {
+    return {
+      previewUrl: previewUrl ? normalizePreviewUrl(previewUrl) : "",
+      runId,
+      seed,
+      runMode: mode,
+      estimateOnly: true,
+      exported: false,
+      exportPath: "",
+      automaticResult: "ESTIMATE_ONLY",
+      recommendation: "SKIP",
+      recommendationReason: "Estimate-only mode did not call OpenAI or the preview API.",
+      requestedCaseCount: inputs.length,
+      caseCount: 0,
+      visionCaseCount: 0,
+      actualVisionCount: 0,
+      tokenUsageAvailable: false,
+      commonFailureCategories: [],
+      hardFailCount: 0,
+      costEstimate,
+      quotaBlocked: { blocked: false },
+      cases: [],
+      humanReview: {
+        required: false,
+        status: "SKIPPED_ESTIMATE_ONLY",
+        reason: "Estimate-only mode does not produce content for human review.",
+        reviewCommand: ""
+      },
+      automaticAnalysis: null,
+      referenceComparison: { provided: false },
+      mainMerge: {
+        recommendation: "SKIP",
+        reason: "Estimate-only mode did not produce automatic commercial readiness evidence.",
+        mainPush: false,
+        mainMerge: false,
+        pullRequestCreated: false
+      }
+    };
+  }
+
   const baseUrl = normalizePreviewUrl(previewUrl);
   const url = buildGenerateBlogUrl(baseUrl);
-  const inputs = createCommercialReadinessInputs({ seed, skipImages }).slice(0, Math.max(1, Math.min(8, Number(cases) || DEFAULT_COMMERCIAL_CASES)));
   const summaries = [];
   const allEntities = inputs.map((input) => input.productName);
+  const quotaBlocked = { blocked: false, atCaseId: "", guidance: [] };
 
   for (const [index, input] of inputs.entries()) {
     const startedAt = Date.now();
-    const { status, json } = await fetchDiagnosticJson(url, input, { timeoutMs });
+    const diagnosticInput = {
+      ...input,
+      diagnosticRunMode: mode,
+      diagnosticCaseCount: inputs.length
+    };
+    const { status, json } = await fetchJson(url, diagnosticInput, { timeoutMs });
     const latencyMs = Date.now() - startedAt;
     const base = summarizeDiagnosticResponse({ url, status, json, imageExpected: input.imageCount > 0 });
     const packageData = getPackage(json);
@@ -994,10 +1309,19 @@ export const runCommercialDiagnostics = async ({
     summary.failedChecks = evaluation.failedChecks;
     summary.failureCategory = evaluation.pass ? "" : classifyFailure(summary);
     summaries.push(summary);
+    if (isQuotaExceededDiagnostic({ base, json })) {
+      summary.caseResult = "BLOCKED_QUOTA";
+      summary.failureCategory = "LLM_CONNECTION";
+      quotaBlocked.blocked = true;
+      quotaBlocked.atCaseId = input.caseId;
+      quotaBlocked.guidance = COMMERCIAL_QUOTA_GUIDANCE;
+      break;
+    }
     if (index < inputs.length - 1) await wait(DEFAULT_WAIT_MS);
   }
 
-  const aggregate = summarizeAggregate(summaries);
+  const aggregateBase = summarizeAggregate(summaries);
+  const aggregate = applyQuotaBlockedAggregate({ aggregate: aggregateBase, quotaBlocked });
   const failureCategories = summaries
     .filter((item) => item.caseResult !== "PASS" || item.hardFail)
     .reduce((acc, item) => {
@@ -1009,7 +1333,6 @@ export const runCommercialDiagnostics = async ({
     .filter(([, count]) => count >= 3)
     .map(([category, count]) => ({ category, count }));
   const referenceInfo = await inspectReferenceDir(referenceDir);
-  const runId = `commercial-readiness-${new Date().toISOString().replace(/[:.]/gu, "-")}-${seed}`;
   const exportPath = exportResults ? await writeCommercialExport({ runId, cases: summaries, referenceInfo }) : "";
   const humanReview = createCommercialHumanReviewDecision({ aggregate, exportPath });
   const automaticAnalysis =
@@ -1021,15 +1344,20 @@ export const runCommercialDiagnostics = async ({
     previewUrl: baseUrl,
     runId,
     seed,
+    runMode: mode,
+    estimateOnly: false,
     exported: Boolean(exportResults),
     exportPath,
     ...aggregate,
+    requestedCaseCount: inputs.length,
     caseCount: summaries.length,
     visionCaseCount: summaries.filter((item) => item.imageExpected).length,
     actualVisionCount: summaries.filter((item) => item.imageExpected && item.visionMode === "vision").length,
     tokenUsageAvailable: summaries.some((item) => Number(item.tokenUsage?.total || 0) > 0),
     commonFailureCategories,
     hardFailCount: summaries.filter((item) => item.hardFail).length,
+    costEstimate,
+    quotaBlocked,
     cases: summaries.map(summarizeForConsole),
     humanReview,
     automaticAnalysis,
@@ -1049,20 +1377,32 @@ export const runAutoCommercialDiagnostics = async ({
   branch = DEFAULT_PREVIEW_BRANCH,
   timeoutMs = 240_000,
   cases = DEFAULT_COMMERCIAL_CASES,
+  mode = "cases",
+  estimateOnly = false,
   exportResults = false,
   skipImages = false,
   seed = randomUUID().slice(0, 8),
-  referenceDir = ""
+  referenceDir = "",
+  selectedModel = "",
+  judgeModel = "",
+  maxCostWarningTokens = 0,
+  fetchJson = fetchDiagnosticJson
 } = {}) => {
   const auto = await discoverLatestPreviewDeployment({ projectName, branch });
   const diagnostics = await runCommercialDiagnostics({
     previewUrl: auto.deployment.Deployment,
     timeoutMs,
     cases,
+    mode,
+    estimateOnly,
     exportResults,
     skipImages,
     seed,
-    referenceDir
+    referenceDir,
+    selectedModel,
+    judgeModel,
+    maxCostWarningTokens,
+    fetchJson
   });
   return {
     ...auto,
@@ -1093,22 +1433,51 @@ export const formatCommercialSummary = ({
 const main = async () => {
   const args = parseArgs(process.argv.slice(2));
   const timeoutMs = parseTimeoutMs(args["timeout-ms"], 240_000);
-  const cases = Math.max(1, Math.min(8, Number(args.cases || DEFAULT_COMMERCIAL_CASES) || DEFAULT_COMMERCIAL_CASES));
   const exportResults = Boolean(args.export);
   const skipImages = Boolean(args["skip-images"]);
   const seed = text(args.seed) || randomUUID().slice(0, 8);
   const referenceDir = text(args["reference-dir"]);
+  const decision = resolveCommercialRunMode(args);
+  const maxCostWarningTokens = parseMaxCostWarningTokens(args["max-cost-warning"]);
+  const estimate = decision.caseCount
+    ? estimateCommercialRun({
+      inputs: selectCommercialInputs({ mode: decision.mode, cases: decision.caseCount, seed, skipImages }),
+      mode: decision.mode,
+      caseCount: decision.caseCount,
+      selectedModel: decision.selectedModel,
+      judgeModel: decision.judgeModel,
+      maxCostWarningTokens
+    })
+    : null;
+
+  if (!decision.runnable && decision.blockedReason !== "estimate-only") {
+    console.log(formatCommercialUsageInstructions({ decision, estimate }));
+    process.exitCode = decision.blockedReason === "confirmation-required" ? 1 : 0;
+    return;
+  }
+
+  if (decision.estimateOnly) {
+    console.log(formatCommercialRunEstimate(estimate));
+    process.exitCode = 0;
+    return;
+  }
+
+  console.log(formatCommercialRunEstimate(estimate));
 
   if (args.auto) {
     const autoResult = await runAutoCommercialDiagnostics({
       projectName: args.project || DEFAULT_PROJECT_NAME,
       branch: args.branch || DEFAULT_PREVIEW_BRANCH,
       timeoutMs,
-      cases,
+      cases: decision.caseCount,
+      mode: decision.mode,
       exportResults,
       skipImages,
       seed,
-      referenceDir
+      referenceDir,
+      selectedModel: decision.selectedModel,
+      judgeModel: decision.judgeModel,
+      maxCostWarningTokens
     });
     console.log(formatCommercialSummary(autoResult));
     process.exitCode = autoResult.diagnostics.automaticResult === "PASS" ? 0 : 1;
@@ -1119,11 +1488,15 @@ const main = async () => {
   const diagnostics = await runCommercialDiagnostics({
     previewUrl,
     timeoutMs,
-    cases,
+    cases: decision.caseCount,
+    mode: decision.mode,
     exportResults,
     skipImages,
     seed,
-    referenceDir
+    referenceDir,
+    selectedModel: decision.selectedModel,
+    judgeModel: decision.judgeModel,
+    maxCostWarningTokens
   });
   console.log(JSON.stringify(diagnostics, null, 2));
   process.exitCode = diagnostics.automaticResult === "PASS" ? 0 : 1;
