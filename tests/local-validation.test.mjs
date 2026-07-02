@@ -1274,6 +1274,95 @@ assert.equal(
 assert.ok(lengthRetryDraft.contentPackage.targetLengthContract.sectionActualTotal > 0);
 assert.ok("targetLengthFailureReason" in lengthRetryDraft.contentPackage.targetLengthContract);
 
+const overTargetFacts = [
+  "Unit Length Keeper was tested on a desk for three days.",
+  "Cable heads stayed upright after work.",
+  "The bottom slipped a little on the shelf.",
+  "The next check would be base grip strength.",
+  "The compact size helped on a narrow desk.",
+  "The receipt pocket did not need to move."
+];
+const overTargetKeptSentences = [
+  overTargetFacts[0],
+  `${overTargetFacts[1]} That made the desk easier to reset before the next task.`,
+  `${overTargetFacts[2]} This kept the review balanced instead of only praising the organizer.`,
+  `${overTargetFacts[3]} That point became the clearest repurchase condition.`,
+  `${overTargetFacts[4]} The small footprint mattered more than extra storage space.`,
+  `${overTargetFacts[5]} Keeping that pocket in place made daily cleanup simpler.`,
+  "The draft keeps each observation tied to the same desk setup and avoids adding price, delivery, or warranty claims."
+].join(" ");
+const overTargetTail = "This final buffer repeats the same selection summary without adding another observed fact, so it should be removed when the draft is just over the length contract.";
+const overTargetSections = [
+  {
+    heading: "Desk use notes",
+    paragraphs: [`${overTargetKeptSentences} ${overTargetTail}`],
+    imageRefs: []
+  }
+];
+const overTargetBody = bodyFromBlogWriterSections(overTargetSections);
+const overTargetBodyWithoutTail = bodyFromBlogWriterSections([
+  {
+    heading: "Desk use notes",
+    paragraphs: [overTargetKeptSentences],
+    imageRefs: []
+  }
+]);
+const overTargetTarget = Math.ceil((overTargetBodyWithoutTail.length + 8) / 1.1);
+assert.ok(overTargetBody.length > Math.floor(overTargetTarget * 1.1));
+assert.ok(overTargetBodyWithoutTail.length <= Math.floor(overTargetTarget * 1.1));
+const overTargetCompressionDraft = await callApiWithFetch({
+  body: {
+    productName: "Unit Length Keeper",
+    mainKeyword: "length keeper review",
+    subKeywords: "desk setup, cable holder",
+    category: "product",
+    targetCharCount: overTargetTarget,
+    experienceMemo: overTargetFacts.join("\n")
+  },
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "local-quality-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({
+                finalTitle: "Unit Length Keeper length keeper review",
+                titleCandidates: [
+                  "Unit Length Keeper length keeper review",
+                  "Unit Length Keeper desk setup notes",
+                  "Unit Length Keeper cable holder review",
+                  "Unit Length Keeper compact organizer use",
+                  "Unit Length Keeper base grip check"
+                ],
+                sections: overTargetSections,
+                faq: [],
+                hashtags: ["#UnitLengthKeeper", "#DeskSetup", "#CableHolder"]
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.ok(overTargetCompressionDraft.contentPackage.targetLengthContract.targetComplianceRatio <= 1.1);
+assert.ok(overTargetCompressionDraft.contentPackage.diagnostics.targetLengthCompression.applied.includes("overTargetSentenceCompression"));
+assert.ok(!overTargetCompressionDraft.body.includes(overTargetTail));
+assert.ok(
+  calculateInputFactCoverage({
+    factMap: overTargetCompressionDraft.contentPackage.factMap,
+    body: overTargetCompressionDraft.body
+  }).inputFactCoverage >= 0.9
+);
+
 const diagnosticPayload = buildDiagnosticPayload();
 assert.equal(diagnosticPayload.imageCount, 0);
 assert.ok(!JSON.stringify(diagnosticPayload).includes("sk-"));

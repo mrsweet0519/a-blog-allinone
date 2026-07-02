@@ -143,7 +143,7 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
       ...section,
       targetChars,
       minChars: targetChars > 0 ? Math.floor(targetChars * 0.85) : 0,
-      maxChars: targetChars > 0 ? Math.ceil(targetChars * 1.15) : 0
+      maxChars: targetChars > 0 ? Math.floor(targetChars * 1.1) : 0
     };
   });
   const allowedClaims = writerPlan.factPolicy?.allowedClaims || factMap.supported || [];
@@ -202,7 +202,7 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
       targetCharCount: targetChars,
       targetChars,
       minChars: targetChars > 0 ? Math.floor(targetChars * 0.85) : 0,
-      maxChars: targetChars > 0 ? Math.ceil(targetChars * 1.15) : 0,
+      maxChars: targetChars > 0 ? Math.floor(targetChars * 1.1) : 0,
       forbiddenDuplicateFactIds: section.forbiddenDuplicateFactIds || [],
       forbiddenRepeatedFactIds: section.forbiddenRepeatedFactIds || section.forbiddenDuplicateFactIds || [],
       imageRefs: section.imageRefs || []
@@ -289,6 +289,7 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "경험 주장은 experienceEvidence, 가족·아이·동행 주장은 contextEvidence, 사진 주장은 imageEvidence가 있을 때만 쓰세요.",
     "unsupported, contradictory, metaGuidance, placeholder 문장이 최종 섹션에 남지 않게 스스로 검토하세요. Claim Ledger는 서버가 최종 본문 기준으로 다시 만듭니다.",
     "FAQ는 Fact Map으로 직접 답할 수 있을 때만 0~2개 생성하세요. 운영시간, 예약, 주차, 글 작성법, 확인 필요만 말하는 질문은 만들지 마세요. FAQ, 해시태그, 키워드 반복, 정보 정리 문단으로 본문 길이를 채우지 마세요.",
+    "hashtags는 중복 없이 3~8개만 반환하세요. 해시태그는 본문 품질을 보완하는 용도가 아니며 unsupported claim이나 category contamination을 만들면 안 됩니다.",
     "writer 출력은 titleCandidates, finalTitle, sections, faq, hashtags만 반환하세요. body, qualityScore, Fact Map, Claim Ledger, trace, publishReady 같은 내부 분석 필드는 절대 반환하지 마세요.",
     "FAQ가 필요 없으면 faq는 빈 배열로 두고, 이미지가 없으면 imageRefs는 빈 배열로 두세요. 소제목이 필요 없는 section은 heading을 null로 두세요.",
     "최종 본문에는 내부 writerPlan에서나 쓸 메타 표현을 넣지 마세요.",

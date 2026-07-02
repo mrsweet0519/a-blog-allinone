@@ -1126,6 +1126,154 @@ const removeUnsafeClaimSegments = ({
   };
 };
 
+const splitCompressionSentences = (paragraph = "") => {
+  const source = String(paragraph || "").trim();
+  if (!source) return [];
+  const matches = source.match(/[^.!?]+[.!?]+|[^.!?]+$/gu) || [];
+  return matches.map((item) => item.trim()).filter(Boolean);
+};
+
+const compressOverTargetBody = ({
+  body = "",
+  finalTitle = "",
+  faqItems = [],
+  hashtags = [],
+  pipelineContext = {},
+  targetCharCount = 0
+} = {}) => {
+  const target = Number(targetCharCount) || 0;
+  const informationLevel = pipelineContext.informationSufficiency?.level || pipelineContext.informationSufficiency || "";
+  const originalBody = String(body || "").trim();
+  const originalLength = charLength(originalBody);
+  const maxTarget = target > 0 ? Math.floor(target * 1.1) : 0;
+  const minTarget = target > 0 ? Math.ceil(target * 0.85) : 0;
+  const diagnostics = {
+    originalCharCount: originalLength,
+    finalCharCount: originalLength,
+    maxTarget,
+    removedCharCount: 0,
+    skipped: []
+  };
+
+  if (!originalBody || !target || informationLevel === "low" || originalLength <= maxTarget) {
+    return { body: originalBody, applied: [], diagnostics };
+  }
+
+  const originalCoverage = calculateInputFactCoverage({
+    factMap: pipelineContext.factMap,
+    body: originalBody
+  });
+  const originalCoveredIds = new Set(originalCoverage.coveredFactIds || []);
+  const originalClaimLedger = summarizeClaimLedger(createClaimLedger({
+    title: finalTitle,
+    body: originalBody,
+    faq: faqItems,
+    hashtags,
+    factMap: pipelineContext.factMap,
+    contextFacts: pipelineContext.contextFacts,
+    imageAnalysis: pipelineContext.imageAnalysis,
+    experienceStatus: pipelineContext.experienceStatus
+  }));
+  if (originalClaimLedger.hardFail) {
+    diagnostics.skipped.push("claim-ledger-hard-fail");
+    return { body: originalBody, applied: [], diagnostics };
+  }
+
+  const coveragePreserved = (coverage = {}) => {
+    const coveredIds = new Set(coverage.coveredFactIds || []);
+    return [...originalCoveredIds].every((id) => coveredIds.has(id)) &&
+      Number(coverage.inputFactCoverage || 0) >= Number(originalCoverage.inputFactCoverage || 0) &&
+      Number(coverage.criticalFactCoverage || 0) >= Number(originalCoverage.criticalFactCoverage || 0) &&
+      Number(coverage.highFactCoverage || 0) >= Number(originalCoverage.highFactCoverage || 0);
+  };
+
+  const isSafeCandidate = (candidateBody = "", { allowOverTarget = false } = {}) => {
+    const candidateLength = charLength(candidateBody);
+    if (candidateLength < minTarget || (!allowOverTarget && candidateLength > maxTarget)) return false;
+    const coverage = calculateInputFactCoverage({
+      factMap: pipelineContext.factMap,
+      body: candidateBody
+    });
+    if (!coveragePreserved(coverage)) return false;
+    const claimLedger = summarizeClaimLedger(createClaimLedger({
+      title: finalTitle,
+      body: candidateBody,
+      faq: faqItems,
+      hashtags,
+      factMap: pipelineContext.factMap,
+      contextFacts: pipelineContext.contextFacts,
+      imageAnalysis: pipelineContext.imageAnalysis,
+      experienceStatus: pipelineContext.experienceStatus
+    }));
+    return !claimLedger.hardFail;
+  };
+
+  const paragraphs = splitBodyParagraphs(originalBody);
+  let bestBody = "";
+  let bestLength = 0;
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    const sentences = splitCompressionSentences(paragraph);
+    if (sentences.length < 2) return;
+    for (let sentenceIndex = sentences.length - 1; sentenceIndex >= 1; sentenceIndex -= 1) {
+      const nextParagraph = sentences.filter((_, index) => index !== sentenceIndex).join(" ");
+      const candidateParagraphs = paragraphs.map((item, index) => (index === paragraphIndex ? nextParagraph : item));
+      const candidateBody = joinBodyParagraphs(candidateParagraphs);
+      const candidateLength = charLength(candidateBody);
+      if (candidateLength >= originalLength || candidateLength < bestLength) continue;
+      if (!isSafeCandidate(candidateBody)) continue;
+      bestBody = candidateBody;
+      bestLength = candidateLength;
+    }
+  });
+
+  if (!bestBody) {
+    let workingParagraphs = paragraphs;
+    let workingLength = originalLength;
+    for (let step = 0; step < 20 && workingLength > maxTarget; step += 1) {
+      const options = [];
+      workingParagraphs.forEach((paragraph, paragraphIndex) => {
+        const sentences = splitCompressionSentences(paragraph);
+        if (sentences.length < 2) return;
+        for (let sentenceIndex = sentences.length - 1; sentenceIndex >= 1; sentenceIndex -= 1) {
+          const nextParagraph = sentences.filter((_, index) => index !== sentenceIndex).join(" ");
+          const candidateParagraphs = workingParagraphs.map((item, index) => (index === paragraphIndex ? nextParagraph : item));
+          const candidateBody = joinBodyParagraphs(candidateParagraphs);
+          const candidateLength = charLength(candidateBody);
+          if (candidateLength >= workingLength) continue;
+          if (!isSafeCandidate(candidateBody, { allowOverTarget: true })) continue;
+          options.push({ body: candidateBody, paragraphs: candidateParagraphs, length: candidateLength });
+        }
+      });
+      if (options.length === 0) break;
+      const withinRange = options
+        .filter((option) => option.length <= maxTarget)
+        .sort((left, right) => right.length - left.length)[0];
+      if (withinRange) {
+        bestBody = withinRange.body;
+        bestLength = withinRange.length;
+        break;
+      }
+      const strongestSafeCompression = options.sort((left, right) => left.length - right.length)[0];
+      workingParagraphs = strongestSafeCompression.paragraphs;
+      workingLength = strongestSafeCompression.length;
+    }
+  }
+
+  if (!bestBody) {
+    diagnostics.skipped.push("no-safe-sentence-candidate");
+    return { body: originalBody, applied: [], diagnostics };
+  }
+
+  diagnostics.finalCharCount = bestLength;
+  diagnostics.removedCharCount = Math.max(0, originalLength - bestLength);
+  return {
+    body: bestBody,
+    applied: ["overTargetSentenceCompression"],
+    diagnostics
+  };
+};
+
 function getWriterMaxTokens({ form = {}, fallbackDraft = {} } = {}) {
   const packageData = fallbackDraft.contentPackage || fallbackDraft || {};
   const informationLevel = packageData.informationSufficiency?.level || packageData.informationSufficiency || "";
@@ -1357,7 +1505,7 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
   {
     role: "system",
     content:
-      "Publish readiness requires all of these: primaryEntity in finalTitle/opening/body, inputFactCoverage >= 0.90, target length 85-110% for high/medium inputs, zero unsupported claims, zero category contamination, no meta guidance, no awkward josa, and natural Korean. Missing critical facts, unsupported claims, weak opening entity placement, or target length outside range must be reflected in missingFactIds, criticalMissingFactIds, unsupportedClaims, issues, issueCodes, and revisionInstructions. Judge the reader-facing draft body first; FAQ is optional support and hashtags are metadata, so do not make hashtag count alone a blocking issue unless it introduces unsupported, contaminated, or meta language. Low-information inputs may remain honest_draft instead of forcing length. Use deterministicPrecheck as a consistency check: if it shows coverage >= 0.90, targetComplianceRatio 0.85-1.10, and no claimLedger hard fail, do not assign a score below 95 unless you can name a concrete high or critical reader-facing issue."
+      "Publish readiness requires all of these: primaryEntity in finalTitle/opening/body, inputFactCoverage >= 0.90, target length 85-110% for high/medium inputs, zero unsupported claims, zero category contamination, no meta guidance, no awkward josa, and natural Korean. Missing critical facts, unsupported claims, weak opening entity placement, or target length outside range must be reflected in missingFactIds, criticalMissingFactIds, unsupportedClaims, issues, issueCodes, and revisionInstructions. Judge the reader-facing draft body first; FAQ is optional support and hashtags are metadata, so do not make hashtag count alone a blocking issue unless it introduces unsupported, contaminated, or meta language. For image inputs, score photo context by whether the body uses provided imageAnalysis or user photo notes as grounded detail; do not require a specific marker format such as [사진 삽입:]. Low-information inputs may remain honest_draft instead of forcing length. Use deterministicPrecheck as a consistency check: if it shows coverage >= 0.90, targetComplianceRatio 0.85-1.10, and no claimLedger hard fail, do not assign a score below 95 unless you can name a concrete high or critical reader-facing issue."
   },
   {
     role: "user",
@@ -1620,6 +1768,9 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
       requestedTargetCharCount: requestedTarget,
       actualCharCount: actualLength,
       targetComplianceRatio: targetRatio || null,
+      minimumAllowedChars: requestedTarget > 0 ? Math.ceil(requestedTarget * 0.85) : 0,
+      maximumAllowedChars: requestedTarget > 0 ? Math.floor(requestedTarget * 1.1) : 0,
+      preferredRevisionCeilingChars: requestedTarget > 0 ? Math.floor(requestedTarget * 1.08) : 0,
       shortageChars,
       excessChars,
       requiredAdditionalCharacterRange: shortageChars > 0 ? [shortageChars, Math.max(shortageChars, Math.floor(requestedTarget * 1.1) - actualLength)] : [0, 0],
@@ -2124,7 +2275,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
     schemaRepairUsed: Boolean(schemaRepair.schemaRepairUsed || repairedFields.size > (schemaRepair.repairedFields || []).length),
     repairedFields: [...repairedFields]
   };
-  let hashtags = normalizeList(llmDraft.hashtags, fallbackDraft.hashtags || fallbackPackage.hashtags || []);
+  let hashtags = normalizeList(llmDraft.hashtags, fallbackDraft.hashtags || fallbackPackage.hashtags || []).slice(0, 8);
   let faqItems = normalizeFaqItems(llmDraft.faqItems || llmDraft.faq, fallbackPackage.faqItems || []);
   const fallbackMainKeyword = String(fallbackDraft.mainKeyword || fallbackPackage.mainKeyword || "").trim();
   const llmMainKeyword = String(llmDraft.mainKeyword || "").trim();
@@ -2198,6 +2349,18 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   hashtags = safetyRepair.hashtags;
   if (safetyRepair.applied.length > 0) {
     postProcessingSteps = [...postProcessingSteps, ...safetyRepair.applied.map((item) => `safety-${item}`)];
+  }
+  const lengthCompression = compressOverTargetBody({
+    body,
+    finalTitle,
+    faqItems,
+    hashtags,
+    pipelineContext,
+    targetCharCount
+  });
+  body = lengthCompression.body;
+  if (lengthCompression.applied.length > 0) {
+    postProcessingSteps = [...postProcessingSteps, ...lengthCompression.applied.map((item) => `length-${item}`)];
   }
   const deterministicHumanQuality = evaluateHumanQuality({
     title: finalTitle,
@@ -2387,6 +2550,10 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
         finalCharCount: charLength(body),
         hardFailRemaining: Boolean(safetyRepair.hardFailRemaining),
         diagnostics: safetyRepair.diagnostics
+      },
+      targetLengthCompression: {
+        applied: lengthCompression.applied,
+        diagnostics: lengthCompression.diagnostics
       },
       targetLength: {
         requestedTargetCharCount,

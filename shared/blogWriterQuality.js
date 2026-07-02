@@ -132,7 +132,7 @@ export const evaluateBlogWriterQuality = ({
     mainKeyword &&
     compact(broadKeyword) !== compact(mainKeyword) &&
     countOccurrences(firstParagraph, broadKeyword) > countOccurrences(firstParagraph, mainKeyword);
-  const photoMarkerCount = (normalizedBody.match(/\[사진 삽입:/gu) || []).length;
+  const photoMarkerCount = (normalizedBody.match(/\[사진 삽입:|\(사진:/gu) || []).length;
   const uniqueHashtags = new Set(hashtags.map((tag) => compact(tag))).size;
   const menuTitleCount = primaryMenu ? titles.filter((title) => title.includes(primaryMenu)).length : 0;
   const regionTitleCount = titles.filter((title) => /[가-힣A-Za-z0-9]+(?:도|시|군|구|동|역|로|길|대교|시장)|맛집|근처/u.test(title)).length;
@@ -221,7 +221,7 @@ export const evaluateBlogWriterQuality = ({
     },
     {
       id: "photo-context",
-      passed: imageCount === 0 || (photoMarkerCount >= 1 && photoMarkerCount <= Math.min(imageCount, 3) && photoGuide.length > 0),
+      passed: imageCount === 0 || (photoMarkerCount >= 1 && photoMarkerCount <= Math.max(imageCount, 3) && photoGuide.length > 0),
       penalty: 6,
       detail: `${photoMarkerCount}/${imageCount}`
     },
@@ -235,7 +235,7 @@ export const evaluateBlogWriterQuality = ({
     },
     {
       id: "hashtags",
-      passed: hashtags.length >= 10 && hashtags.length <= 15 && uniqueHashtags === hashtags.length,
+      passed: hashtags.length >= 3 && hashtags.length <= 8 && uniqueHashtags === hashtags.length,
       penalty: 6,
       detail: `${hashtags.length}개`
     },
