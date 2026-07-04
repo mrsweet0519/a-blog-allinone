@@ -1582,19 +1582,36 @@ const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, fo
         response_format: structuredResponseFormat("blog_judge_result", BLOG_JUDGE_OUTPUT_JSON_SCHEMA)
       }
     });
+    const extraction = extractOpenAiText(payload);
+    if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
+    if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
+    if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
+    const content = extraction.text;
+    const parsed = parseLlmJsonSafely(content);
+    const score = Number(parsed.score ?? parsed.qualityScore ?? parsed.finalScore);
+    if (!Number.isFinite(score)) throw new SafeLlmError("llm-schema-invalid", { status: 200 });
     recordStageSuccess(llmStages, "judge", {
       status: payload.__openAiMeta?.status || 200,
       attempts: payload.__openAiMeta?.attempts || 1,
       latencyMs: Date.now() - startedAt,
       usage: payload.__openAiMeta?.usage
     });
-
-    const extraction = extractOpenAiText(payload);
-    if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
-    if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
-    if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
-    const content = extraction.text;
-    return parseLlmJsonSafely(content);
+    return {
+      ...parsed,
+      score,
+      publishReady: Boolean(parsed.publishReady),
+      hardFail: Boolean(parsed.hardFail),
+      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+      coveredFactIds: Array.isArray(parsed.coveredFactIds) ? parsed.coveredFactIds : [],
+      missingFactIds: Array.isArray(parsed.missingFactIds) ? parsed.missingFactIds : [],
+      criticalMissingFactIds: Array.isArray(parsed.criticalMissingFactIds) ? parsed.criticalMissingFactIds : [],
+      unsupportedClaims: Array.isArray(parsed.unsupportedClaims) ? parsed.unsupportedClaims : [],
+      categoryContamination: Array.isArray(parsed.categoryContamination) ? parsed.categoryContamination : [],
+      metaGuidance: Array.isArray(parsed.metaGuidance) ? parsed.metaGuidance : [],
+      josaErrors: Array.isArray(parsed.josaErrors) ? parsed.josaErrors : [],
+      revisionInstructions: Array.isArray(parsed.revisionInstructions) ? parsed.revisionInstructions : [],
+      issueCodes: Array.isArray(parsed.issueCodes) ? parsed.issueCodes : []
+    };
   } catch (error) {
     recordStageFailure(llmStages, "judge", error, {
       attempts: error?.attempts || 1,
@@ -1777,6 +1794,7 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
       sectionBudgetTotal: sectionLengthDiagnostics.sectionBudgetTotal,
       sectionActualTotal: sectionLengthDiagnostics.sectionActualTotal
     },
+    revisionTargetDelta: shortageChars > 0 ? shortageChars : excessChars > 0 ? -excessChars : 0,
     primaryEntityPlacementIssue: humanQuality.diagnostics?.entityCoverage || {},
     genericFillerParagraphIds: getGenericFillerParagraphIds(humanQuality, draft),
     duplicateParagraphIds,
@@ -1799,12 +1817,12 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
   {
     role: "system",
     content:
-      "당신은 네이버 블로그 원고를 개선하는 한국어 편집자입니다. 새 경험, 입력하지 않은 동행자·가족·아이, 효과, 가격, 운영 정보를 만들지 말고 Fact Map, 이미지 분석, 현재 원고, qualityIssues, revisionInstructions만 근거로 재작성하세요. 글자수 늘리기, 키워드 횟수 맞추기, FAQ 강제 추가, 같은 문단 반복, 일반론 확대는 금지입니다. JSON만 반환하세요."
+      "당신은 네이버 블로그 원고를 개선하는 한국어 편집자입니다. 새 경험, 입력하지 않은 동행자·가족·아이, 효과, 가격, 운영 정보를 만들지 말고 Fact Map, 이미지 분석, 현재 원고, qualityIssues, revisionInstructions만 근거로 재작성하세요. 근거 없는 글자수 늘리기, 키워드 횟수 맞추기, FAQ 강제 추가, 같은 문단 반복, 일반론 확대는 금지입니다. JSON만 반환하세요."
   },
   {
     role: "system",
     content:
-      "Revision policy: if score is 90-94, repair the failing sections only; if score is below 90 or hardFail is true, rebuild the section plan and rewrite the whole draft. Use sectionLengthDiagnostics to add or remove grounded text in the sections with shortageChars or excessChars. Always fix missingFactIds, unsupportedClaims, primaryEntity placement, target length shortage/excess, generic filler, duplicated paragraphs, and category contamination. Do not invent new experiences. Return only titleCandidates, finalTitle, sections, faq, and hashtags."
+      "Revision policy: if score is 90-94, repair the failing sections only; if score is below 90 or hardFail is true, rebuild the section plan and rewrite the whole draft. When targetLengthDelta.shortageChars is positive, add the exact missing amount as grounded detail from missingFactIds, missingFactValues, and sectionLengthDiagnostics shortage sections; do not pad with general advice. Use section budgets to decide which section receives each missing fact. Always fix missingFactIds, unsupportedClaims, primaryEntity placement, target length shortage/excess, generic filler, duplicated paragraphs, and category contamination. Do not invent new experiences. Return only titleCandidates, finalTitle, sections, faq, and hashtags."
   },
   {
     role: "user",
@@ -1999,6 +2017,29 @@ const normalizeRevisionStrategy = (mode = "") => {
   return "none";
 };
 
+const getAttemptComparable = (attempt = {}) => ({
+  score: Number(attempt.score) || 0,
+  hardFail: Boolean(attempt.hardFail),
+  judgeEngine: attempt.judgeEngine || "",
+  targetComplianceRatio: Number(attempt.targetComplianceRatio ?? attempt.diagnostics?.targetComplianceRatio ?? 0) || 0,
+  inputFactCoverage: Number(attempt.inputFactCoverage ?? attempt.diagnostics?.inputFactCoverage?.inputFactCoverage ?? 0) || 0,
+  publishReady: Boolean(attempt.publishReady)
+});
+
+const isBetterAttemptSummary = (candidate = {}, current = {}) => {
+  const next = getAttemptComparable(candidate);
+  const prev = getAttemptComparable(current);
+  if (next.hardFail !== prev.hardFail) return !next.hardFail;
+  if (next.score !== prev.score) return next.score > prev.score;
+  if (next.targetComplianceRatio !== prev.targetComplianceRatio) {
+    return next.targetComplianceRatio > prev.targetComplianceRatio;
+  }
+  if (next.inputFactCoverage !== prev.inputFactCoverage) return next.inputFactCoverage > prev.inputFactCoverage;
+  if (next.judgeEngine !== prev.judgeEngine) return next.judgeEngine === "llm";
+  if (next.publishReady !== prev.publishReady) return next.publishReady;
+  return false;
+};
+
 const buildQualityDiagnostics = ({
   attempts = [],
   revisionCallCount = 0,
@@ -2040,9 +2081,19 @@ const buildQualityDiagnostics = ({
             : revisionGain >= 0
               ? "score-gain-below-3"
               : "selected-score-degraded";
+  const bestAttempt = attempts.reduce(
+    (best, attempt) => (!best || isBetterAttemptSummary(attempt, best) ? attempt : best),
+    null
+  );
+  const selectedAttemptLabel = Number(bestAttempt?.attempt ?? selectedAttempt) || 1;
+  const selectedAttemptIndex = Math.max(
+    0,
+    attempts.findIndex((attempt) => Number(attempt.attempt) === selectedAttemptLabel)
+  );
+  const selectedAttemptScore = scores[selectedAttemptIndex] ?? 0;
   const selectedAttempts = attempts.map((attempt) => ({
     ...attempt,
-    selected: Number(attempt.attempt) === Number(selectedAttempt)
+    selected: Number(attempt.attempt) === selectedAttemptLabel
   }));
   return {
     initialQualityScore: initialScore,
@@ -2056,30 +2107,16 @@ const buildQualityDiagnostics = ({
     revisionEffectiveness,
     revisionGain,
     revisionReason,
-    selectedAttempt,
+    selectedAttempt: selectedAttemptLabel,
+    selectedAttemptLabel,
+    selectedAttemptIndex,
+    selectedAttemptScore,
     finalQualityScore: Number(finalQualityScore) || 0
   };
 };
 
 const isBetterQualityAttempt = (candidate = {}, current = {}) => {
-  if (Boolean(candidate.hardFail) !== Boolean(current.hardFail)) return !Boolean(candidate.hardFail);
-  const candidateHasLlmJudge = candidate.judgeEngine === "llm";
-  const currentHasLlmJudge = current.judgeEngine === "llm";
-  if (candidateHasLlmJudge !== currentHasLlmJudge) {
-    if (candidateHasLlmJudge) return true;
-    if (currentHasLlmJudge) return false;
-  }
-  const candidateScore = Number(candidate.score) || 0;
-  const currentScore = Number(current.score) || 0;
-  if (candidateScore !== currentScore) return candidateScore > currentScore;
-  const candidateTargetDistance = Math.abs((Number(candidate.diagnostics?.targetComplianceRatio) || 0) - 1);
-  const currentTargetDistance = Math.abs((Number(current.diagnostics?.targetComplianceRatio) || 0) - 1);
-  if (candidateTargetDistance !== currentTargetDistance) return candidateTargetDistance < currentTargetDistance;
-  const candidateCoverage = Number(candidate.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
-  const currentCoverage = Number(current.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
-  if (candidateCoverage !== currentCoverage) return candidateCoverage > currentCoverage;
-  if (Boolean(candidate.publishReady) !== Boolean(current.publishReady)) return Boolean(candidate.publishReady);
-  return false;
+  return isBetterAttemptSummary(candidate, current);
 };
 
 export { isBetterQualityAttempt };
@@ -2096,12 +2133,18 @@ const classifyRevisionAttempt = ({ previousQuality = {}, currentQuality = {}, fa
 
 const summarizeQualityAttempt = ({ attempt = 1, quality = {}, strategy = "none" } = {}) => {
   const coverage = quality.diagnostics?.inputFactCoverage || {};
+  const deterministicCapApplied = (quality.caps || []).some((cap) => cap?.code === "DETERMINISTIC_ONLY_MAX_89");
   return {
     attempt,
     strategy,
     score: Number(quality.score) || 0,
     publishReady: Boolean(quality.publishReady),
     hardFail: Boolean(quality.hardFail),
+    judgeEngine: quality.judgeEngine || "",
+    deterministicCapApplied,
+    deterministicCapReason: deterministicCapApplied
+      ? quality.diagnostics?.deterministicCapReason || "judge-engine-deterministic"
+      : null,
     targetComplianceRatio: Number(quality.diagnostics?.targetComplianceRatio || 0),
     inputFactCoverage: Number(coverage.inputFactCoverage || 0),
     unsupportedClaimCount: (quality.diagnostics?.unsupportedClaims || []).length,

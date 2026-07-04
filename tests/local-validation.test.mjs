@@ -42,6 +42,7 @@ import { BLOG_WRITER_OUTPUT_JSON_SCHEMA } from "../shared/blogWriterPrompt.js";
 import {
   buildDiagnosticPayload,
   DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
+  evaluateConnectionResult,
   evaluateOverallResult,
   evaluateQualityResult,
   formatDiagnosticAbortError,
@@ -688,6 +689,15 @@ assert.equal(
   revisionDraft.qualityDiagnostics.attemptScores[revisionDraft.qualityDiagnostics.selectedAttempt - 1],
   Math.max(...revisionDraft.qualityDiagnostics.attemptScores)
 );
+assert.equal(revisionDraft.qualityDiagnostics.selectedAttemptLabel, revisionDraft.qualityDiagnostics.selectedAttempt);
+assert.equal(revisionDraft.qualityDiagnostics.selectedAttemptIndex, revisionDraft.qualityDiagnostics.selectedAttemptLabel - 1);
+assert.equal(
+  revisionDraft.qualityDiagnostics.selectedAttemptScore,
+  revisionDraft.qualityDiagnostics.attemptScores[revisionDraft.qualityDiagnostics.selectedAttemptIndex]
+);
+assert.equal(revisionDraft.judgeEngine, "llm");
+assert.equal(revisionDraft.llmStages.judge.success, true);
+assert.ok(!revisionDraft.humanQuality.caps.some((cap) => cap.code === "DETERMINISTIC_ONLY_MAX_89"));
 
 let noRevisionNeededFetchCount = 0;
 const noRevisionNeededDraft = await callApiWithFetch({
@@ -809,6 +819,8 @@ const noImprovementDraft = await callApiWithFetch({
 assert.equal(noImprovementFetchCount, 6);
 assert.equal(noImprovementDraft.qualityDiagnostics.revisionCallCount, 2);
 assert.equal(noImprovementDraft.qualityDiagnostics.selectedAttempt, 1);
+assert.equal(noImprovementDraft.qualityDiagnostics.selectedAttemptIndex, 0);
+assert.equal(noImprovementDraft.qualityDiagnostics.selectedAttemptScore, noImprovementDraft.qualityDiagnostics.attemptScores[0]);
 assert.equal(noImprovementDraft.qualityDiagnostics.revisionEffectiveness, "NO_IMPROVEMENT");
 assert.ok(noImprovementDraft.qualityDiagnostics.revisionDecisions.some((decision) => decision.reason === "no_improvement_rebuild"));
 
@@ -836,6 +848,7 @@ assert.equal(judgeTimeoutDraft.judgeEngine, "deterministic");
 assert.equal(judgeTimeoutDraft.llmStages.writer.success, true);
 assert.equal(judgeTimeoutDraft.llmStages.judge.success, false);
 assert.equal(judgeTimeoutDraft.llmStages.judge.reason, "timeout");
+assert.ok(judgeTimeoutDraft.humanQuality.caps.some((cap) => cap.code === "DETERMINISTIC_ONLY_MAX_89"));
 
 let judgeRateLimitRevisionFetchCount = 0;
 const judgeRateLimitRevisionDraft = await callApiWithFetch({
@@ -1476,19 +1489,63 @@ try {
   globalThis.fetch = originalDiagnosticFetch;
 }
 
-const diagnosticPass = summarizeDiagnosticResponse({
-  url: "https://preview.example/api/generate-blog",
-  status: 200,
-  json: {
+const makePreviewConnectionJson = (overrides = {}) => {
+  const {
+    llm: overrideLlm = {},
+    llmStages: overrideLlmStages = {},
+    contentPackage = {},
+    ...rest
+  } = overrides;
+  const diagnostics = contentPackage.diagnostics || {};
+  return {
     engine: "llm",
     judgeEngine: "llm",
     isMock: false,
     vision: { mode: "none", imageCount: 0, visibleElementsCount: 0 },
-    llm: { used: true, keyPresent: true, model: "unit-model", reason: null },
+    ...rest,
+    llm: {
+      enabled: true,
+      judgeEnabled: true,
+      revisionEnabled: true,
+      visionEnabled: false,
+      used: true,
+      keyPresent: true,
+      model: "unit-model",
+      reason: null,
+      ...overrideLlm
+    },
+    llmStages: {
+      writer: { success: true, reason: null, attempts: 1, status: 200, ...(overrideLlmStages.writer || {}) },
+      judge: { success: true, reason: null, attempts: 1, status: 200, ...(overrideLlmStages.judge || {}) },
+      revisions: overrideLlmStages.revisions || []
+    },
+    contentPackage: {
+      ...contentPackage,
+      diagnostics: {
+        ...diagnostics,
+        responseExtraction: {
+          apiEndpoint: "chat-completions",
+          responseShape: "chat-choices",
+          textExtracted: true,
+          extractedTextLength: 120,
+          extractedTextHash: "unit-hash",
+          writerAttempts: 1,
+          schemaFailureCount: 0,
+          ...(diagnostics.responseExtraction || {})
+        }
+      }
+    }
+  };
+};
+
+const diagnosticPass = summarizeDiagnosticResponse({
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  json: makePreviewConnectionJson({
     qualityScore: 96,
     publishReady: true,
     qualityAttempts: 1
-  }
+  })
 });
 assert.equal(diagnosticPass.pass, true);
 assert.equal(diagnosticPass.connectionResult, "PASS");
@@ -1496,16 +1553,15 @@ assert.equal(diagnosticPass.qualityResult, "NOT_TESTED");
 assert.equal(diagnosticPass.overallResult, "PARTIAL");
 assert.ok(formatDiagnosticSummary(diagnosticPass).includes("connectionResult: PASS"));
 assert.ok(formatDiagnosticSummary(diagnosticPass).includes("qualityResult: NOT_TESTED"));
+assert.ok(formatDiagnosticSummary(diagnosticPass).includes("--- Connection ---"));
+assert.ok(formatDiagnosticSummary(diagnosticPass).includes("--- Quality Reference (not tested) ---"));
 assert.ok(!formatDiagnosticSummary(diagnosticPass).includes("result: PASS"));
 
 const diagnosticQuality55 = summarizeDiagnosticResponse({
   url: "https://preview.example/api/generate-blog",
   status: 200,
-  json: {
-    engine: "llm",
-    judgeEngine: "llm",
-    isMock: false,
-    llm: { used: true, keyPresent: true, model: "unit-model", reason: "llm-quality-rejected" },
+  json: makePreviewConnectionJson({
+    llm: { reason: "llm-quality-rejected" },
     resultMode: "honest_draft",
     qualityScore: 55,
     publishReady: false,
@@ -1515,16 +1571,29 @@ const diagnosticQuality55 = summarizeDiagnosticResponse({
       llmJudgeScore: 55,
       hardFail: true,
       issues: [{ code: "UNSUPPORTED_CLAIM", severity: "critical", message: "unsupported" }],
-      caps: [{ code: "UNSUPPORTED_CLAIM", score: 55 }],
+      caps: [
+        { code: "TARGET_LENGTH_UNDER_85", score: 89 },
+        { code: "UNSUPPORTED_CLAIM", score: 55 }
+      ],
       diagnostics: {
         entityCoverage: { finalTitle: true, openingSentence: true, body: true },
         inputFactCoverage: { inputFactCoverage: 0.4 },
+        targetComplianceRatio: 0.72,
+        unsupportedClaims: ["unit unsupported claim"],
+        issueCodes: ["TARGET_LENGTH_UNDER_85", "CLAIMLEDGER.UNSUPPORTED"],
         genericFillerRatio: 0.1,
         categoryContamination: []
       }
     },
     contentPackage: {
       informationSufficiency: { level: "low" },
+      targetLengthContract: {
+        requestedTargetCharCount: 2200,
+        effectiveTargetCharCount: 2200,
+        finalCharCount: 1584,
+        targetComplianceRatio: 0.72,
+        targetLengthFailureReason: "writer-under-generated"
+      },
       diagnostics: { rawFinalDiff: { changedCharacterRatio: 0.2 } },
       qualityDiagnostics: {
         initialQualityScore: 55,
@@ -1535,15 +1604,63 @@ const diagnosticQuality55 = summarizeDiagnosticResponse({
         selectedAttempt: 1,
         finalQualityScore: 55
       }
+    },
+    claimLedgerSummary: {
+      hardFail: true,
+      counts: { unsupported: 1 },
+      hardFailures: [{ claimType: "unsupported", text: "hidden claim text" }]
     }
-  }
+  })
 });
 assert.equal(diagnosticQuality55.connectionResult, "PASS");
 assert.equal(diagnosticQuality55.qualityResult, "NOT_TESTED");
+assert.equal(diagnosticQuality55.overallResult, "PARTIAL");
+assert.equal(diagnosticQuality55.targetLengthFailureReason, "writer-under-generated");
+assert.equal(diagnosticQuality55.revisionTargetDelta, 286);
+assert.deepEqual(diagnosticQuality55.unsupportedClaimTypes, ["unsupported", "human-quality-unsupported"]);
+assert.equal(diagnosticQuality55.claimLedgerHardFail, true);
+assert.ok(!JSON.stringify(diagnosticQuality55).includes("hidden claim text"));
 assert.equal(evaluateQualityResult(diagnosticQuality55, { tested: true }), "FAIL");
 assert.equal(evaluateOverallResult({ connectionResult: "PASS", qualityResult: "FAIL" }), "PARTIAL");
 assert.equal(evaluateOverallResult({ connectionResult: "PASS", qualityResult: "PASS" }), "PASS");
 assert.equal(evaluateOverallResult({ connectionResult: "FAIL", qualityResult: "PASS" }), "FAIL");
+assert.equal(evaluateConnectionResult({ ...diagnosticQuality55, textExtracted: false }), "FAIL");
+
+const diagnosticDeterministicCap = summarizeDiagnosticResponse({
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  json: makePreviewConnectionJson({
+    judgeEngine: "deterministic",
+    llmStages: {
+      judge: { success: false, reason: "timeout", attempts: 1, status: null }
+    },
+    humanQuality: {
+      score: 89,
+      hardFail: false,
+      caps: [{ code: "DETERMINISTIC_ONLY_MAX_89", score: 89 }],
+      diagnostics: { deterministicCapApplied: true, deterministicCapReason: "llm-judge-score-missing" }
+    }
+  })
+});
+assert.equal(diagnosticDeterministicCap.connectionResult, "FAIL");
+assert.equal(diagnosticDeterministicCap.deterministicCapApplied, true);
+assert.equal(diagnosticDeterministicCap.deterministicCapReason, "llm-judge-score-missing");
+
+const diagnosticAttemptSelection = summarizeDiagnosticResponse({
+  url: "https://preview.example/api/generate-blog",
+  status: 200,
+  json: makePreviewConnectionJson({
+    contentPackage: {
+      qualityDiagnostics: {
+        attemptScores: [89, 55],
+        selectedAttempt: 1
+      }
+    }
+  })
+});
+assert.equal(diagnosticAttemptSelection.qualityDiagnostics.selectedAttemptLabel, 1);
+assert.equal(diagnosticAttemptSelection.qualityDiagnostics.selectedAttemptIndex, 0);
+assert.equal(diagnosticAttemptSelection.qualityDiagnostics.selectedAttemptScore, 89);
 
 const diagnosticFallback = summarizeDiagnosticResponse({
   url: "https://preview.example/api/generate-blog",
@@ -2002,6 +2119,27 @@ assert.equal(
   ),
   false
 );
+assert.equal(
+  isBetterQualityAttempt(
+    { score: 90, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 0.8 }, targetComplianceRatio: 0.95 }, judgeEngine: "deterministic" },
+    { score: 89, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 1 }, targetComplianceRatio: 1 }, judgeEngine: "llm" }
+  ),
+  true
+);
+assert.equal(
+  isBetterQualityAttempt(
+    { score: 89, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 0.9 }, targetComplianceRatio: 0.95 }, judgeEngine: "llm" },
+    { score: 55, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 1 }, targetComplianceRatio: 1 }, judgeEngine: "llm" }
+  ),
+  true
+);
+assert.equal(
+  isBetterQualityAttempt(
+    { score: 90, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 0.8 }, targetComplianceRatio: 0.96 }, judgeEngine: "llm" },
+    { score: 90, hardFail: false, publishReady: false, diagnostics: { inputFactCoverage: { inputFactCoverage: 1 }, targetComplianceRatio: 0.95 }, judgeEngine: "llm" }
+  ),
+  true
+);
 const revisionSignature = getRevisionSignature({
   humanQuality: {
     score: 91,
@@ -2027,11 +2165,7 @@ const qualityCanaryPass = summarizeQualityCanaryResponse({
   url: "https://preview.example/api/generate-blog",
   status: 200,
   requestedTargetCharCount: 2200,
-  json: {
-    engine: "llm",
-    judgeEngine: "llm",
-    isMock: false,
-    llm: { used: true, keyPresent: true, model: "unit-model", reason: null },
+  json: makePreviewConnectionJson({
     finalTitle: "루미핏 unitquality 데일리 재킷 경량 재킷 후기",
     body: "루미핏 unitquality 데일리 재킷 경량 재킷 후기를 실제 착용 기준으로 정리했다.",
     qualityScore: 96,
@@ -2073,7 +2207,7 @@ const qualityCanaryPass = summarizeQualityCanaryResponse({
       diagnostics: { rawFinalDiff: { changedCharacterRatio: 0.1 } }
     },
     claimLedgerSummary: { hardFail: false, counts: {}, hardFailures: [] }
-  }
+  })
 });
 assert.equal(qualityCanaryPass.connectionResult, "PASS");
 assert.equal(qualityCanaryPass.qualityResult, "PASS");
@@ -2088,11 +2222,7 @@ const qualityCanaryFail = summarizeQualityCanaryResponse({
   url: "https://preview.example/api/generate-blog",
   status: 200,
   requestedTargetCharCount: 2200,
-  json: {
-    engine: "llm",
-    judgeEngine: "llm",
-    isMock: false,
-    llm: { used: true, keyPresent: true, model: "unit-model", reason: null },
+  json: makePreviewConnectionJson({
     qualityScore: 55,
     publishReady: false,
     humanQuality: {
@@ -2109,8 +2239,9 @@ const qualityCanaryFail = summarizeQualityCanaryResponse({
       resultMode: "honest_draft",
       informationSufficiency: { level: "low" }
     }
-  }
+  })
 });
+assert.equal(qualityCanaryFail.connectionResult, "PASS");
 assert.equal(qualityCanaryFail.qualityResult, "FAIL");
 
 const sectionsOnlyResult = normalizeBlogWriterResult({

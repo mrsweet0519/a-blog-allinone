@@ -646,11 +646,12 @@ export const evaluateHumanQuality = ({
         ...(hasImageInput ? {} : { imageGrounding: HUMAN_QUALITY_WEIGHTS.imageGrounding })
       }
     : null;
+  const llmJudgeScore = Number(llmJudge?.score);
   const isMock = Boolean(llmJudge?.isMock || llmJudge?.mock || llmJudge?.model === "mock-model" || llmJudge?.model === "unit-model");
-  const hasLlmJudge = Boolean(llmJudge && Number.isFinite(Number(llmJudge.score)));
+  const hasLlmJudge = Boolean(llmJudge && Number.isFinite(llmJudgeScore));
   const breakdown = mergeScores(deterministicBreakdown, llmScores);
   let score = hasLlmJudge
-    ? Math.round(sumBreakdown(deterministicBreakdown) * 0.4 + Number(llmJudge.score) * 0.6)
+    ? Math.round(sumBreakdown(deterministicBreakdown) * 0.4 + llmJudgeScore * 0.6)
     : sumBreakdown(breakdown);
   const rawQualityScore = clamp(score);
 
@@ -723,10 +724,12 @@ export const evaluateHumanQuality = ({
     breakdown,
     rawQualityScore,
     deterministicScore: clamp(sumBreakdown(deterministicBreakdown)),
-    llmJudgeScore: hasLlmJudge ? clamp(llmJudge.score) : null,
+    llmJudgeScore: hasLlmJudge ? clamp(llmJudgeScore) : null,
     issues: [...issues, ...llmIssues],
     revisionInstructions,
     caps,
+    deterministicCapApplied: !hasLlmJudge,
+    deterministicCapReason: hasLlmJudge ? null : "llm-judge-score-missing",
     diagnostics: {
       genericFillerRatio: Number(genericRatio.toFixed(2)),
       genericParagraphs: genericCount,
@@ -749,6 +752,8 @@ export const evaluateHumanQuality = ({
       ],
       metaGuidance: llmMetaGuidance,
       josaErrors: llmJosaErrors,
+      deterministicCapApplied: !hasLlmJudge,
+      deterministicCapReason: hasLlmJudge ? null : "llm-judge-score-missing",
       issueCodes: unique([
         ...issues.map((issue) => issue.code),
         ...llmIssues.map((issue) => issue.code),
@@ -806,16 +811,29 @@ export const createHumanQualityFactMap = (form = {}, imageAnalysis = null) => {
 };
 
 export const selectBestHumanQualityAttempt = (attempts = []) => {
+  const better = (candidate = {}, current = {}) => {
+    if (Boolean(candidate.humanQuality?.hardFail) !== Boolean(current.humanQuality?.hardFail)) {
+      return !Boolean(candidate.humanQuality?.hardFail);
+    }
+    const candidateScore = Number(candidate.humanQuality?.score) || 0;
+    const currentScore = Number(current.humanQuality?.score) || 0;
+    if (candidateScore !== currentScore) return candidateScore > currentScore;
+    const candidateTargetRatio = Number(candidate.humanQuality?.diagnostics?.targetComplianceRatio) || 0;
+    const currentTargetRatio = Number(current.humanQuality?.diagnostics?.targetComplianceRatio) || 0;
+    if (candidateTargetRatio !== currentTargetRatio) return candidateTargetRatio > currentTargetRatio;
+    const candidateCoverage = Number(candidate.humanQuality?.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
+    const currentCoverage = Number(current.humanQuality?.diagnostics?.inputFactCoverage?.inputFactCoverage) || 0;
+    if (candidateCoverage !== currentCoverage) return candidateCoverage > currentCoverage;
+    if (candidate.humanQuality?.judgeEngine !== current.humanQuality?.judgeEngine) {
+      return candidate.humanQuality?.judgeEngine === "llm";
+    }
+    return Number(candidate.attempt || 0) < Number(current.attempt || 0);
+  };
   const normalized = attempts
     .map((attempt, index) => ({
       ...attempt,
       attempt: attempt.attempt ?? index + 1,
       humanQuality: attempt.humanQuality || evaluateHumanQuality(attempt)
-    }))
-    .sort((left, right) => {
-      const scoreDiff = (right.humanQuality?.score || 0) - (left.humanQuality?.score || 0);
-      if (scoreDiff !== 0) return scoreDiff;
-      return (left.attempt || 0) - (right.attempt || 0);
-    });
-  return normalized[0] || null;
+    }));
+  return normalized.reduce((best, attempt) => (!best || better(attempt, best) ? attempt : best), null);
 };

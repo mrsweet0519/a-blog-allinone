@@ -326,15 +326,95 @@ const countHighSeverityIssues = (humanQuality = {}) =>
 
 const hasIssueCode = (codes = [], pattern = /$^/u) => codes.some((code) => pattern.test(code));
 
+const isStageSuccess = (stage = {}) =>
+  stage?.success === true &&
+  (!text(stage.reason) || text(stage.reason).toLowerCase() === "none");
+
+const isExpectedResponseExtraction = ({ apiEndpoint = "", responseShape = "", textExtracted = null } = {}) => {
+  const endpoint = text(apiEndpoint).toLowerCase();
+  const shape = text(responseShape).toLowerCase();
+  const endpointShapeOk =
+    (endpoint === "chat-completions" && shape === "chat-choices") ||
+    (endpoint === "responses" && shape === "responses-output");
+  return endpointShapeOk && textExtracted === true;
+};
+
+const normalizeQualityDiagnostics = (diagnostics = {}) => {
+  const attemptScores = Array.isArray(diagnostics.attemptScores)
+    ? diagnostics.attemptScores.map((score) => Number(score) || 0)
+    : [];
+  const selectedAttemptLabel = numericOrNull(diagnostics.selectedAttemptLabel ?? diagnostics.selectedAttempt);
+  const rawSelectedIndex = numericOrNull(diagnostics.selectedAttemptIndex);
+  const selectedAttemptIndex =
+    rawSelectedIndex !== null
+      ? rawSelectedIndex
+      : selectedAttemptLabel !== null
+        ? Math.max(0, selectedAttemptLabel - 1)
+        : null;
+  const selectedAttemptScore =
+    numericOrNull(diagnostics.selectedAttemptScore) ??
+    (selectedAttemptIndex !== null ? attemptScores[selectedAttemptIndex] ?? null : null);
+  return {
+    ...diagnostics,
+    attemptScores,
+    selectedAttemptLabel,
+    selectedAttemptIndex,
+    selectedAttemptScore
+  };
+};
+
+const getDeterministicCapDiagnostics = ({ humanQuality = {}, appliedCaps = [], judgeEngine = "", judgeStage = {} } = {}) => {
+  const deterministicCapApplied =
+    humanQuality.deterministicCapApplied === true ||
+    humanQuality.diagnostics?.deterministicCapApplied === true ||
+    appliedCaps.includes("DETERMINISTIC_ONLY_MAX_89");
+  const deterministicCapReason =
+    deterministicCapApplied
+      ? humanQuality.deterministicCapReason ||
+        humanQuality.diagnostics?.deterministicCapReason ||
+        (judgeEngine === "deterministic"
+          ? "judge-engine-deterministic"
+          : judgeStage?.success === false
+            ? `judge-stage-${judgeStage.reason || "failed"}`
+            : "unexpected-llm-judge-cap")
+      : null;
+  return { deterministicCapApplied, deterministicCapReason };
+};
+
+const getUnsupportedClaimDiagnostics = ({ humanDiagnostics = {}, claimLedgerSummary = {}, issueCodes = [] } = {}) => {
+  const hardFailures = Array.isArray(claimLedgerSummary.hardFailures) ? claimLedgerSummary.hardFailures : [];
+  const claimTypes = uniqueTexts([
+    ...hardFailures
+      .map((item) => text(item?.claimType))
+      .filter((claimType) => ["unsupported", "contradictory"].includes(claimType)),
+    ...(Number(humanDiagnostics.unsupportedClaims?.length || 0) > 0 ? ["human-quality-unsupported"] : [])
+  ]);
+  const reasonCodes = uniqueTexts([
+    ...claimTypes.map((claimType) => `claim-ledger-${claimType}`),
+    ...issueCodes.filter((code) => /UNSUPPORTED|CONTRADICTORY/u.test(code))
+  ]);
+  return {
+    unsupportedClaimTypes: claimTypes,
+    unsupportedClaimReasonCodes: reasonCodes,
+    claimLedgerHardFail: Boolean(claimLedgerSummary.hardFail)
+  };
+};
+
 export const evaluateConnectionResult = (summary = {}) => {
   const reason = text(summary.llmReason).toLowerCase();
   const reasonOk = !reason || reason === "none" || reason === "llm-quality-rejected";
+  const writerStageOk = isStageSuccess(summary.llmStages?.writer);
+  const judgeStageOk = isStageSuccess(summary.llmStages?.judge);
+  const responseExtractionOk = isExpectedResponseExtraction(summary);
   return summary.status === 200 &&
     summary.engine === "llm" &&
     summary.judgeEngine === "llm" &&
-    summary.isMock === false &&
     summary.keyPresent === true &&
+    summary.llmEnabled === true &&
     summary.llmUsed === true &&
+    writerStageOk &&
+    judgeStageOk &&
+    responseExtractionOk &&
     reasonOk
     ? "PASS"
     : "FAIL";
@@ -412,7 +492,7 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
     Number(claimCounts.placeholder || 0) +
     (claimLedgerSummary.hardFailures || []).filter((item) => ["metaGuidance", "placeholder"].includes(item?.claimType)).length;
   const rawFinalDiff = json.diagnostics?.rawFinalDiff || packageData.diagnostics?.rawFinalDiff || {};
-  const qualityDiagnostics = json.qualityDiagnostics || packageData.qualityDiagnostics || {};
+  const qualityDiagnostics = normalizeQualityDiagnostics(json.qualityDiagnostics || packageData.qualityDiagnostics || {});
   const llmStages = json.llmStages || packageData.llmStages || {};
   const targetLengthContract = packageData.targetLengthContract || {};
   const targetLengthDiagnostics = packageData.diagnostics?.targetLength || {};
@@ -434,6 +514,30 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
   const qualityScore = json.qualityScore ?? packageData.qualityScore ?? packageData.summary?.qualityScore ?? null;
   const qualityAttempts = json.qualityAttempts ?? packageData.qualityAttempts ?? 0;
   const visionMode = vision.mode || trace.visionMode || imageAnalysis.mode || "none";
+  const requestedTargetCharCount =
+    numericOrNull(packageData.requestedTargetCharCount ?? packageData.targetLengthContract?.requestedTargetCharCount ?? packageData.summary?.requestedTargetCharCount);
+  const effectiveTargetCharCount =
+    numericOrNull(packageData.effectiveTargetCharCount ?? targetLengthContract.effectiveTargetCharCount ?? targetLengthDiagnostics.effectiveTargetCharCount);
+  const finalCharCount = numericOrNull(targetLengthContract.finalCharCount ?? targetLengthContract.actualCharCount);
+  const revisionTargetDelta =
+    requestedTargetCharCount && finalCharCount !== null
+      ? Math.max(0, Math.ceil(requestedTargetCharCount * 0.85) - finalCharCount)
+      : 0;
+  const appliedCaps = uniqueTexts([
+    ...(Array.isArray(humanQuality.caps) ? humanQuality.caps.map((cap) => cap?.code).filter(Boolean) : []),
+    claimLedgerSummary.hardFail ? "CLAIM_LEDGER_HARD_FAIL" : ""
+  ]);
+  const unsupportedClaimDiagnostics = getUnsupportedClaimDiagnostics({
+    humanDiagnostics,
+    claimLedgerSummary,
+    issueCodes
+  });
+  const deterministicCapDiagnostics = getDeterministicCapDiagnostics({
+    humanQuality,
+    appliedCaps,
+    judgeEngine: json.judgeEngine || packageData.judgeEngine || trace.judgeEngine || "unknown",
+    judgeStage: llmStages.judge || {}
+  });
   const summary = {
     url,
     status,
@@ -452,15 +556,14 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
     llmStatus: llm.status === 0 ? null : llm.status ?? null,
     informationSufficiency: packageData.informationSufficiency?.level || packageData.summary?.informationSufficiency || null,
     resultMode: json.resultMode || packageData.resultMode || packageData.summary?.resultMode || null,
-    requestedTargetCharCount:
-      numericOrNull(packageData.requestedTargetCharCount ?? packageData.targetLengthContract?.requestedTargetCharCount ?? packageData.summary?.requestedTargetCharCount),
-    effectiveTargetCharCount:
-      numericOrNull(packageData.effectiveTargetCharCount ?? targetLengthContract.effectiveTargetCharCount ?? targetLengthDiagnostics.effectiveTargetCharCount),
+    requestedTargetCharCount,
+    effectiveTargetCharCount,
     actualCharCount:
       numericOrNull(json.actualBodyCharCount ?? packageData.actualBodyCharCount ?? packageData.actualCharCount ?? packageData.summary?.actualBodyCharCount),
     rawWriterCharCount: numericOrNull(targetLengthContract.rawWriterCharCount),
-    finalCharCount: numericOrNull(targetLengthContract.finalCharCount ?? targetLengthContract.actualCharCount),
+    finalCharCount,
     targetComplianceRatio: numericOrNull(targetLengthContract.targetComplianceRatio),
+    revisionTargetDelta,
     sectionBudgetTotal: numericOrNull(targetLengthContract.sectionBudgetTotal ?? targetLengthDiagnostics.sectionBudgetTotal),
     sectionActualTotal: numericOrNull(targetLengthContract.sectionActualTotal ?? targetLengthDiagnostics.sectionActualTotal),
     targetLengthFailureReason: targetLengthContract.targetLengthFailureReason || targetLengthDiagnostics.targetLengthFailureReason || "",
@@ -486,14 +589,13 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
     changedCharacterRatio: numericOrNull(rawFinalDiff.changedCharacterRatio),
     rawWriterScore: numericOrNull(json.rawQualityScore ?? packageData.rawQualityScore ?? packageData.summary?.rawQualityScore),
     finalJudgeScore: numericOrNull(humanQuality.llmJudgeScore ?? humanQuality.score ?? qualityScore),
-    appliedCaps: uniqueTexts([
-      ...(Array.isArray(humanQuality.caps) ? humanQuality.caps.map((cap) => cap?.code).filter(Boolean) : []),
-      claimLedgerSummary.hardFail ? "CLAIM_LEDGER_HARD_FAIL" : ""
-    ]),
+    appliedCaps,
+    ...deterministicCapDiagnostics,
     hardFail: Boolean(humanQuality.hardFail || claimLedgerSummary.hardFail),
     highSeverityIssueCount: countHighSeverityIssues(humanQuality),
     categoryContaminationCount,
     unsupportedClaimCount,
+    ...unsupportedClaimDiagnostics,
     metaGuidanceCount,
     primaryEntityCoverage,
     issueCodes,
@@ -521,20 +623,26 @@ export const summarizeDiagnosticResponse = ({ url = "", status = 0, json = {}, i
 export const formatDiagnosticSummary = (summary = {}) => [
   "=== Blog Writer Preview Diagnostics ===",
   `URL: ${summary.url}`,
+  "",
+  "--- Connection ---",
   `HTTP status: ${summary.status}`,
   `engine: ${summary.engine}`,
   `judgeEngine: ${summary.judgeEngine}`,
-  `isMock: ${summary.isMock}`,
-  `visionMode: ${summary.visionMode}`,
   `llm.enabled: ${summary.llmEnabled === null ? "unknown" : summary.llmEnabled}`,
   `llm.judgeEnabled: ${summary.judgeEnabled === null ? "unknown" : summary.judgeEnabled}`,
-  `llm.revisionEnabled: ${summary.revisionEnabled === null ? "unknown" : summary.revisionEnabled}`,
-  `llm.visionEnabled: ${summary.visionEnabled === null ? "unknown" : summary.visionEnabled}`,
   `keyPresent: ${summary.keyPresent === null ? "unknown" : summary.keyPresent}`,
   `model: ${summary.model || "unknown"}`,
+  `apiEndpoint: ${summary.apiEndpoint || "unknown"}`,
+  `responseShape: ${summary.responseShape || "unknown"}`,
+  `textExtracted: ${summary.textExtracted === null ? "unknown" : summary.textExtracted}`,
   `llm.used: ${summary.llmUsed}`,
   `llm.reason: ${summary.llmReason || "none"}`,
   `llm.status: ${summary.llmStatus ?? "none"}`,
+  `writerStage: ${summary.llmStages?.writer?.success ?? "unknown"} reason=${summary.llmStages?.writer?.reason || "none"} attempts=${summary.llmStages?.writer?.attempts ?? "unknown"}`,
+  `judgeStage: ${summary.llmStages?.judge?.success ?? "unknown"} reason=${summary.llmStages?.judge?.reason || "none"} attempts=${summary.llmStages?.judge?.attempts ?? "unknown"}`,
+  `connectionResult: ${summary.connectionResult}`,
+  "",
+  "--- Quality Reference (not tested) ---",
   `observedQualityScore: ${summary.qualityScore ?? "unknown"}`,
   `observedPublishReady: ${summary.publishReady}`,
   `observedQualityAttempts: ${summary.qualityAttempts}`,
@@ -543,6 +651,8 @@ export const formatDiagnosticSummary = (summary = {}) => [
   `rawWriterScore: ${summary.rawWriterScore ?? "unknown"}`,
   `finalJudgeScore: ${summary.finalJudgeScore ?? "unknown"}`,
   `appliedCaps: ${(summary.appliedCaps || []).join(", ") || "none"}`,
+  `deterministicCapApplied: ${summary.deterministicCapApplied}`,
+  `deterministicCapReason: ${summary.deterministicCapReason || "none"}`,
   `inputFactCoverage: ${summary.inputFactCoverage ?? "unknown"}`,
   `totalUserFacts: ${summary.totalUserFacts ?? "unknown"}`,
   `coveredFactIds: ${(summary.coveredFactIds || []).join(", ") || "none"}`,
@@ -551,35 +661,41 @@ export const formatDiagnosticSummary = (summary = {}) => [
   `genericFillerRatio: ${summary.genericFillerRatio ?? "unknown"}`,
   `josaErrorCount: ${summary.josaErrorCount ?? "unknown"}`,
   `changedCharacterRatio: ${summary.changedCharacterRatio ?? "unknown"}`,
+  `requestedTargetCharCount: ${summary.requestedTargetCharCount ?? "unknown"}`,
   `effectiveTargetCharCount: ${summary.effectiveTargetCharCount ?? "unknown"}`,
   `rawWriterCharCount: ${summary.rawWriterCharCount ?? "unknown"}`,
   `finalCharCount: ${summary.finalCharCount ?? "unknown"}`,
   `targetComplianceRatio: ${summary.targetComplianceRatio ?? "unknown"}`,
+  `revisionTargetDelta: ${summary.revisionTargetDelta ?? "unknown"}`,
   `sectionBudgetTotal: ${summary.sectionBudgetTotal ?? "unknown"}`,
   `sectionActualTotal: ${summary.sectionActualTotal ?? "unknown"}`,
   `targetLengthFailureReason: ${summary.targetLengthFailureReason || "none"}`,
   `finishReason: ${summary.finishReason || "unknown"}`,
   `postProcessingReductionRatio: ${summary.postProcessingReductionRatio ?? "unknown"}`,
   `schemaRepairUsed: ${summary.schemaRepairUsed}`,
-  `apiEndpoint: ${summary.apiEndpoint || "unknown"}`,
-  `responseShape: ${summary.responseShape || "unknown"}`,
-  `textExtracted: ${summary.textExtracted === null ? "unknown" : summary.textExtracted}`,
   `extractedTextLength: ${summary.extractedTextLength ?? "unknown"}`,
   `extractedTextHash: ${summary.extractedTextHash || "unknown"}`,
   `writerAttempts: ${summary.writerAttempts ?? "unknown"}`,
   `schemaFailureCount: ${summary.schemaFailureCount ?? "unknown"}`,
   `repairedFields: ${(summary.repairedFields || []).join(", ") || "none"}`,
   `topIssueCodes: ${(summary.issueCodes || []).slice(0, 5).join(", ") || "none"}`,
-  `writerStage: ${summary.llmStages?.writer?.success ?? "unknown"} reason=${summary.llmStages?.writer?.reason || "none"} attempts=${summary.llmStages?.writer?.attempts ?? "unknown"}`,
-  `judgeStage: ${summary.llmStages?.judge?.success ?? "unknown"} reason=${summary.llmStages?.judge?.reason || "none"} attempts=${summary.llmStages?.judge?.attempts ?? "unknown"}`,
+  `unsupportedClaimCount: ${summary.unsupportedClaimCount ?? "unknown"}`,
+  `unsupportedClaimTypes: ${(summary.unsupportedClaimTypes || []).join(", ") || "none"}`,
+  `claimLedgerHardFail: ${summary.claimLedgerHardFail}`,
   `revisionEnabled: ${summary.revisionEnabled === null ? "unknown" : summary.revisionEnabled}`,
   `revisionUsed: ${summary.qualityDiagnostics?.revisionUsed ?? "unknown"}`,
   `revisionCallCount: ${summary.qualityDiagnostics?.revisionCallCount ?? "unknown"}`,
   `attemptScores: ${(summary.qualityDiagnostics?.attemptScores || []).join(", ") || "unknown"}`,
   `selectedAttempt: ${summary.qualityDiagnostics?.selectedAttempt ?? "unknown"}`,
+  `selectedAttemptLabel: ${summary.qualityDiagnostics?.selectedAttemptLabel ?? "unknown"}`,
+  `selectedAttemptIndex: ${summary.qualityDiagnostics?.selectedAttemptIndex ?? "unknown"}`,
+  `selectedAttemptScore: ${summary.qualityDiagnostics?.selectedAttemptScore ?? "unknown"}`,
+  `visionMode: ${summary.visionMode}`,
+  `isMock: ${summary.isMock}`,
+  `llm.revisionEnabled: ${summary.revisionEnabled === null ? "unknown" : summary.revisionEnabled}`,
+  `llm.visionEnabled: ${summary.visionEnabled === null ? "unknown" : summary.visionEnabled}`,
   `imageCount: ${summary.imageCount}`,
   `visibleElementsCount: ${summary.visibleElementsCount}`,
-  `connectionResult: ${summary.connectionResult}`,
   `qualityResult: ${summary.qualityResult}`,
   `overallResult: ${summary.overallResult}`
 ].join("\n");
