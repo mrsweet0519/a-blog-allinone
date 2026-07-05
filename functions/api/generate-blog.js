@@ -203,12 +203,43 @@ const structuredResponseFormat = (name = "blog_writer_result", schema = BLOG_WRI
   }
 });
 
+const BLOG_JUDGE_SCORE_FIELDS = {
+  titleQuality: { type: "number" },
+  openingQuality: { type: "number" },
+  factualGrounding: { type: "number" },
+  specificity: { type: "number" },
+  humanNaturalness: { type: "number" },
+  narrativeCoherence: { type: "number" },
+  paragraphValue: { type: "number" },
+  keywordNaturalness: { type: "number" },
+  imageGrounding: { type: "number" },
+  readerUtility: { type: "number" }
+};
+
+const BLOG_JUDGE_SCORES_JSON_SCHEMA = {
+  type: "object",
+  properties: BLOG_JUDGE_SCORE_FIELDS,
+  required: Object.keys(BLOG_JUDGE_SCORE_FIELDS),
+  additionalProperties: false
+};
+
+const BLOG_JUDGE_APPLICABILITY_ITEM_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    applicable: { type: "boolean" },
+    score: { type: ["number", "null"] }
+  },
+  required: ["applicable", "score"],
+  additionalProperties: false
+};
+
 export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
   type: "object",
   properties: {
     score: { type: "number" },
     publishReady: { type: "boolean" },
     hardFail: { type: "boolean" },
+    scores: BLOG_JUDGE_SCORES_JSON_SCHEMA,
     issues: {
       type: "array",
       items: {
@@ -234,12 +265,22 @@ export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
     genericFillerRatio: { type: "number" },
     targetComplianceRatio: { type: "number" },
     revisionInstructions: { type: "array", items: { type: "string" } },
-    issueCodes: { type: "array", items: { type: "string" } }
+    issueCodes: { type: "array", items: { type: "string" } },
+    applicability: {
+      type: "object",
+      properties: {
+        imageGrounding: BLOG_JUDGE_APPLICABILITY_ITEM_JSON_SCHEMA,
+        faqUtility: BLOG_JUDGE_APPLICABILITY_ITEM_JSON_SCHEMA
+      },
+      required: ["imageGrounding", "faqUtility"],
+      additionalProperties: false
+    }
   },
   required: [
     "score",
     "publishReady",
     "hardFail",
+    "scores",
     "issues",
     "coveredFactIds",
     "missingFactIds",
@@ -251,7 +292,8 @@ export const BLOG_JUDGE_OUTPUT_JSON_SCHEMA = {
     "genericFillerRatio",
     "targetComplianceRatio",
     "revisionInstructions",
-    "issueCodes"
+    "issueCodes",
+    "applicability"
   ],
   additionalProperties: false
 };
@@ -1536,6 +1578,11 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
       "If the input has no actual visit/use/purchase/wear/class/stay evidence, any draft sentence that claims direct experience, a use period, a concrete use place or situation, companion or family involvement, effect, satisfaction, price satisfaction, or repurchase/revisit intent must be treated as unsupportedClaims or FALSE_EXPERIENCE. For product-like categories with no image and no actual experience facts, publishReady must be false when the draft reads like a real-use review instead of product information, selection criteria, or pre-purchase checks. Do not output internal terms in the final judgment evidence beyond short issue labels."
   },
   {
+    role: "system",
+    content:
+      "Return compact JSON that matches the response_format schema exactly. Keep issue evidence, messages, and revision instructions concise. Do not omit unsupportedClaims or false-experience issues; when there are many, use short claim labels instead of long explanations."
+  },
+  {
     role: "user",
     content: JSON.stringify({
       outputSchema: {
@@ -1600,48 +1647,60 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
 const requestLlmHumanJudge = async ({ env = {}, model = DEFAULT_OPENAI_MODEL, form = {}, draft = {}, llmStages = null } = {}) => {
   if (!shouldUseLlmJudge(env, form)) return null;
   const startedAt = Date.now();
+  let maxTokens = 2600;
+  let totalAttempts = 0;
   try {
-    const payload = await fetchOpenAiJson({
-      env,
-      body: {
-        model,
-        messages: buildHumanJudgeMessages({ form, draft }),
-        temperature: 0,
-        max_tokens: 1800,
-        response_format: structuredResponseFormat("blog_judge_result", BLOG_JUDGE_OUTPUT_JSON_SCHEMA)
+    for (let lengthRetry = 0; lengthRetry < 2; lengthRetry += 1) {
+      const payload = await fetchOpenAiJson({
+        env,
+        body: {
+          model,
+          messages: buildHumanJudgeMessages({ form, draft }),
+          temperature: 0,
+          max_tokens: maxTokens,
+          response_format: structuredResponseFormat("blog_judge_result", BLOG_JUDGE_OUTPUT_JSON_SCHEMA)
+        }
+      });
+      totalAttempts += payload.__openAiMeta?.attempts || 1;
+      const extraction = extractOpenAiText(payload);
+      if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
+      if (extraction.finishReason === "length" && lengthRetry === 0) {
+        maxTokens = 5200;
+        continue;
       }
-    });
-    const extraction = extractOpenAiText(payload);
-    if (extraction.refusal) throw new SafeLlmError("openai-refusal", { status: 200 });
-    if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
-    if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
-    const content = extraction.text;
-    const parsed = parseLlmJsonSafely(content);
-    const score = Number(parsed.score ?? parsed.qualityScore ?? parsed.finalScore);
-    if (!Number.isFinite(score)) throw new SafeLlmError("llm-schema-invalid", { status: 200 });
-    recordStageSuccess(llmStages, "judge", {
-      status: payload.__openAiMeta?.status || 200,
-      attempts: payload.__openAiMeta?.attempts || 1,
-      latencyMs: Date.now() - startedAt,
-      usage: payload.__openAiMeta?.usage
-    });
-    return {
-      ...parsed,
-      score,
-      publishReady: Boolean(parsed.publishReady),
-      hardFail: Boolean(parsed.hardFail),
-      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
-      coveredFactIds: Array.isArray(parsed.coveredFactIds) ? parsed.coveredFactIds : [],
-      missingFactIds: Array.isArray(parsed.missingFactIds) ? parsed.missingFactIds : [],
-      criticalMissingFactIds: Array.isArray(parsed.criticalMissingFactIds) ? parsed.criticalMissingFactIds : [],
-      unsupportedClaims: Array.isArray(parsed.unsupportedClaims) ? parsed.unsupportedClaims : [],
-      categoryContamination: Array.isArray(parsed.categoryContamination) ? parsed.categoryContamination : [],
-      metaGuidance: Array.isArray(parsed.metaGuidance) ? parsed.metaGuidance : [],
-      josaErrors: Array.isArray(parsed.josaErrors) ? parsed.josaErrors : [],
-      revisionInstructions: Array.isArray(parsed.revisionInstructions) ? parsed.revisionInstructions : [],
-      issueCodes: Array.isArray(parsed.issueCodes) ? parsed.issueCodes : []
-    };
+      if (extraction.finishReason === "length") throw new SafeLlmError("openai-output-incomplete", { status: 200 });
+      if (!extraction.textExtracted) throw new SafeLlmError("openai-empty-output", { status: 200 });
+      const content = extraction.text;
+      const parsed = parseLlmJsonSafely(content);
+      const score = Number(parsed.score ?? parsed.qualityScore ?? parsed.finalScore);
+      if (!Number.isFinite(score)) throw new SafeLlmError("llm-schema-invalid", { status: 200 });
+      recordStageSuccess(llmStages, "judge", {
+        status: payload.__openAiMeta?.status || 200,
+        attempts: totalAttempts || 1,
+        latencyMs: Date.now() - startedAt,
+        finishReason: extraction.finishReason || null,
+        usage: payload.__openAiMeta?.usage
+      });
+      return {
+        ...parsed,
+        score,
+        publishReady: Boolean(parsed.publishReady),
+        hardFail: Boolean(parsed.hardFail),
+        issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+        coveredFactIds: Array.isArray(parsed.coveredFactIds) ? parsed.coveredFactIds : [],
+        missingFactIds: Array.isArray(parsed.missingFactIds) ? parsed.missingFactIds : [],
+        criticalMissingFactIds: Array.isArray(parsed.criticalMissingFactIds) ? parsed.criticalMissingFactIds : [],
+        unsupportedClaims: Array.isArray(parsed.unsupportedClaims) ? parsed.unsupportedClaims : [],
+        categoryContamination: Array.isArray(parsed.categoryContamination) ? parsed.categoryContamination : [],
+        metaGuidance: Array.isArray(parsed.metaGuidance) ? parsed.metaGuidance : [],
+        josaErrors: Array.isArray(parsed.josaErrors) ? parsed.josaErrors : [],
+        revisionInstructions: Array.isArray(parsed.revisionInstructions) ? parsed.revisionInstructions : [],
+        issueCodes: Array.isArray(parsed.issueCodes) ? parsed.issueCodes : []
+      };
+    }
+    throw new SafeLlmError("openai-output-incomplete", { status: 200 });
   } catch (error) {
+    if (error instanceof SafeLlmError) error.attempts = Math.max(totalAttempts || 0, error.attempts || 1);
     recordStageFailure(llmStages, "judge", error, {
       attempts: error?.attempts || 1,
       latencyMs: Date.now() - startedAt

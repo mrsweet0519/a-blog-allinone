@@ -646,6 +646,46 @@ const makeMockLlmDraft = (attemptLabel = "initial") => ({
   ],
   hashtags: ["#경량재킷후기", "#출근코디", "#착용감", "#데일리재킷", "#수납"]
 });
+
+const makeMockJudgeResult = ({ score = 98, publishReady = score >= 95, hardFail = false, issues = [], revisionInstructions = [] } = {}) => ({
+  score,
+  publishReady,
+  hardFail,
+  scores: {
+    titleQuality: 10,
+    openingQuality: 10,
+    factualGrounding: 15,
+    specificity: 15,
+    humanNaturalness: 15,
+    narrativeCoherence: 10,
+    paragraphValue: 10,
+    keywordNaturalness: 5,
+    imageGrounding: 5,
+    readerUtility: 5
+  },
+  issues: issues.map((issue) => ({
+    code: issue.code || "UNIT_ISSUE",
+    severity: issue.severity || "medium",
+    evidence: issue.evidence || "unit evidence",
+    message: issue.message || "unit message",
+    revisionInstruction: issue.revisionInstruction || "unit revision"
+  })),
+  coveredFactIds: revisionMemoLines.map((_, index) => `uf${index + 1}`),
+  missingFactIds: [],
+  criticalMissingFactIds: [],
+  unsupportedClaims: [],
+  categoryContamination: [],
+  metaGuidance: [],
+  josaErrors: [],
+  genericFillerRatio: 0,
+  targetComplianceRatio: 0.98,
+  revisionInstructions,
+  issueCodes: issues.map((issue) => issue.code || "UNIT_ISSUE"),
+  applicability: {
+    imageGrounding: { applicable: false, score: null },
+    faqUtility: { applicable: true, score: 5 }
+  }
+});
 let revisionFetchCount = 0;
 const revisionDraft = await callApiWithFetch({
   body: revisionCanaryInput,
@@ -877,6 +917,45 @@ assert.equal(judgeTimeoutDraft.llmStages.writer.success, true);
 assert.equal(judgeTimeoutDraft.llmStages.judge.success, false);
 assert.equal(judgeTimeoutDraft.llmStages.judge.reason, "timeout");
 assert.ok(judgeTimeoutDraft.humanQuality.caps.some((cap) => cap.code === "DETERMINISTIC_ONLY_MAX_89"));
+
+let judgeLengthRetryFetchCount = 0;
+const judgeLengthRetryTokenBudgets = [];
+const judgeLengthRetryDraft = await callApiWithFetch({
+  body: revisionCanaryInput,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "true",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "false",
+    BLOG_WRITER_LLM_RETRY_BASE_MS: "0",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async (_url, options = {}) => {
+    judgeLengthRetryFetchCount += 1;
+    const requestBody = JSON.parse(options.body || "{}");
+    if (judgeLengthRetryFetchCount === 1) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("judge-length-retry")) } }] }), { status: 200 });
+    }
+    judgeLengthRetryTokenBudgets.push(Number(requestBody.max_tokens || 0));
+    if (judgeLengthRetryFetchCount === 2) {
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "{\"score\":" } }] }), { status: 200 });
+    }
+    return new Response(
+      JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockJudgeResult({ score: 98, publishReady: true })) } }]
+      }),
+      { status: 200 }
+    );
+  }
+});
+assert.equal(judgeLengthRetryFetchCount, 3);
+assert.deepEqual(judgeLengthRetryTokenBudgets, [2600, 5200]);
+assert.equal(judgeLengthRetryDraft.engine, "llm");
+assert.equal(judgeLengthRetryDraft.judgeEngine, "llm");
+assert.equal(judgeLengthRetryDraft.llmStages.judge.success, true);
+assert.equal(judgeLengthRetryDraft.llmStages.judge.reason, null);
+assert.equal(judgeLengthRetryDraft.llmStages.judge.attempts, 2);
+assert.ok(!judgeLengthRetryDraft.humanQuality.caps.some((cap) => cap.code === "DETERMINISTIC_ONLY_MAX_89"));
 
 let judgeRateLimitRevisionFetchCount = 0;
 const judgeRateLimitRevisionDraft = await callApiWithFetch({
@@ -1425,6 +1504,11 @@ assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("josaErrors"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("genericFillerRatio"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("targetComplianceRatio"));
 assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("issueCodes"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("scores"));
+assert.ok(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.required.includes("applicability"));
+assert.equal(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.properties.scores.additionalProperties, false);
+assert.equal(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.properties.applicability.additionalProperties, false);
+assert.deepEqual(BLOG_JUDGE_OUTPUT_JSON_SCHEMA.properties.applicability.required, ["imageGrounding", "faqUtility"]);
 
 const chatExtraction = extractOpenAiText({
   choices: [{ finish_reason: "stop", message: { content: JSON.stringify(makeMockLlmDraft("extract-chat")) } }]
