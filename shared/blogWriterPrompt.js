@@ -149,6 +149,12 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
   const allowedClaims = writerPlan.factPolicy?.allowedClaims || factMap.supported || [];
   const forbiddenClaims = writerPlan.factPolicy?.forbiddenClaims || factMap.unsupportedFields || [];
   const unknownFields = writerPlan.factPolicy?.unknownFields || factMap.unsupportedFields || [];
+  const experienceGuard = writerPlan.experienceGuard || {
+    mode: writerPlan.tone || "",
+    actualExperience: false,
+    mustUseReferenceTone: false,
+    forbiddenClaimTypes: []
+  };
 
   return {
     primaryEntity,
@@ -167,6 +173,7 @@ const buildWriterBrief = (pipelineContext = {}, { targetCharCount = 2500 } = {})
     allowedClaims,
     forbiddenClaims,
     unknownFields,
+    experienceGuard,
     requiredEntityPlacements: ["finalTitle", "openingFirstSentence", "openingParagraph", "body"],
     titleRules: {
       candidateCount: 5,
@@ -276,16 +283,19 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "메인 키워드는 primary entity를 우선하고, broad keyword는 서브키워드로만 자연스럽게 배치하세요.",
     "contextFacts.companions가 unknown이면 가족, 아이, 친구, 동료, 단체 동행을 추정하지 마세요. 여행 맥락만으로 가족여행을 만들지 마세요.",
     "experienceStatus가 visited/stayed/used/eaten/attended/purchased가 아니면 실제 방문·사용 후기처럼 쓰지 마세요.",
+    "writerBrief.experienceGuard.mustUseReferenceTone이 true이면 제품 정보 기반 소개, 선택 기준, 구매 전 확인 포인트 중심으로 쓰고 직접 사용 후기 톤을 쓰지 마세요.",
+    "특히 product/beauty/fashion/underwear 계열에서 이미지가 없고 실제 사용 경험 fact가 없으면 사용 기간, 사용 장소, 가족·동행자, 효과, 만족도, 가격 만족, 재구매 의사를 만들지 마세요.",
     "imageAnalysis.mode가 label-only이면 라벨과 메모로 알 수 있는 내용만 쓰고, 사진 속 맛·가격·양·직원 응대·영업시간은 만들지 마세요.",
     "informationSufficiency가 low이면 긴 글자수를 억지로 맞추지 말고 700~1300자 안의 밀도 있는 원고로 끝내세요. low는 FAQ를 만들지 않습니다.",
     "informationSufficiency가 high 또는 medium이면 effectiveTargetCharCount의 85~110% 안에 들어오도록 작성하세요. 글자수를 늘릴 때 일반론을 쓰지 말고 factMap.userFacts의 각 fact를 서로 다른 문단에서 구체적인 상황, 판단 이유, 결과로 확장하세요.",
     "각 section은 writerBrief.sectionPlan의 targetChars를 중심으로 작성하고 minChars보다 지나치게 짧게 끝내지 마세요. requiredFactIds를 먼저 반영한 뒤 optionalFactIds로만 보강하고, forbiddenRepeatedFactIds의 fact를 표현만 바꿔 다시 쓰지 마세요.",
-    "high 또는 medium 입력에서는 모든 critical/high fact, 좋았던 점, 아쉬웠던 점, 실제 결과, 재사용·재방문·재수강 의사를 빠뜨리지 마세요. 각 섹션은 writerPlan.sections의 evidenceIds 중 하나 이상을 실제 문장에 반영해야 합니다.",
-    "문단별 역할은 겹치지 않게 나누고, 마무리 문단은 앞 문단을 반복하지 말고 실제 결과와 다음 사용/방문 판단만 정리하세요.",
+    "high 또는 medium 입력에서는 모든 critical/high fact를 빠뜨리지 마세요. 좋았던 점, 아쉬웠던 점, 실제 결과, 재사용·재방문·재수강 의사는 사용자 입력 fact에 있을 때만 반영하세요.",
+    "문단별 역할은 겹치지 않게 나누고, 마무리 문단은 앞 문단을 반복하지 말고 입력 fact로 확인되는 결론이나 구매 전 확인 기준만 정리하세요.",
     "첫 문장에는 primaryEntity 또는 mainKeyword를 넣고, 첫 문단에는 mainKeyword를 1~2회만, subKeyword는 최대 1개만 자연스럽게 연결하세요.",
     "본문 문단은 readerIntent의 서로 다른 질문에 답하고, 각 문단은 factMap evidenceIds 또는 imageRefs 중 하나 이상과 연결하세요.",
     "제목 후보 5개는 SEO/GEO Title Candidate Generation 단계로 만들고 categoryFit, experienceFit 관점으로 평가하세요. 정보 정리, 체험 흐름, 식사 후보, 해당 제품, 대표 메뉴 같은 기계적 표현을 쓰지 마세요.",
     "사용자 메모에 방문·숙박·사용·수강 신호가 있으면 실제 경험형 문장을 쓰고, 신호가 없으면 경험한 척하지 마세요.",
+    "첫 문단에는 '참여하게 된 이유', '기준으로 보면', '관련 기준으로 보면' 같은 템플릿 표현을 쓰지 말고 사람이 직접 시작한 문장처럼 자연스럽게 쓰세요.",
     "경험 주장은 experienceEvidence, 가족·아이·동행 주장은 contextEvidence, 사진 주장은 imageEvidence가 있을 때만 쓰세요.",
     "unsupported, contradictory, metaGuidance, placeholder 문장이 최종 섹션에 남지 않게 스스로 검토하세요. Claim Ledger는 서버가 최종 본문 기준으로 다시 만듭니다.",
     "FAQ는 Fact Map으로 직접 답할 수 있을 때만 0~2개 생성하세요. 운영시간, 예약, 주차, 글 작성법, 확인 필요만 말하는 질문은 만들지 마세요. FAQ, 해시태그, 키워드 반복, 정보 정리 문단으로 본문 길이를 채우지 마세요.",
@@ -293,6 +303,7 @@ export const buildBlogWriterUserPrompt = ({ form = {}, analysis = analyzeBlogWri
     "writer 출력은 titleCandidates, finalTitle, sections, faq, hashtags만 반환하세요. body, qualityScore, Fact Map, Claim Ledger, trace, publishReady 같은 내부 분석 필드는 절대 반환하지 마세요.",
     "FAQ가 필요 없으면 faq는 빈 배열로 두고, 이미지가 없으면 imageRefs는 빈 배열로 두세요. 소제목이 필요 없는 section은 heading을 null로 두세요.",
     "최종 본문에는 내부 writerPlan에서나 쓸 메타 표현을 넣지 마세요.",
+    "최종 본문에는 입력 사실 기준, unsupported claim, fact 판단, 검증 결과 같은 내부 평가 문구를 넣지 마세요.",
     "정보가 부족하면 억지로 길게 쓰지 말고 실제 본문 길이에 맞춰 자연스럽게 마무리하세요.",
     "사진이 있으면 본문 흐름 안에 [사진 삽입: 설명] 마커를 넣되 파일명은 쓰지 마세요.",
     "최종 응답은 JSON만 반환하세요.",

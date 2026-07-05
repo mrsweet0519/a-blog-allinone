@@ -219,19 +219,15 @@ export const createCommercialReadinessInputs = ({ seed = randomUUID().slice(0, 8
       informationLevel: "high",
       productName,
       mainKeyword: "생활용품 정리 트레이",
-      subKeywords: "책상 정리, 재구매",
+      subKeywords: "책상 정리, 선택 기준",
       targetCharCount: 2100,
       experienceMemo: [
-        `${productName}는 지난 주말 집 책상 위 충전기와 문구류를 정리하려고 직접 사용했다.`,
-        "사용 전에는 볼펜, 케이블, 영수증이 한쪽에 쌓여 노트북을 펼 때마다 자리를 옮겨야 했다.",
-        "좋았던 점은 낮은 칸막이 덕분에 케이블 머리와 펜을 따로 두기 쉬웠다는 점이다.",
-        "또 좋았던 점은 바닥이 미끄럽지 않아 서랍을 열 때 같이 밀리지 않았다는 점이다.",
-        "아쉬웠던 점은 폭이 넓은 어댑터는 한 칸에 넣으면 옆 공간을 조금 침범했다는 점이다.",
-        "3일 정도 사용해보니 매일 쓰는 물건을 올려두는 용도로는 다시 살 의사가 있다.",
-        "다만 여행용 파우치처럼 들고 다니기보다 고정된 책상 위에서 쓰는 쪽이 맞았다.",
-        "먼지가 잘 보이는 색상이라 주 1회 정도 닦아야 깔끔해 보였다.",
-        "구매 전에는 칸 크기와 미끄럼 여부, 케이블 정리 가능성을 가장 궁금하게 봤다.",
-        "본문에는 사용 전 문제, 실제 사용 상황, 장점 두 가지, 아쉬운 점, 재구매 의사가 들어가야 한다."
+        `${productName}는 책상 주변 소품을 정리할 제품을 구매 전 확인하는 내용이다.`,
+        "직접 구매하거나 사용한 후기는 아니고, 제품 정보와 선택 기준만 정리한다.",
+        "확인할 점은 칸 크기, 소재, 모서리 마감, 바닥 접촉면이다.",
+        "좋게 본 점은 작은 물건을 용도별로 나눌 수 있는 구성이라는 점이다.",
+        "아쉬운 점은 사진이 없어 실제 질감과 수납감은 단정할 수 없다는 점이다.",
+        "본문에는 사용 기간, 사용 장소, 만족도, 가격 만족, 재구매 의사를 만들지 말고 구매 전 확인 포인트만 써야 한다."
       ].join("\n"),
       imageContext: []
     },
@@ -498,6 +494,8 @@ export const resolveCommercialRunMode = (args = {}, env = process.env) => {
 export const selectCommercialInputs = ({ mode = "cases", cases = DEFAULT_COMMERCIAL_CASES, seed = randomUUID().slice(0, 8), skipImages = false } = {}) => {
   const inputs = createCommercialReadinessInputs({ seed, skipImages });
   if (mode === "smoke") {
+    const productHighNoImage = inputs.find((input) => input.caseId === "product-high-no-image");
+    if (productHighNoImage) return [productHighNoImage];
     const highNoImage = inputs.find((input) => input.informationLevel === "high" && Number(input.imageCount || 0) === 0);
     return [highNoImage || inputs.find((input) => input.informationLevel === "high") || inputs[0]].filter(Boolean);
   }
@@ -692,18 +690,58 @@ const faqChecks = (faq = [], category = "") => {
   };
 };
 
-const detectFalseExperience = ({ input = {}, body = "" } = {}) => {
-  if (input.informationLevel !== "low" && !/구매 전 단계|직접 구매 전/u.test(input.experienceMemo || "")) return false;
-  if (/직접\s*(?:방문|사용|구매|착용|수강)(?:하지\s*않|한\s*것은\s*아니|전\s*단계)|아직\s*직접|구매\s*전\s*단계|실제\s*사용\s*후기는\s*아니/u.test(body)) {
-    return false;
+const FALSE_EXPERIENCE_PATTERNS = [
+  {
+    code: "direct-experience",
+    pattern: /직접\s*(?:방문|사용|구매|착용|수강|숙박|이용)|(?:방문|사용|구매|착용|수강|숙박|이용)(?:해봤|해보니|했(?:고|다|어요|습니다)|함)|써\s*봤|다녀왔|갔다\s*왔|먹어봤|마셔봤|묵었/u
+  },
+  {
+    code: "experience-duration",
+    pattern: /(?:지난\s*(?:주말|주|달|화요일|수요일|목요일|금요일|토요일|일요일)|어제|오늘\s*(?:아침|점심|저녁)?|하루\s*종일|며칠|몇\s*일|\d+\s*(?:일|주|개월)\s*(?:동안|정도)?)[^.\n]{0,24}(?:사용|착용|방문|수강|숙박|이용|써|먹|머물)/u
+  },
+  {
+    code: "experience-situation",
+    pattern: /(?:집|자취방|회사|사무실|욕실|거실|주방|책상|출근길|퇴근길|저녁\s*약속|여행\s*중|차\s*안|가방)[^.\n]{0,28}(?:사용|착용|방문|수강|숙박|이용|두고|놓고|써|입었|먹었)/u
+  },
+  {
+    code: "experience-outcome",
+    pattern: /효과가\s*(?:좋|있|확실)|바로\s*효과|만족(?:했|스럽|도가\s*(?:높|좋)|하는|이었다)|가격\s*만족|가성비|먼지[^.\n]{0,16}(?:보였|붙었|쌓였)|미끄럼[^.\n]{0,12}(?:덜|방지|없)|편했|불편했|좋았|아쉬웠/u
+  },
+  {
+    code: "return-intent",
+    pattern: /재방문(?:\s*의사|하고\s*싶)|재구매|재수강|다시\s*(?:가고|사고|입고|쓰고|사용하고|방문하고|수강하고)\s*싶|다시\s*(?:살|갈|입을|쓸|사용할|방문할|수강할)\s*(?:의사|생각)/u
   }
-  return /직접\s*(?:방문|사용|구매|착용|수강)|다녀왔|먹어봤|사용해봤|써봤|묵었|숙박했다/u.test(body);
+];
+const EXPERIENCE_NEGATION_PATTERN =
+  /(?:직접\s*)?(?:방문|사용|구매|착용|수강|숙박|이용)(?:하지\s*않|한\s*것은\s*아니|한\s*후기는\s*(?:아니|아님|아니다)|전\s*단계)|아직\s*직접|실제\s*(?:방문|사용|구매|착용|수강|숙박|이용)\s*후기는\s*(?:아니|아님|아니다)|(?:방문|사용|구매|착용|수강|숙박|이용)\s*전\s*(?:단계|확인|비교|검토)|구매\s*전|방문\s*전/u;
+const REFERENCE_QUALIFIER_PATTERN =
+  /(?:구매|방문|사용|착용|수강|신청)\s*전|직접\s*(?:구매|사용|방문|착용|수강)하지|후기는\s*아니|실제\s*(?:사용|방문|구매|착용|수강)\s*후기는\s*아니|확인할|비교할|살펴볼|알아볼/u;
+
+export const detectFalseExperienceDetails = ({ input = {}, body = "" } = {}) => {
+  const source = text([input.experienceMemo, input.memory, input.memo, input.productInfoText].filter(Boolean).join("\n"));
+  const sourceHasActual =
+    FALSE_EXPERIENCE_PATTERNS.some((item) => item.code === "direct-experience" && item.pattern.test(source)) &&
+    !EXPERIENCE_NEGATION_PATTERN.test(source);
+  return FALSE_EXPERIENCE_PATTERNS.filter(({ code, pattern }) => {
+    if (!pattern.test(body)) return false;
+    const sourceMatches = pattern.test(source);
+    if (sourceMatches && !(code === "direct-experience" && EXPERIENCE_NEGATION_PATTERN.test(source))) return false;
+    if (code === "experience-situation" && REFERENCE_QUALIFIER_PATTERN.test(body)) return false;
+    if (code === "direct-experience" && sourceHasActual) return false;
+    return true;
+  }).map(({ code }) => ({
+    code,
+    severity: code === "direct-experience" ? "critical" : "high"
+  }));
 };
+
+export const detectFalseExperience = (args = {}) => detectFalseExperienceDetails(args).length > 0;
 
 const classifyFailure = (summary = {}) => {
   const codes = summary.issueCodes || [];
   if (summary.primaryEntityCoverage !== true || codes.some((code) => /PRIMARY_ENTITY|TITLE_MISSING/u.test(code))) return "entity extraction";
   if (codes.some((code) => /CATEGORY|INTENT|TITLE-INTENTS|RESTAURANT/u.test(code))) return "category/searchIntent";
+  if (summary.falseExperience) return "experienceStatus";
   if (codes.some((code) => /EXPERIENCE|CONTRADICT/u.test(code))) return "experienceStatus";
   if (Number(summary.inputFactCoverage || 0) < 0.9 || codes.some((code) => /MISSING_FACT|FACT/u.test(code))) return "Fact Map";
   if (summary.imageExpected && summary.visionMode !== "vision") return "Vision";
@@ -976,6 +1014,9 @@ const summarizeForConsole = (item = {}) => ({
   qualityScore: item.qualityScore,
   publishReady: item.publishReady,
   unsupportedClaimCount: item.unsupportedClaimCount,
+  falseExperience: item.falseExperience,
+  falseExperienceCount: item.falseExperienceCount || 0,
+  falseExperienceReasonCodes: item.falseExperienceReasonCodes || [],
   categoryContaminationCount: item.categoryContaminationCount,
   metaGuidanceCount: item.metaGuidanceCount,
   josaErrorCount: item.josaErrorCount,
@@ -1221,7 +1262,8 @@ export const runCommercialDiagnostics = async ({
     const primaryEntity = packageData.primaryEntity || input.productName;
     const titleCheck = titleChecks({ title: finalTitle, titleCandidates, primaryEntity, category: input.category });
     const faqCheck = faqChecks(faq, input.category);
-    const falseExperience = detectFalseExperience({ input, body });
+    const falseExperienceDetails = detectFalseExperienceDetails({ input, body });
+    const falseExperience = falseExperienceDetails.length > 0;
     const previousTopicContamination = allEntities
       .filter((entity) => entity !== input.productName)
       .some((entity) => body.includes(entity) || finalTitle.includes(entity));
@@ -1282,6 +1324,8 @@ export const runCommercialDiagnostics = async ({
       titleCheck,
       faqCheck,
       falseExperience,
+      falseExperienceCount: falseExperienceDetails.length,
+      falseExperienceReasonCodes: falseExperienceDetails.map((item) => item.code),
       previousTopicContamination,
       contentHash: hashText(`${finalTitle}\n${body}`),
       inputSummary: {

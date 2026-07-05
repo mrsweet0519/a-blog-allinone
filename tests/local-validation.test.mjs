@@ -6,6 +6,7 @@ import {
   buildBlogWriterPipelineContext,
   calculateInputFactCoverage,
   createClaimLedger,
+  detectExperienceStatus,
   isFactReflected,
   normalizeBlogWriterInput,
   parseSubKeywords,
@@ -66,6 +67,7 @@ import {
   estimateCommercialRun,
   formatCommercialRunEstimate,
   formatCommercialUsageInstructions,
+  detectFalseExperienceDetails,
   isQuotaExceededDiagnostic,
   resolveCommercialRunMode,
   runCommercialDiagnostics,
@@ -357,6 +359,32 @@ const actualReview = createProductReviewDraft({
 assert.equal(actualReview.experienceStatus, "used");
 assert.ok(/사용|편했/u.test(actualReview.body));
 assertDraftContract(actualReview);
+
+const noActualProductForm = {
+  category: "product",
+  productName: "유닛 정리 트레이 사용 후기",
+  mainKeyword: "정리 트레이 사용 후기",
+  subKeywords: "책상 정리, 선택 기준",
+  targetCharCount: 2100,
+  experienceMemo: "구매 전 칸 크기와 소재를 비교하는 단계\n직접 사용한 후기는 아님\n작은 물건을 나눠 둘 수 있는 구성이 궁금함",
+  imageContext: []
+};
+assert.notEqual(detectExperienceStatus(noActualProductForm), "used");
+const noActualProductContext = buildBlogWriterPipelineContext(noActualProductForm);
+assert.equal(noActualProductContext.writerPlan.experienceGuard.mustUseReferenceTone, true);
+assert.equal(noActualProductContext.factMap.experienceEvidence.length, 0);
+const inventedExperienceLedger = summarizeClaimLedger(
+  createClaimLedger({
+    title: "유닛 정리 트레이 사용 후기",
+    body: "유닛 정리 트레이를 직접 사용해봤고 3일 동안 책상에서 써보니 다시 살 의사가 있었다.",
+    factMap: noActualProductContext.factMap,
+    contextFacts: noActualProductContext.contextFacts,
+    imageAnalysis: noActualProductContext.imageAnalysis,
+    experienceStatus: noActualProductContext.experienceStatus
+  })
+);
+assert.equal(inventedExperienceLedger.hardFail, true);
+assert.ok(inventedExperienceLedger.counts.contradictory > 0 || inventedExperienceLedger.counts.unsupported > 0);
 
 const travelOnlyReview = createProductReviewDraft({
   productName: "초록호수 산책 여행 후기",
@@ -2047,6 +2075,42 @@ const broadKeywordEntityQuality = evaluateHumanQuality({
 assert.equal(broadKeywordEntityQuality.hardFail, true);
 assert.equal(broadKeywordEntityQuality.diagnostics.entityCoverage.finalTitle, false);
 
+const inventedExperienceQuality = evaluateHumanQuality({
+  title: "유닛 정리 트레이 사용 후기",
+  titleCandidates: ["유닛 정리 트레이 사용 후기"],
+  body: "유닛 정리 트레이를 직접 사용해봤고 3일 동안 책상에서 써보니 다시 살 의사가 있었다.",
+  faq: [],
+  hashtags: [],
+  factMap: noActualProductContext.factMap,
+  imageAnalysis: noActualProductContext.imageAnalysis,
+  category: "product",
+  visitStatus: noActualProductContext.factMap.visitStatus,
+  mainKeyword: noActualProductContext.mainKeyword,
+  primaryEntity: noActualProductContext.primaryEntity,
+  subKeywords: noActualProductContext.subKeywords,
+  requestedTargetCharCount: 2100,
+  effectiveTargetCharCount: 2100,
+  informationSufficiency: "high",
+  engine: "llm",
+  llmJudge: {
+    score: 98,
+    scores: {},
+    issues: [],
+    coveredFactIds: noActualProductContext.factMap.userFacts.map((fact) => fact.id),
+    missingFactIds: [],
+    criticalMissingFactIds: [],
+    unsupportedClaims: [],
+    categoryContamination: [],
+    metaGuidance: [],
+    josaErrors: [],
+    issueCodes: []
+  }
+});
+assert.equal(inventedExperienceQuality.hardFail, true);
+assert.equal(inventedExperienceQuality.publishReady, false);
+assert.ok(inventedExperienceQuality.diagnostics.issueCodes.includes("FALSE_EXPERIENCE"));
+assert.ok(inventedExperienceQuality.diagnostics.unsupportedClaims.length > 0);
+
 const unsupportedSummary = summarizeClaimLedger(
   createClaimLedger({
     title: "Unit Entity Review",
@@ -2373,6 +2437,18 @@ try {
   const smokeInputs = selectCommercialInputs({ mode: smokeMode.mode, cases: smokeMode.caseCount, seed: "unit-smoke", skipImages: true });
   assert.equal(smokeInputs.length, 1);
   assert.equal(smokeInputs[0].informationLevel, "high");
+  assert.equal(smokeInputs[0].caseId, "product-high-no-image");
+  assert.ok(/직접\s*(?:구매하거나\s*)?사용한\s*후기는\s*아니/u.test(smokeInputs[0].experienceMemo));
+  const falseExperienceDetails = detectFalseExperienceDetails({
+    input: {
+      informationLevel: "high",
+      experienceMemo: "직접 사용한 후기는 아니고 구매 전 비교하는 단계"
+    },
+    body: "유닛 제품을 직접 사용해봤고 3일 동안 책상에서 써보니 다시 살 의사가 있었다."
+  });
+  assert.ok(falseExperienceDetails.some((item) => item.code === "direct-experience"));
+  assert.ok(falseExperienceDetails.some((item) => item.code === "experience-duration"));
+  assert.ok(falseExperienceDetails.some((item) => item.code === "return-intent"));
 
   const canaryMode = resolveCommercialRunMode({ canary3: "1" }, {});
   assert.equal(canaryMode.runnable, true);

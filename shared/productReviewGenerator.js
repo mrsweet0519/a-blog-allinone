@@ -469,7 +469,7 @@ const createParagraphForPlan = ({ plan = {}, context = {}, facts = [], imageFact
   }
 
   if (isActual) {
-    return `${topicParticle(primary)} ${action}한 상황을 기준으로 보면, 가장 먼저 떠오르는 장면을 하나씩 나누어 적기 좋았어요.`;
+    return `${topicParticle(primary)} ${action}한 상황을 떠올리면, 가장 먼저 남는 장면을 하나씩 나누어 적기 좋았어요.`;
   }
 
   if (plan.purpose === "research_reason") {

@@ -315,6 +315,30 @@ const getInputSourceText = (form = {}) =>
     .filter(Boolean)
     .join(" ");
 
+const ACTUAL_EXPERIENCE_STATUSES = new Set(["visited", "stayed", "used", "eaten", "attended", "purchased"]);
+const PRODUCT_REFERENCE_CATEGORIES = new Set(["product", "beauty", "fashion", "underwear", "lifestyleProduct", "comparison"]);
+const EXPERIENCE_NEGATION_PATTERN =
+  /(?:직접\s*)?(?:방문|사용|구매|착용|수강|숙박|이용)(?:하지\s*않|한\s*것은\s*아니|한\s*후기는\s*(?:아니|아님|아니다)|전\s*단계)|아직\s*직접|실제\s*(?:방문|사용|구매|착용|수강|숙박|이용)\s*후기는\s*(?:아니|아님|아니다)|(?:방문|사용|구매|착용|수강|숙박|이용)\s*전\s*(?:단계|확인|비교|검토)|구매\s*전|방문\s*전/u;
+const EXPERIENCE_STATUS_PATTERNS = [
+  ["stayed", /(?:직접\s*)?(?:숙박|묵었|머물렀|체크인)|(?:숙박|묵|머물)(?:함|했|해봤|했다|했어요|했습니다)|\d+\s*박(?:함|했|했다|했어요|했습니다)?/u],
+  ["eaten", /(?:직접\s*)?(?:먹어봄|먹어봤|먹었|식사했|마셔봤|마셨|맛봤)|(?:먹|마시|식사)(?:함|했|했다|했어요|했습니다)/u],
+  ["used", /(?:직접\s*)?(?:사용|써|착용|발라|이용)(?:함|했|해봤|해봄|했다|했어요|했습니다|해보니)|써\s*봤|써\s*봄/u],
+  ["attended", /(?:직접\s*)?(?:참석|참여|수강)(?:함|했|해봤|했다|했어요|했습니다)|들었|들어봄|들어봤/u],
+  ["purchased", /(?:직접\s*)?(?:구매|샀|주문|결제|배송받)(?:함|했|했다|했어요|했습니다|음)/u],
+  ["visited", /(?:직접\s*)?(?:다녀옴|다녀왔|다녀와|방문함|방문했|갔다옴|갔다\s*왔|들렀|들른|가봤)/u]
+];
+const RESEARCH_STATUS_PATTERN =
+  /예약|예정|계획|가려고|알아봄|알아보|궁금|찾아보|비교|검색|선택\s*기준|구매\s*전|방문\s*전|사용\s*전|착용\s*전|신청\s*전/u;
+const normalizeExplicitExperienceStatus = (value = "") => {
+  const status = text(value).toLowerCase();
+  if (!status) return "";
+  if (ACTUAL_EXPERIENCE_STATUSES.has(status)) return status;
+  if (["previsit", "pre-visit", "planned", "plan"].includes(status)) return "planned";
+  if (["researched", "research", "reference", "info", "information"].includes(status)) return "researched";
+  if (["none", "unknown", "no-experience", "not-visited", "not_used"].includes(status)) return "unknown";
+  return "";
+};
+
 const STANDARD_INPUT_SCHEMA = {
   topic: "string",
   userMainKeyword: "string",
@@ -349,24 +373,25 @@ export const normalizeBlogWriterInput = (form = {}) => {
 };
 
 export const detectExperienceStatus = (form = {}) => {
-  const source = getInputSourceText(form);
+  const explicit = normalizeExplicitExperienceStatus(form.experienceStatus || form.visitStatus || form.contentExperienceStatus);
+  if (explicit && explicit !== "unknown") return explicit;
 
-  if (/숙박|묵었|머물렀|체크인|객실|호텔|펜션|리조트/u.test(source)) return "stayed";
-  if (/먹어봄|먹어봤|먹었|식사했|마셔봤|마셨|맛봤/u.test(source)) return "eaten";
-  if (/사용함|사용해|써봄|써봤|착용|발라봤|이용함|이용해/u.test(source)) return "used";
-  if (/참석|참여|수강|들었|들어봄|공연|행사|클래스/u.test(source)) return "attended";
-  if (/구매|샀|주문|결제|배송받/u.test(source)) return "purchased";
-  if (/다녀옴|다녀왔|다녀와|방문함|방문했|갔다옴|갔다|갔|들렀|들른|좋았|기억남|기억에|느꼈/u.test(source)) {
-    return "visited";
+  const memoSource = getMemoText(form);
+  const source = getInputSourceText(form);
+  if (EXPERIENCE_NEGATION_PATTERN.test(memoSource)) {
+    return /예약|예정|계획|방문\s*전|사용\s*전|구매\s*전|착용\s*전|수강\s*전/u.test(memoSource) ? "planned" : "researched";
   }
-  if (/예약|예정|계획|가려고|방문\s*전|가기\s*전/u.test(source)) return "planned";
-  if (/알아봄|알아보|궁금|찾아보|비교|검색/u.test(source)) return "researched";
+  const matched = EXPERIENCE_STATUS_PATTERNS.find(([, pattern]) => pattern.test(memoSource));
+  if (matched) return matched[0];
+  if (/예약|예정|계획|가려고|방문\s*전|가기\s*전|구매\s*전|사용\s*전|착용\s*전|수강\s*전/u.test(memoSource)) return "planned";
+  if (/알아봄|알아보|궁금|찾아보|비교|검색|선택\s*기준/u.test(memoSource)) return "researched";
+  if (RESEARCH_STATUS_PATTERN.test(source)) return "researched";
 
   return "unknown";
 };
 
 export const getExperienceTone = (experienceStatus = "unknown") => {
-  if (["visited", "stayed", "used", "eaten", "attended", "purchased"].includes(experienceStatus)) {
+  if (ACTUAL_EXPERIENCE_STATUSES.has(experienceStatus)) {
     return "actual-review";
   }
   if (experienceStatus === "researched" || experienceStatus === "planned") return "reference";
@@ -658,6 +683,7 @@ const collectContextEvidenceIds = (contextFacts = {}) =>
 
 export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput(form), imageAnalysis = analyzeBlogImages(form), experienceStatus = detectExperienceStatus(form) } = {}) => {
   const memoText = getMemoText(form);
+  const actualExperience = getExperienceTone(experienceStatus) === "actual-review";
   const inputSubKeywords = parseSubKeywords(form.subKeywords, analysis.mainKeyword);
   const memoLines = memoText
     .split(/\n|(?<=[.!?。])\s+/u)
@@ -672,7 +698,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
       value: line,
       source: "user_memory",
       confidence: 0.92,
-      allowedAsExperience: getExperienceTone(experienceStatus) === "actual-review"
+      allowedAsExperience: actualExperience && !EXPERIENCE_NEGATION_PATTERN.test(line)
     })
   );
   const userFacts = memoFacts.map((fact) => ({
@@ -690,7 +716,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
       value: analysis.topic || form.productName || form.topic,
       source: "user_topic",
       confidence: 0.95,
-      allowedAsExperience: EXPERIENCE_EVIDENCE_PATTERN.test(analysis.topic || form.productName || form.topic || "")
+      allowedAsExperience: false
     }),
     createFact({ field: "primaryEntity", value: analysis.primaryEntity, source: "primary_entity_extraction", confidence: 0.9 }),
     createFact({
@@ -698,7 +724,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
       value: analysis.mainKeyword,
       source: "user_main_keyword",
       confidence: 0.9,
-      allowedAsExperience: EXPERIENCE_EVIDENCE_PATTERN.test(analysis.mainKeyword || "")
+      allowedAsExperience: false
     }),
     createFact({ field: "broadKeyword", value: analysis.broadKeyword, source: "user_main_keyword", confidence: 0.8 }),
     ...inputSubKeywords.map((keyword) =>
@@ -726,7 +752,7 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
   );
   const experienceEvidence = uniqueTexts(
     facts
-      .filter((fact) => fact.allowedAsExperience || EXPERIENCE_EVIDENCE_PATTERN.test(fact.value || ""))
+      .filter((fact) => fact.allowedAsExperience)
       .map((fact) => fact.id)
   );
   const imageEvidence = uniqueTexts(
@@ -808,7 +834,7 @@ const CATEGORY_OUTLINES = {
     reference: ["여행지로 알아본 이유", "동선과 분위기", "사진으로 본 장면", "방문 전 살펴볼 부분"]
   },
   experience: {
-    actual: ["참여하게 된 이유", "처음 진행된 흐름", "직접 해보며 남은 점", "준비하면 좋은 부분"],
+    actual: ["처음 관심이 간 이유", "처음 진행된 흐름", "직접 해보며 남은 점", "준비하면 좋은 부분"],
     reference: ["관심이 간 이유", "진행 방식", "준비할 점", "어울리는 사람"]
   },
   information: {
@@ -956,11 +982,51 @@ const createPlanSections = ({ outline = [], factMap = {}, contextFacts = {}, tar
   });
 };
 
-export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput(form), category = analysis.category, searchIntent = null, experienceStatus = detectExperienceStatus(form), informationSufficiency = null, factMap = null, contextFacts = null } = {}) => {
+const hasConcreteImageEvidence = (imageAnalysis = {}) => {
+  if (!imageAnalysis || imageAnalysis.mode === "none" || imageAnalysis.analysisMode === "none") return false;
+  return Boolean(
+    imageAnalysis.canAssertVisualFacts ||
+      (Array.isArray(imageAnalysis.items) && imageAnalysis.items.length > 0) ||
+      (Array.isArray(imageAnalysis.visuallySupported) && imageAnalysis.visuallySupported.length > 0)
+  );
+};
+
+export const createExperienceGuard = ({ category = "", experienceStatus = "unknown", imageAnalysis = {}, factMap = {}, form = {} } = {}) => {
   const experienceTone = getExperienceTone(experienceStatus);
+  const explicitActual = ACTUAL_EXPERIENCE_STATUSES.has(normalizeExplicitExperienceStatus(form.experienceStatus || form.visitStatus || ""));
+  const actualEvidenceCount = Array.isArray(factMap?.experienceEvidence) ? factMap.experienceEvidence.length : 0;
+  const actualExperience = experienceTone === "actual-review" && (actualEvidenceCount > 0 || explicitActual);
+  const productLikeCategory = PRODUCT_REFERENCE_CATEGORIES.has(category);
+  const imageEvidence = hasConcreteImageEvidence(imageAnalysis);
+  const mustUseReferenceTone = productLikeCategory && !imageEvidence && !actualExperience;
+
+  return {
+    mode: actualExperience ? "actual-review" : mustUseReferenceTone ? "product-reference-no-image" : experienceTone === "reference" ? "reference" : "neutral",
+    actualExperience,
+    productLikeCategory,
+    hasImageEvidence: imageEvidence,
+    noImage: !imageEvidence,
+    mustUseReferenceTone,
+    allowedTone: mustUseReferenceTone ? "product information, selection criteria, pre-purchase checks" : experienceTone,
+    forbiddenClaimTypes: [
+      "unprovided direct use or visit",
+      "unprovided duration",
+      "unprovided place or situation",
+      "unprovided companion or family",
+      "unprovided effect or satisfaction",
+      "unprovided repurchase or revisit intent",
+      "internal judge or fact-check wording"
+    ]
+  };
+};
+
+export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput(form), category = analysis.category, searchIntent = null, experienceStatus = detectExperienceStatus(form), informationSufficiency = null, factMap = null, contextFacts = null, imageAnalysis = null } = {}) => {
+  const experienceTone = getExperienceTone(experienceStatus);
+  const experienceGuard = createExperienceGuard({ category, experienceStatus, imageAnalysis, factMap, form });
+  const effectiveTone = experienceGuard.mustUseReferenceTone ? "reference" : experienceTone;
   const resolvedInformation = informationSufficiency || determineInformationSufficiency({ form, analysis });
   const subKeywords = uniqueTexts([...(analysis.subKeywords || []), ...parseSubKeywords(form.subKeywords, analysis.mainKeyword)]).slice(0, 3);
-  const outline = resolveOutline({ category, experienceTone, informationSufficiency: resolvedInformation });
+  const outline = resolveOutline({ category, experienceTone: effectiveTone, informationSufficiency: resolvedInformation });
   const faqCount = resolvedInformation.level === "low" ? 0 : resolvedInformation.level === "medium" ? 1 : 2;
   const requestedTarget = Number(form.targetCharCount || form.targetLength || 0) || 0;
   const rangeTarget = resolvedInformation.targetLengthRange?.target || 1800;
@@ -980,9 +1046,10 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
   const contaminationPolicy = CATEGORY_CONTAMINATION_MATRIX[category] || { allow: [], forbid: [] };
 
   return {
-    profilePreset: `${category || "experience"}-${experienceTone}`,
+    profilePreset: `${category || "experience"}-${effectiveTone}`,
     readerIntent: searchIntent?.primary || "",
-    tone: experienceTone,
+    tone: effectiveTone,
+    experienceGuard,
     outline,
     dynamicOutline: sections,
     sections,
@@ -1010,6 +1077,9 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
       forbiddenClaims: [
         ...(factMap?.unsupportedFields || []),
         "unprovided companion details",
+        "unprovided direct use or visit",
+        "unprovided experience period",
+        "unprovided use location or situation",
         "unverified price",
         "unverified business hours",
         "unverified parking convenience",
@@ -1028,13 +1098,23 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
 
 const CLAIM_HARD_FAIL_TYPES = new Set(["unsupported", "contradictory", "metaGuidance", "placeholder"]);
 const META_GUIDANCE_PATTERN =
-  /사용자\s*메모|제공된\s*정보|실제\s*사용\s*메모가\s*없으면|해당\s*(?:제품|서비스|상품|장소|메뉴)|본문에서|글을\s*읽는\s*사람|글을\s*작성할\s*때|확인\s*필요|정보가\s*부족하면|작성\s*가이드|최종\s*검수표|writerPlan|factMap|프롬프트/u;
+  /사용자\s*메모|제공된\s*정보|실제\s*사용\s*메모가\s*없으면|해당\s*(?:제품|서비스|상품|장소|메뉴)|본문에서|글을\s*읽는\s*사람|글을\s*작성할\s*때|확인\s*필요|정보가\s*부족하면|작성\s*가이드|최종\s*검수표|입력\s*사실\s*기준|unsupported\s*claim|fact\s*판단|검증\s*결과|writerPlan|factMap|프롬프트/u;
 const PLACEHOLDER_PATTERN = /TODO|TBD|\{[^}]+\}|\[[^\]]*(?:제목|내용|설명|placeholder)[^\]]*\]|사진은\s*어디/u;
 const EXPERIENCE_CLAIM_PATTERN =
-  /다녀왔|다녀온|방문했|방문함|들렀|갔다|가봤|머물렀|묵었|숙박했|먹었|마셨|써봤|사용해봤|사용함|구매했|수강했|참여했|체험했|이용했|편했|기억남|기억났|남았|좋았/u;
+  /다녀왔|다녀온|방문했|방문함|들렀|갔다\s*왔|가봤|머물렀|묵었|숙박했|먹었|마셨|써봤|사용해봤|사용함|사용했|구매했|착용했|수강했|참여했|체험했|이용했|편했|기억남|기억났|남았|좋았/u;
+const DIRECT_EXPERIENCE_CLAIM_PATTERN =
+  /직접\s*(?:방문|사용|구매|착용|수강|숙박|이용)|(?:방문|사용|구매|착용|수강|숙박|이용)(?:해봤|해보니|했(?:고|다|어요|습니다)|함)|써\s*봤|다녀왔|갔다\s*왔|먹어봤|마셔봤|묵었/u;
+const EXPERIENCE_DURATION_CLAIM_PATTERN =
+  /(?:지난\s*(?:주말|주|달|화요일|수요일|목요일|금요일|토요일|일요일)|어제|오늘\s*(?:아침|점심|저녁)?|하루\s*종일|며칠|몇\s*일|\d+\s*(?:일|주|개월)\s*(?:동안|정도)?)[^.\n]{0,24}(?:사용|착용|방문|수강|숙박|이용|써|먹|머물)/u;
+const EXPERIENCE_SITUATION_CLAIM_PATTERN =
+  /(?:집|자취방|회사|사무실|욕실|거실|주방|책상|출근길|퇴근길|저녁\s*약속|여행\s*중|차\s*안|가방)[^.\n]{0,28}(?:사용|착용|방문|수강|숙박|이용|두고|놓고|써|입었|먹었)/u;
+const EXPERIENCE_OUTCOME_CLAIM_PATTERN =
+  /(?:효과가|효과를|만족(?:했|스럽|도가\s*(?:높|좋)|하는|이었다)|재구매|재방문|재수강|다시\s*(?:살|가|입|쓸|사용|방문|수강)|가격\s*만족|가성비|먼지[^.\n]{0,16}(?:보였|붙었|쌓였)|미끄럼[^.\n]{0,12}(?:덜|방지|없)|편했|불편했|좋았|아쉬웠)/u;
 const CONTEXT_CLAIM_PATTERN =
   /가족|아이|아이와|아이랑|아기|유아|어린이|자녀|친구|동료|동행|일행|부모|부모님|엄마|아빠|남편|아내|단체|모임/u;
 const IMAGE_CLAIM_PATTERN = /사진|이미지|화면(?:에|에서)\s*(?:보|나오)|눈에\s*보|시각/u;
+const REFERENCE_QUALIFIER_PATTERN =
+  /(?:구매|방문|사용|착용|수강|신청)\s*전|직접\s*(?:구매|사용|방문|착용|수강)하지|후기는\s*아니|실제\s*(?:사용|방문|구매|착용|수강)\s*후기는\s*아니|확인할|비교할|살펴볼|알아볼/u;
 
 const splitClaimUnits = ({ title = "", body = "", faq = [], hashtags = [] } = {}) =>
   uniqueTexts([
@@ -1075,15 +1155,26 @@ const evidenceIdsForText = (value = "", factMap = {}) => {
 const classifyClaim = ({ value = "", factMap = {}, contextFacts = {}, imageAnalysis = {}, experienceStatus = "unknown" } = {}) => {
   const evidenceIds = evidenceIdsForText(value, factMap);
   const hasContextEvidence = collectContextEvidenceIds(contextFacts).length > 0 || (factMap.contextEvidence || []).length > 0;
-  const hasExperienceEvidence = (factMap.experienceEvidence || []).length > 0;
+  const experienceEvidenceIds = new Set(factMap.experienceEvidence || []);
+  const hasExperienceEvidence = experienceEvidenceIds.size > 0;
+  const hasClaimExperienceEvidence = evidenceIds.some((id) => experienceEvidenceIds.has(id));
   const hasImageEvidence = (factMap.imageEvidence || []).length > 0 || (imageAnalysis.visuallySupported || []).length > 0;
   const isActual = getExperienceTone(experienceStatus || factMap.experienceStatus) === "actual-review";
+  const directExperienceClaim = DIRECT_EXPERIENCE_CLAIM_PATTERN.test(value);
+  const unsupportedExperienceDetail =
+    EXPERIENCE_DURATION_CLAIM_PATTERN.test(value) ||
+    (EXPERIENCE_SITUATION_CLAIM_PATTERN.test(value) && !REFERENCE_QUALIFIER_PATTERN.test(value)) ||
+    EXPERIENCE_OUTCOME_CLAIM_PATTERN.test(value);
 
   if (META_GUIDANCE_PATTERN.test(value)) return { claimType: "metaGuidance", evidenceIds: [] };
   if (PLACEHOLDER_PATTERN.test(value)) return { claimType: "placeholder", evidenceIds: [] };
   if (CONTEXT_CLAIM_PATTERN.test(value) && !hasContextEvidence && evidenceIds.length === 0) return { claimType: "unsupported", evidenceIds };
+  if ((directExperienceClaim || unsupportedExperienceDetail) && (!isActual || !hasExperienceEvidence)) {
+    if (isActual && hasClaimExperienceEvidence) return { claimType: "supported", evidenceIds };
+    return { claimType: isActual ? "unsupported" : "contradictory", evidenceIds };
+  }
   if (EXPERIENCE_CLAIM_PATTERN.test(value) && !hasExperienceEvidence) {
-    if (evidenceIds.length > 0) return { claimType: "supported", evidenceIds };
+    if (isActual && hasClaimExperienceEvidence) return { claimType: "supported", evidenceIds };
     return { claimType: isActual ? "unsupported" : "contradictory", evidenceIds };
   }
   if (IMAGE_CLAIM_PATTERN.test(value) && !hasImageEvidence) return { claimType: "unsupported", evidenceIds };
@@ -1200,7 +1291,8 @@ export const buildBlogWriterPipelineContext = (form = {}, overrides = {}) => {
       experienceStatus,
       informationSufficiency,
       factMap,
-      contextFacts
+      contextFacts,
+      imageAnalysis
     });
 
   return {

@@ -457,7 +457,7 @@ const TONE_PROFILES = {
     opening: (keyword) =>
       `${asObject(keyword)} 검토할 때 중요한 것은 많은 정보를 모으는 것보다 판단 기준을 정확히 세우는 일입니다.`,
     topicBridge: (topic, angle) =>
-      `"${topic}"에 대해 살펴볼 때는 ${asObject(angle)} 먼저 정리하는 것이 좋습니다. 조건, 과정, 사후 안내를 같은 기준으로 보면 선택의 근거가 명확해집니다.`,
+      `"${topic}"에 대해 살펴볼 때는 ${asObject(angle)} 먼저 정리하는 것이 좋습니다. 조건, 과정, 사후 안내를 나란히 놓으면 선택의 근거가 명확해집니다.`,
     purposeLine: (keyword) =>
       `${asObject(keyword)} 비교하기 전에는 이용 목적과 기대 결과, 필요한 조건을 구분해야 합니다. 이 세 가지가 정리되면 불필요한 선택지를 줄일 수 있습니다.`,
     categoryLine: (category) =>

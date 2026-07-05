@@ -773,15 +773,24 @@ const ensureEntityTitle = ({ title = "", primaryEntity = "", mainKeyword = "" } 
   return `${primaryEntity} ${tail}`.trim();
 };
 
-const ensureEntityTitleCandidates = ({ candidates = [], primaryEntity = "", mainKeyword = "" } = {}) => {
+const ensureEntityTitleCandidates = ({ candidates = [], primaryEntity = "", mainKeyword = "", experienceGuard = null } = {}) => {
   const base = normalizeList(candidates).slice(0, 5);
-  const templates = [
-    `${primaryEntity} ${mainKeyword}`.trim(),
-    `${primaryEntity} 실제 사용 기준`.trim(),
-    `${primaryEntity} 좋았던 점과 아쉬운 점`.trim(),
-    `${primaryEntity} 다시 볼 때 남은 기준`.trim(),
-    `${primaryEntity} 선택 전 확인할 점`.trim()
-  ].filter(Boolean);
+  const referenceMode = Boolean(experienceGuard?.mustUseReferenceTone || experienceGuard?.actualExperience === false);
+  const templates = referenceMode
+    ? [
+        `${primaryEntity} ${mainKeyword}`.trim(),
+        `${primaryEntity} 선택 전 확인할 점`.trim(),
+        `${primaryEntity} 구성 비교 기준`.trim(),
+        `${primaryEntity} 구매 전 살펴볼 부분`.trim(),
+        `${primaryEntity} 제품 정보 기반 체크`.trim()
+      ].filter(Boolean)
+    : [
+        `${primaryEntity} ${mainKeyword}`.trim(),
+        `${primaryEntity} 실제 사용 기준`.trim(),
+        `${primaryEntity} 좋았던 점과 아쉬운 점`.trim(),
+        `${primaryEntity} 다시 볼 때 남은 기준`.trim(),
+        `${primaryEntity} 선택 전 확인할 점`.trim()
+      ].filter(Boolean);
   const merged = [...base, ...templates]
     .map((title) => ensureEntityTitle({ title, primaryEntity, mainKeyword }))
     .filter(Boolean);
@@ -806,7 +815,7 @@ const ensureOpeningEntity = ({ body = "", primaryEntity = "", mainKeyword = "" }
   const paragraphs = splitBodyParagraphs(body);
   if (!primaryEntity || paragraphs.length === 0 || firstSentenceHasEntity(body, primaryEntity)) return body;
   const first = paragraphs[0];
-  paragraphs[0] = `${primaryEntity} ${mainKeyword || "후기"} 관련 기준으로 보면, ${first}`;
+  paragraphs[0] = `먼저 ${primaryEntity}부터 이야기하면, ${first}`;
   return paragraphs.join("\n\n");
 };
 
@@ -815,29 +824,41 @@ const buildGroundedFactParagraph = ({ primaryEntity = "", mainKeyword = "", fact
   if (!factText) return "";
   const entity = primaryEntity || mainKeyword || "이번 주제";
   if (!detailed) {
-    return `${entity}에서는 ${factText} 이 부분이 실제 흐름에서 바로 남았다. 좋았던 점과 아쉬운 점을 따로 부풀리지 않고, 그 상황에서 무엇이 편했고 무엇을 다시 볼지 중심으로 정리했다.`;
+    return `${entity}에서는 ${factText} 이 부분을 별도 판단 기준으로 볼 수 있다. 확인된 내용 안에서 용도와 비교 조건을 나누면 과한 단정 없이도 중심이 분명해진다.`;
   }
   const templates = [
-    `${entity}에서 가장 먼저 남는 대목은 ${factText} 이었다. 이 경험은 단순한 호불호보다 실제 상황을 보여준다. 그래서 좋은 점은 어떤 조건에서 좋았는지, 아쉬운 점은 다음 선택 때 무엇을 살피게 만드는지로 나뉜다. 같은 조건에서 다시 고른다면 이 지점이 우선순위를 바꿀 수 있다.`,
-    `${factText} 라는 점도 ${entity}를 볼 때 따로 남겨둘 만했다. 순간적인 인상만 적으면 비슷한 글처럼 흐르기 쉬운데, 이 부분은 사용하거나 방문한 흐름 안에서 구체적으로 떠올릴 수 있는 장면이었다. 만족한 이유와 망설인 이유가 함께 있어서 한쪽으로만 기울지 않는다.`,
-    `${entity}를 다시 떠올리면 ${factText} 이 부분이 선택 기준을 꽤 분명하게 만들었다. 좋았던 점은 실제 상황에서 체감된 장점으로 남았고, 아쉬웠던 점은 다음에 같은 조건을 만났을 때 먼저 살필 항목이 됐다. 그래서 추천보다 판단에 가까운 기록으로 이어진다.`,
-    `${factText} 때문에 ${entity}에 대한 인상은 한 문장으로만 정리하기 어려웠다. 편했던 부분은 그대로 장점이 됐지만, 불편하거나 애매했던 부분도 이후 재사용이나 재방문 판단에 영향을 줬다. 이런 균형이 있어야 비슷한 상황의 독자가 자기 조건과 비교하기 쉽다.`
+    `${entity}에서 먼저 볼 대목은 ${factText} 이었다. 이 내용은 호불호를 새로 만들기보다 확인 가능한 정보와 비교 조건을 연결해 주는 기준에 가깝다.`,
+    `${factText} 라는 점도 ${entity}를 볼 때 따로 남겨둘 만하다. 비슷한 글처럼 흐르지 않으려면 이 부분을 용도, 구성, 조건처럼 확인 가능한 항목으로 나누는 편이 좋다.`,
+    `${entity}를 정리할 때 ${factText} 이 부분은 선택 기준을 꽤 분명하게 만든다. 추천 문구로 부풀리지 않고 어떤 조건에서 살펴볼 항목인지 중심으로 두면 글의 균형이 유지된다.`,
+    `${factText} 때문에 ${entity}에 대한 설명은 한 문장으로만 정리하기 어렵다. 장점 단정이나 사용 후 판단보다 비교할 요소와 확인할 지점을 함께 놓아야 독자가 자기 조건과 맞춰 보기 쉽다.`
   ];
   return templates[index % templates.length];
 };
 
-const buildGroundedFactExpansionParagraph = ({ primaryEntity = "", mainKeyword = "", fact = {}, index = 0, detailed = false } = {}) => {
+const buildGroundedFactExpansionParagraph = ({ primaryEntity = "", mainKeyword = "", fact = {}, index = 0, detailed = false, referenceMode = false } = {}) => {
   const factText = String(fact?.value || "").trim();
   if (!factText) return "";
   const entity = primaryEntity || mainKeyword || "이번 주제";
+  if (referenceMode) {
+    if (!detailed) {
+      return `${entity}를 살펴볼 때 "${factText}"라는 내용은 구매 전 확인할 기준으로 분리해볼 만했다. 제품명, 용도, 비교할 조건을 나눠 보면 과한 후기 톤 없이도 선택 포인트가 분명해진다.`;
+    }
+    const templates = [
+      `${entity}에서 먼저 볼 부분은 "${factText}"였다. 이 내용은 실제 사용 장면을 새로 만들기보다 제품 정보와 선택 기준을 연결해 주는 역할을 한다. 그래서 장점 단정 대신 어떤 조건에서 확인하면 좋을지로 정리했다.`,
+      `"${factText}"라는 내용은 ${entity}를 비교할 때 따로 떼어 볼 만하다. 구매 전 단계에서는 만족도나 효과를 말하기보다 크기, 구성, 소재, 용도처럼 확인 가능한 항목을 차례로 보는 편이 자연스럽다.`,
+      `${entity}를 고르기 전에는 "${factText}"를 기준으로 비슷한 제품과 비교해볼 수 있다. 지금 단계에서는 사용 기간이나 장소를 덧붙이지 않고, 선택 전에 다시 확인할 항목으로 남기는 쪽이 읽기 편하다.`,
+      `"${factText}"는 ${entity}를 소개할 때 중심을 잡아주는 정보다. 이 내용을 기준으로 필요한 사람, 확인할 조건, 비교할 지점을 나누면 후기가 아닌 제품 정보 기반 글로도 충분히 구체적이다.`
+    ];
+    return templates[index % templates.length];
+  }
   if (!detailed) {
-    return `${entity}를 볼 때 "${factText}"라는 점은 실제 판단 기준 안에서 함께 봐야 했다. 그래서 이 부분은 새 경험을 만들지 않고, 입력된 fact가 어떤 상황에서 의미가 있었는지 중심으로 정리했다.`;
+    return `${entity}를 볼 때 "${factText}"라는 점은 판단 기준 안에서 함께 볼 만했다. 이 내용은 앞뒤 문단과 겹치지 않게 별도 포인트로 정리했다.`;
   }
   const templates = [
-    `${entity}에서 먼저 남는 기준은 "${factText}"였다. 이 fact는 단순한 분위기 설명이 아니라 사용하거나 방문한 흐름을 판단하는 근거라서, 앞뒤 문단과 겹치지 않게 별도 판단 포인트로 정리했다.`,
-    `"${factText}"라는 내용은 ${entity}의 만족 요소와 망설임을 함께 보게 만든다. 같은 문장을 반복하기보다 이 fact가 어떤 선택 기준으로 이어지는지, 그리고 다음에 비슷한 조건이면 무엇을 먼저 확인할지까지 연결했다.`,
-    `${entity}를 다시 떠올릴 때 "${factText}"는 결론을 보강하는 핵심 근거가 된다. 그래서 추천 문구로 부풀리지 않고, 실제 입력된 경험 안에서 어떤 의미였는지를 짚는 방식으로 남겼다.`,
-    `"${factText}"는 ${entity}를 판단할 때 빠지면 글의 균형이 흔들리는 정보다. 좋은 점만 강조하거나 아쉬운 점만 키우지 않고, 해당 상황이 전체 인상에 어떤 영향을 줬는지 중심으로 정리했다.`
+    `${entity}에서 먼저 남는 기준은 "${factText}"였다. 이 내용은 단순한 분위기 설명보다 구체적인 판단 포인트에 가까워서, 앞뒤 문단과 겹치지 않게 별도로 정리했다.`,
+    `"${factText}"라는 내용은 ${entity}를 볼 때 장점과 망설임을 함께 생각하게 만든다. 같은 문장을 반복하기보다 이 정보가 어떤 선택 기준으로 이어지는지까지 연결했다.`,
+    `${entity}를 다시 떠올릴 때 "${factText}"는 결론을 보강하는 근거가 된다. 추천 문구로 부풀리지 않고, 확인된 내용 안에서 어떤 의미인지 짚는 방식으로 남겼다.`,
+    `"${factText}"는 ${entity}를 판단할 때 빠지면 글의 균형이 흔들리는 정보다. 좋은 점만 강조하거나 아쉬운 점만 키우지 않고, 전체 판단에서 어디에 놓이는지 중심으로 정리했다.`
   ];
   return templates[index % templates.length];
 };
@@ -933,10 +954,12 @@ const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "",
   const enforceTarget = informationLevel !== "low";
   const minTarget = enforceTarget && requestedTarget > 0 ? Math.ceil(requestedTarget * 0.85) : 0;
   const detailedExpansion = enforceTarget && requestedTarget >= 1800;
+  const experienceGuard = pipelineContext.writerPlan?.experienceGuard || null;
+  const referenceMode = Boolean(experienceGuard?.mustUseReferenceTone || pipelineContext.writerPlan?.tone === "reference");
   const applied = [];
   let repairedBody = String(body || "").trim();
   let repairedTitle = ensureEntityTitle({ title: finalTitle, primaryEntity, mainKeyword });
-  let repairedTitles = ensureEntityTitleCandidates({ candidates: titleCandidates, primaryEntity, mainKeyword });
+  let repairedTitles = ensureEntityTitleCandidates({ candidates: titleCandidates, primaryEntity, mainKeyword, experienceGuard });
 
   if (repairedTitle !== finalTitle) applied.push("primaryEntityTitle");
   if (primaryEntity && repairedTitles.filter((title) => includesCompact(title, primaryEntity)).length >= 4) applied.push("primaryEntityTitleCandidates");
@@ -956,7 +979,7 @@ const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "",
   const seenFactIds = new Set();
   const pushFact = (fact, index, { detailed = detailedExpansion } = {}) => {
     if (!fact?.id || seenFactIds.has(fact.id)) return;
-    const paragraph = buildGroundedFactExpansionParagraph({ primaryEntity, mainKeyword, fact, index, detailed });
+    const paragraph = buildGroundedFactExpansionParagraph({ primaryEntity, mainKeyword, fact, index, detailed, referenceMode });
     const currentBody = [repairedBody, ...paragraphsToAdd].filter(Boolean).join("\n\n");
     const projectedBody = [currentBody, paragraph].filter(Boolean).join("\n\n");
     const maxTarget = requestedTarget > 0 ? Math.floor(requestedTarget * 1.1) : Infinity;
@@ -971,7 +994,7 @@ const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "",
   userFacts.forEach((fact, index) => {
     const currentBody = [repairedBody, ...paragraphsToAdd].filter(Boolean).join("\n\n");
     if (minTarget > 0 && charLength(currentBody) < minTarget) {
-      const paragraph = buildGroundedFactExpansionParagraph({ primaryEntity, mainKeyword, fact, index, detailed: detailedExpansion });
+      const paragraph = buildGroundedFactExpansionParagraph({ primaryEntity, mainKeyword, fact, index, detailed: detailedExpansion, referenceMode });
       const projectedBody = [currentBody, paragraph].filter(Boolean).join("\n\n");
       const maxTarget = requestedTarget > 0 ? Math.floor(requestedTarget * 1.1) : Infinity;
       if (paragraph && charLength(projectedBody) <= maxTarget) {
@@ -1508,6 +1531,11 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
       "Publish readiness requires all of these: primaryEntity in finalTitle/opening/body, inputFactCoverage >= 0.90, target length 85-110% for high/medium inputs, zero unsupported claims, zero category contamination, no meta guidance, no awkward josa, and natural Korean. Missing critical facts, unsupported claims, weak opening entity placement, or target length outside range must be reflected in missingFactIds, criticalMissingFactIds, unsupportedClaims, issues, issueCodes, and revisionInstructions. Judge the reader-facing draft body first; FAQ is optional support and hashtags are metadata, so do not make hashtag count alone a blocking issue unless it introduces unsupported, contaminated, or meta language. For image inputs, score photo context by whether the body uses provided imageAnalysis or user photo notes as grounded detail; do not require a specific marker format such as [사진 삽입:]. Low-information inputs may remain honest_draft instead of forcing length. Use deterministicPrecheck as a consistency check: if it shows coverage >= 0.90, targetComplianceRatio 0.85-1.10, and no claimLedger hard fail, do not assign a score below 95 unless you can name a concrete high or critical reader-facing issue."
   },
   {
+    role: "system",
+    content:
+      "If the input has no actual visit/use/purchase/wear/class/stay evidence, any draft sentence that claims direct experience, a use period, a concrete use place or situation, companion or family involvement, effect, satisfaction, price satisfaction, or repurchase/revisit intent must be treated as unsupportedClaims or FALSE_EXPERIENCE. For product-like categories with no image and no actual experience facts, publishReady must be false when the draft reads like a real-use review instead of product information, selection criteria, or pre-purchase checks. Do not output internal terms in the final judgment evidence beyond short issue labels."
+  },
+  {
     role: "user",
     content: JSON.stringify({
       outputSchema: {
@@ -1553,6 +1581,7 @@ const buildHumanJudgeMessages = ({ form = {}, draft = {} } = {}) => [
         informationSufficiency: draft.contentPackage?.informationSufficiency || form.informationSufficiency || null,
         factMap: draft.contentPackage?.factMap || null,
         imageAnalysis: draft.contentPackage?.imageAnalysis || form.imageAnalysis || null,
+        experienceGuard: draft.contentPackage?.writerPlan?.experienceGuard || draft.writerPlan?.experienceGuard || null,
         claimLedger: draft.contentPackage?.claimLedger || draft.claimLedger || [],
         imageApplicable: Boolean(form.imageCount || form.images?.length || form.photos?.length || form.imageContext?.length),
         faqApplicable: getDraftFaqItems(draft).length > 0

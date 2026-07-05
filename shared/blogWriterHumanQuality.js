@@ -114,19 +114,26 @@ const GENERIC_FILLER_PATTERN =
   /식사\s*장소는\s*이동\s*동선|식사\s*장소를\s*고를\s*때|대표\s*메뉴가\s*분명하면|같이\s*간\s*사람이\s*편한지도|방문\s*전\s*정보를\s*확인|메뉴가\s*분명하면\s*고르기|처음\s*보는\s*사람|독자에게\s*도움|사진이\s*여러\s*장이면|기준이\s*중요|후보로\s*보기/u;
 
 const UNSUPPORTED_CLAIM_PATTERNS = [
+  { pattern: /직접\s*(?:방문|사용|구매|착용|수강|숙박|이용)|(?:방문|사용|구매|착용|수강|숙박|이용)(?:해봤|해보니|했(?:고|다|어요|습니다)|함)|써\s*봤|다녀왔|갔다\s*왔|먹어봤|마셔봤|묵었/u, label: "직접 경험" },
+  { pattern: /(?:지난\s*(?:주말|주|달|화요일|수요일|목요일|금요일|토요일|일요일)|어제|오늘\s*(?:아침|점심|저녁)?|하루\s*종일|며칠|몇\s*일|\d+\s*(?:일|주|개월)\s*(?:동안|정도)?)[^.\n]{0,24}(?:사용|착용|방문|수강|숙박|이용|써|먹|머물)/u, label: "경험 기간" },
+  { pattern: /(?:집|자취방|회사|사무실|욕실|거실|주방|책상|출근길|퇴근길|저녁\s*약속|여행\s*중|차\s*안|가방)[^.\n]{0,28}(?:사용|착용|방문|수강|숙박|이용|두고|놓고|써|입었|먹었)/u, label: "사용 장소/상황" },
   { pattern: /직원\s*(?:응대|친절)|사장님\s*친절/u, label: "직원 친절" },
   { pattern: /주차가\s*(?:편|좋|가능)|주차\s*편/u, label: "주차 편함" },
   { pattern: /양(?:이|은)?[^.\n]{0,12}(?:많|넉넉|푸짐)|푸짐했/u, label: "양 많음" },
   { pattern: /웨이팅\s*(?:없|짧)|대기\s*없/u, label: "웨이팅 없음" },
   { pattern: /가격\s*(?:만족|괜찮|저렴)|가성비/u, label: "가격 만족" },
-  { pattern: /재방문(?:\s*의사|하고\s*싶)|다시\s*가고\s*싶/u, label: "재방문 의사" },
+  { pattern: /재방문(?:\s*의사|하고\s*싶)|재구매|재수강|다시\s*(?:가고|사고|입고|쓰고|사용하고|방문하고|수강하고)\s*싶|다시\s*(?:살|갈|입을|쓸|사용할|방문할|수강할)\s*(?:의사|생각)/u, label: "재사용 의사" },
   { pattern: /맛있었|맛이\s*좋|맵기(?:가|는)\s*딱|국물이\s*시원/u, label: "맛 단정" },
-  { pattern: /효과가\s*(?:좋|있|확실)|바로\s*효과/u, label: "효과 단정" }
+  { pattern: /효과가\s*(?:좋|있|확실)|바로\s*효과|만족(?:했|스럽|도가\s*(?:높|좋)|하는|이었다)|먼지[^.\n]{0,16}(?:보였|붙었|쌓였)|미끄럼[^.\n]{0,12}(?:덜|방지|없)/u, label: "효과/만족 단정" }
 ];
 
-const VISIT_CUE_PATTERN = /다녀|방문|먹어|먹었|갔다|갔|들렀|들른|사용|써봤|수강|듣고|좋았|느꼈|기억/u;
+const VISIT_CUE_PATTERN = /직접\s*(?:방문|사용|구매|착용|수강|숙박|이용)|다녀왔|방문(?:함|했|했다|했어요)|먹어봤|먹었|갔다\s*왔|들렀|사용(?:함|했|해봤)|써봤|착용(?:함|했)|수강(?:함|했)|묵었|숙박/u;
 const PLACEHOLDER_PATTERN =
-  /해당\s*(?:제품|서비스|업체|장소|메뉴|상품)|대표\s*메뉴(?![가-힣A-Za-z0-9]*(?:\s*사진|\s*메뉴|인|으로|가|는|를|을))|사용자\s*메모|제공된\s*정보|확인\s*필요로\s*남깁/u;
+  /해당\s*(?:제품|서비스|업체|장소|메뉴|상품)|대표\s*메뉴(?![가-힣A-Za-z0-9]*(?:\s*사진|\s*메뉴|인|으로|가|는|를|을))|사용자\s*메모|제공된\s*정보|확인\s*필요로\s*남깁|입력\s*사실\s*기준|unsupported\s*claim|fact\s*판단|검증\s*결과/u;
+const EXPERIENCE_NEGATION_PATTERN =
+  /(?:직접\s*)?(?:방문|사용|구매|착용|수강|숙박|이용)(?:하지\s*않|한\s*것은\s*아니|한\s*후기는\s*(?:아니|아님|아니다)|전\s*단계)|아직\s*직접|실제\s*(?:방문|사용|구매|착용|수강|숙박|이용)\s*후기는\s*(?:아니|아님|아니다)|(?:방문|사용|구매|착용|수강|숙박|이용)\s*전\s*(?:단계|확인|비교|검토)|구매\s*전|방문\s*전/u;
+const REFERENCE_QUALIFIER_PATTERN =
+  /(?:구매|방문|사용|착용|수강|신청)\s*전|직접\s*(?:구매|사용|방문|착용|수강)하지|후기는\s*아니|실제\s*(?:사용|방문|구매|착용|수강)\s*후기는\s*아니|확인할|비교할|살펴볼|알아볼/u;
 
 const normalizeFactMap = (factMap = {}, fallbackText = "") => {
   const factValues = [].concat(factMap.facts || []).map((fact) =>
@@ -144,10 +151,13 @@ const normalizeFactMap = (factMap = {}, fallbackText = "") => {
   return { supported, visuallySupported, denied, sourceText };
 };
 
-const inferVisitStatus = ({ visitStatus = "", factMap = {}, body = "" }) => {
+const inferVisitStatus = ({ visitStatus = "", factMap = {} }) => {
   const explicit = text(visitStatus || factMap.visitStatus);
   if (explicit) return explicit;
-  const source = `${factMap.memoText || ""}\n${body}`;
+  const source = [
+    factMap.memoText || "",
+    ...[].concat(factMap.facts || []).filter((fact) => fact?.allowedAsExperience).map((fact) => fact.value || "")
+  ].join("\n");
   if (VISIT_CUE_PATTERN.test(source)) return "visited";
   return "unknown";
 };
@@ -263,7 +273,7 @@ export const evaluateHumanQuality = ({
   const caps = [];
   const resolvedFactMap = normalizeFactMap(factMap, `${mainKeyword}\n${subKeywords.join("\n")}`);
   const sourceText = resolvedFactMap.sourceText;
-  const resolvedVisitStatus = inferVisitStatus({ visitStatus, factMap, body: sourceText });
+  const resolvedVisitStatus = inferVisitStatus({ visitStatus, factMap });
   const bodyLength = normalizedBody.replace(/\s+/g, "").length;
   const exactKeywordCount = mainKeyword ? countOccurrences(normalizedBody, mainKeyword) : 0;
   const keywordRange = getKeywordRange(bodyLength || effectiveTargetCharCount || requestedTargetCharCount);
@@ -290,8 +300,17 @@ export const evaluateHumanQuality = ({
   const llmCategoryContamination = Array.isArray(llmJudge?.categoryContamination) ? llmJudge.categoryContamination.filter(Boolean) : [];
   const llmMetaGuidance = Array.isArray(llmJudge?.metaGuidance) ? llmJudge.metaGuidance.filter(Boolean) : [];
   const llmJosaErrors = Array.isArray(llmJudge?.josaErrors) ? llmJudge.josaErrors.filter(Boolean) : [];
-  const bodySuggestsVisit = /다녀왔|방문했|먹었|사용해봤|수강했|들렀/u.test(normalizedBody);
+  const bodySuggestsVisit = VISIT_CUE_PATTERN.test(normalizedBody);
   const visitContradiction = /not[-_\s]?visited|previsit|unknown|방문전|방문 전 참고/u.test(resolvedVisitStatus) && bodySuggestsVisit;
+  const sourceHasActualExperience = VISIT_CUE_PATTERN.test(sourceText) && !EXPERIENCE_NEGATION_PATTERN.test(sourceText);
+  const falseExperienceClaims = unsupportedClaims
+    .filter((item) => ["직접 경험", "경험 기간", "사용 장소/상황", "재사용 의사", "효과/만족 단정", "가격 만족"].includes(item.label))
+    .filter((item) => {
+      if (!item.pattern.test(normalizedBody)) return false;
+      if (item.pattern.test(sourceText)) return false;
+      if (item.label === "사용 장소/상황" && REFERENCE_QUALIFIER_PATTERN.test(normalizedBody)) return false;
+      return !sourceHasActualExperience || item.label !== "직접 경험";
+    });
   const photoMarkers = (normalizedBody.match(/\[사진 삽입:/gu) || []).length;
   const hasImageInput = hasConcreteImageInput(imageAnalysis);
   const concretePhotoText = /붉은\s*국물|낙지|해산물|채소|그릇|토핑|색감|튀김|패키지|커리큘럼|공고문|안내문/u.test(normalizedBody);
@@ -482,6 +501,16 @@ export const evaluateHumanQuality = ({
       evidence: entityForCoverage,
       message: "대표 엔티티가 본문에서 누락됐습니다.",
       revisionInstruction: "본문 중심 문단에 대표 엔티티를 다시 반영하세요."
+    });
+  }
+  if (falseExperienceClaims.length > 0 || visitContradiction) {
+    caps.push({ score: 55, code: "FALSE_EXPERIENCE" });
+    addIssue(issues, {
+      code: "FALSE_EXPERIENCE",
+      severity: "critical",
+      evidence: falseExperienceClaims.map((item) => item.label).join(", ") || "방문/사용 상태 불일치",
+      message: "사용자가 제공하지 않은 직접 경험처럼 읽히는 문장이 있습니다.",
+      revisionInstruction: "실제 경험 근거가 없으면 제품 정보, 선택 기준, 구매 전 확인 포인트로 다시 쓰세요."
     });
   }
   if (unsupportedClaims.length > 0 || llmUnsupportedClaims.length > 0 || visitContradiction) {
@@ -679,6 +708,8 @@ export const evaluateHumanQuality = ({
     llmMetaGuidance.length === 0 &&
     !primaryEntityMissing &&
     unsupportedClaims.length === 0 &&
+    falseExperienceClaims.length === 0 &&
+    !visitContradiction &&
     llmUnsupportedClaims.length === 0 &&
     duplicateSignals.duplicates.length === 0 &&
     !awkwardTitle &&
@@ -741,10 +772,12 @@ export const evaluateHumanQuality = ({
       entityCoverage,
       inputFactCoverage,
       targetComplianceRatio,
-      unsupportedClaims: [
+      unsupportedClaims: unique([
         ...unsupportedClaims.map((item) => item.label),
+        ...falseExperienceClaims.map((item) => item.label),
         ...llmUnsupportedClaims
-      ],
+      ]),
+      falseExperienceClaims: falseExperienceClaims.map((item) => item.label),
       applicability: applicableItems,
       categoryContamination: [
         ...categoryContaminationResult.categoryContamination,
