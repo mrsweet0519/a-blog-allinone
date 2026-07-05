@@ -366,13 +366,18 @@ const noActualProductForm = {
   mainKeyword: "정리 트레이 사용 후기",
   subKeywords: "책상 정리, 선택 기준",
   targetCharCount: 2100,
-  experienceMemo: "구매 전 칸 크기와 소재를 비교하는 단계\n직접 사용한 후기는 아님\n작은 물건을 나눠 둘 수 있는 구성이 궁금함",
+  experienceMemo: "구매 전 칸 크기와 소재를 비교하는 단계\n직접 사용한 후기는 아님\n작은 물건을 나눠 둘 수 있는 구성이 궁금함\n본문에는 사용 기간, 만족도, 재구매 의사를 만들지 말아야 함",
   imageContext: []
 };
 assert.notEqual(detectExperienceStatus(noActualProductForm), "used");
 const noActualProductContext = buildBlogWriterPipelineContext(noActualProductForm);
 assert.equal(noActualProductContext.writerPlan.experienceGuard.mustUseReferenceTone, true);
 assert.equal(noActualProductContext.factMap.experienceEvidence.length, 0);
+assert.equal(noActualProductContext.factMap.actualExperienceProvided, false);
+assert.equal(noActualProductContext.factMap.claimBoundaries.productLikeNoActualNoImage, true);
+assert.ok(noActualProductContext.factMap.claimBoundaries.allowedClaimTypes.includes("pre_purchase_check"));
+assert.ok(noActualProductContext.factMap.constraintFacts.some((fact) => /후기는\s*아님|만들지\s*말/u.test(fact.value)));
+assert.ok(noActualProductContext.factMap.userFacts.every((fact) => !/후기는\s*아님|본문에는|만들지\s*말/u.test(fact.value)));
 const inventedExperienceLedger = summarizeClaimLedger(
   createClaimLedger({
     title: "유닛 정리 트레이 사용 후기",
@@ -565,6 +570,59 @@ assert.equal(mockSuccessDraft.llm.visionEnabled, true);
 assert.equal(mockSuccessDraft.llm.keyPresent, true);
 assert.equal(mockSuccessDraft.llm.model, "gpt-4.1");
 assert.equal(mockSuccessDraft.llm.status, null);
+
+const unsafeReferenceWriterDraft = await callApiWithFetch({
+  body: noActualProductForm,
+  env: {
+    BLOG_WRITER_LLM_ENABLED: "true",
+    BLOG_WRITER_LLM_JUDGE_ENABLED: "false",
+    BLOG_WRITER_LLM_REVISION_ENABLED: "false",
+    OPENAI_API_KEY: "unit-test-key",
+    OPENAI_MODEL: "gpt-4.1"
+  },
+  fetchImpl: async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({
+                finalTitle: "유닛 정리 트레이 직접 사용 후기",
+                titleCandidates: [
+                  "유닛 정리 트레이 직접 사용 후기",
+                  "유닛 정리 트레이 3일 사용 후기",
+                  "유닛 정리 트레이 책상 사용감",
+                  "유닛 정리 트레이 재구매 의사",
+                  "유닛 정리 트레이 선택 기준"
+                ],
+                sections: [
+                  {
+                    heading: null,
+                    paragraphs: [
+                      "유닛 정리 트레이를 직접 사용해봤고 3일 동안 책상에 놓아보니 확실히 느껴지는 점이 있었다.",
+                      "입력 사실 기준으로 보면 claim ledger에서도 문제가 없도록 위 조건을 반영하면 된다.",
+                      "먼지가 잘 보이고 미끄럼 방지가 좋아 재구매 의사도 생겼다."
+                    ],
+                    imageRefs: []
+                  }
+                ],
+                faq: [],
+                hashtags: ["#정리트레이", "#책상정리"]
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200 }
+    )
+});
+assert.equal(unsafeReferenceWriterDraft.engine, "llm");
+assert.equal(unsafeReferenceWriterDraft.contentPackage.writerPlan.experienceGuard.mustUseReferenceTone, true);
+assert.equal(unsafeReferenceWriterDraft.contentPackage.claimLedgerSummary.hardFail, false);
+assert.ok(!/직접\s*사용|사용해봤|3일|책상에\s*놓아보|확실히\s*느꼈|재구매\s*의사|먼지가\s*잘|미끄럼\s*방지/u.test(unsafeReferenceWriterDraft.body));
+assert.ok(!/입력\s*사실\s*기준|claim\s*ledger|unsupported\s*claim|fact\s*map|검증\s*결과|내부\s*판단|위\s*조건을\s*반영|자동\s*평가\s*기준/u.test(unsafeReferenceWriterDraft.body));
+assert.ok(unsafeReferenceWriterDraft.body.includes(unsafeReferenceWriterDraft.contentPackage.primaryEntity));
 
 const authFailureDraft = await callApiWithFetch({
   env: {

@@ -205,7 +205,7 @@ const getFactCoverageSignals = (fact = {}, body = "") => {
 };
 
 export const calculateInputFactCoverage = ({ factMap = {}, body = "", coveredFactIds = [], missingFactIds = [] } = {}) => {
-  const highConfidenceFacts = (factMap.userFacts || []).filter((fact) => Number(fact.confidence || 0) >= 0.85);
+  const highConfidenceFacts = (factMap.userFacts || []).filter((fact) => fact.coverageRequired !== false && Number(fact.confidence || 0) >= 0.85);
   const coveredSet = new Set(coveredFactIds.filter(Boolean));
   const explicitMissingSet = new Set(missingFactIds.filter(Boolean));
   const coverageDetails = highConfidenceFacts.map((fact) => {
@@ -615,7 +615,11 @@ const VISIT_PURPOSE_RULES = [
   ["정보 확인", /방법|정보|절차|준비|알아보/u]
 ];
 
+const WRITING_CONSTRAINT_FACT_PATTERN =
+  /본문|원고|작성|쓰지\s*말|넣지\s*말|만들지\s*말|금지|반영해야|들어가야|최종|검수|판단\s*기준|평가\s*기준|사진(?:이|은)?\s*없|이미지(?:가|는)?\s*없|claim\s*ledger|fact\s*map|unsupported\s*claim|내부\s*판단|검증\s*결과/u;
+
 const USER_FACT_TYPE_RULES = [
+  ["writing_constraint", WRITING_CONSTRAINT_FACT_PATTERN],
   ["usage_context", /계기|때문|위해|하려고|찾다가|필요|궁금|알아보|출근|퇴근|여행|주말|일상|가방|집|회사/u],
   ["actual_usage", /사용|써봄|써봤|착용|입어|들고|발라|먹어|마셔|방문|다녀|숙박|수강|참여|이용/u],
   ["fit_or_feel", /맛|향|식감|착용감|사용감|무게|압박|편했|부담|부드|산뜻|건조|수납|세척/u],
@@ -630,14 +634,25 @@ const USER_FACT_TYPE_RULES = [
 const classifyUserFactType = (value = "") =>
   USER_FACT_TYPE_RULES.find(([, pattern]) => pattern.test(value))?.[0] || "memo";
 
-const createFact = ({ id = "", field, type = "", value, source, confidence = 0.85, allowedAsExperience = false } = {}) => ({
+const isNegatedExperienceLine = (value = "") => EXPERIENCE_NEGATION_PATTERN.test(value);
+
+const isWritingConstraintFact = (value = "") =>
+  WRITING_CONSTRAINT_FACT_PATTERN.test(value) ||
+  (
+    isNegatedExperienceLine(value) &&
+    /후기는\s*(?:아니|아님|아니다)|직접\s*(?:방문|사용|구매|착용|수강|숙박|이용)하지|만들지\s*말/u.test(value)
+  );
+
+const createFact = ({ id = "", field, type = "", value, source, confidence = 0.85, allowedAsExperience = false, coverageRequired = true, claimCategory = "" } = {}) => ({
   id,
   field,
   type: type || field,
   value: text(value),
   source,
   confidence,
-  allowedAsExperience
+  allowedAsExperience,
+  coverageRequired,
+  claimCategory: claimCategory || (allowedAsExperience ? "actualExperience" : coverageRequired ? "inputFact" : "claimBoundary")
 });
 
 const evidenceIdsForPattern = (facts = [], pattern = /$^/u) =>
@@ -690,25 +705,34 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
     .map((line) => line.trim())
     .filter(Boolean)
     .slice(0, 8);
-  const memoFacts = memoLines.map((line, index) =>
-    createFact({
+  const memoFacts = memoLines.map((line, index) => {
+    const writingConstraint = isWritingConstraintFact(line);
+    const negatedExperience = isNegatedExperienceLine(line);
+    const type = writingConstraint ? "writing_constraint" : classifyUserFactType(line);
+    return createFact({
       id: `uf${index + 1}`,
       field: "memo",
-      type: classifyUserFactType(line),
+      type,
       value: line,
       source: "user_memory",
-      confidence: 0.92,
-      allowedAsExperience: actualExperience && !EXPERIENCE_NEGATION_PATTERN.test(line)
-    })
-  );
-  const userFacts = memoFacts.map((fact) => ({
+      confidence: writingConstraint ? 0.7 : 0.92,
+      allowedAsExperience: actualExperience && !negatedExperience && !writingConstraint,
+      coverageRequired: !writingConstraint,
+      claimCategory: writingConstraint ? "claimBoundary" : actualExperience && !negatedExperience ? "actualExperience" : "productOrContextFact"
+    });
+  });
+  const coverageMemoFacts = memoFacts.filter((fact) => fact.coverageRequired !== false);
+  const constraintFacts = memoFacts.filter((fact) => fact.coverageRequired === false);
+  const userFacts = coverageMemoFacts.map((fact) => ({
     id: fact.id,
     type: fact.type,
     value: fact.value,
     aliases: uniqueTexts([normalizeFactMatch(fact.value), compact(fact.value)]).filter((alias) => alias && alias !== fact.value),
     priority: ["actual_usage", "positive_experience", "concern_or_drawback", "future_intent"].includes(fact.type) ? "critical" : "high",
     confidence: fact.confidence,
-    source: fact.source
+    source: fact.source,
+    claimCategory: fact.claimCategory,
+    coverageRequired: fact.coverageRequired
   }));
   const rawFacts = [
     createFact({
@@ -746,7 +770,8 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
     id: fact.id || `f${index + 1}`
   }));
 
-  const supported = uniqueTexts(facts.map((fact) => fact.value));
+  const supportedFacts = facts.filter((fact) => fact.coverageRequired !== false);
+  const supported = uniqueTexts(supportedFacts.map((fact) => fact.value));
   const visuallySupported = uniqueTexts(
     facts.filter((fact) => fact.field === "visualLabel").map((fact) => fact.value)
   );
@@ -760,6 +785,28 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
       .filter((fact) => fact.field === "visualLabel")
       .map((fact) => fact.id)
   );
+  const hasImageEvidence = imageEvidence.length > 0 || Boolean(imageAnalysis?.canAssertVisualFacts);
+  const actualExperienceProvided = actualExperience && experienceEvidence.length > 0;
+  const productLikeNoActualNoImage = PRODUCT_REFERENCE_CATEGORIES.has(analysis.category) && !actualExperienceProvided && !hasImageEvidence;
+  const actualExperienceFacts = facts.filter((fact) => fact.allowedAsExperience);
+  const productInfoFacts = supportedFacts.filter((fact) => !fact.allowedAsExperience && fact.field !== "visualLabel");
+  const sentimentFacts = supportedFacts.filter((fact) => ["positive_experience", "concern_or_drawback", "future_intent", "fit_or_feel"].includes(fact.type));
+  const imageFacts = facts.filter((fact) => fact.field === "visualLabel");
+  const allowedClaimTypes = productLikeNoActualNoImage
+    ? ["product_info", "selection_criteria", "pre_purchase_check", "conditional_fit", "safe_generalization"]
+    : ["input_fact", "actual_experience_when_evidenced", "image_fact_when_evidenced", "safe_generalization"];
+  const forbiddenClaimTypes = [
+    "unprovided direct experience",
+    "unprovided use period",
+    "unprovided use place or situation",
+    "unprovided companion/family/child context",
+    "unprovided effect or satisfaction",
+    "unprovided discomfort from actual use",
+    "unprovided repurchase/revisit intent",
+    "unverified price satisfaction",
+    "unverified delivery/staff/service experience",
+    "internal evaluation or fact-check wording"
+  ];
   const unsupportedFields = uniqueTexts([
     ...(imageAnalysis?.unsupportedVisualFields || []),
     "exactPrice",
@@ -780,6 +827,44 @@ export const buildBlogFactMap = ({ form = {}, analysis = analyzeBlogWritingInput
     denied: unsupportedFields,
     memoText,
     experienceStatus,
+    actualExperienceProvided,
+    productLikeNoActualNoImage,
+    factGroups: {
+      productInfoFactIds: productInfoFacts.map((fact) => fact.id).filter(Boolean),
+      actualExperienceFactIds: actualExperienceFacts.map((fact) => fact.id).filter(Boolean),
+      sentimentFactIds: sentimentFacts.map((fact) => fact.id).filter(Boolean),
+      imageFactIds: imageFacts.map((fact) => fact.id).filter(Boolean),
+      constraintFactIds: constraintFacts.map((fact) => fact.id).filter(Boolean)
+    },
+    constraintFacts: constraintFacts.map((fact) => ({
+      id: fact.id,
+      type: fact.type,
+      value: fact.value,
+      source: fact.source,
+      claimCategory: fact.claimCategory
+    })),
+    claimBoundaries: {
+      actualExperienceProvided,
+      hasImageEvidence,
+      productLikeNoActualNoImage,
+      allowedClaimTypes,
+      forbiddenClaimTypes,
+      inferenceRestrictedFields: [
+        "direct experience",
+        "duration",
+        "place or situation",
+        "family or companion",
+        "effect",
+        "satisfaction",
+        "discomfort",
+        "repurchase intent",
+        "price satisfaction",
+        "delivery",
+        "staff kindness",
+        "consulting experience",
+        "visual observation without image"
+      ]
+    },
     experienceEvidence,
     imageEvidence,
     contextEvidence: [],
@@ -995,7 +1080,7 @@ export const createExperienceGuard = ({ category = "", experienceStatus = "unkno
   const experienceTone = getExperienceTone(experienceStatus);
   const explicitActual = ACTUAL_EXPERIENCE_STATUSES.has(normalizeExplicitExperienceStatus(form.experienceStatus || form.visitStatus || ""));
   const actualEvidenceCount = Array.isArray(factMap?.experienceEvidence) ? factMap.experienceEvidence.length : 0;
-  const actualExperience = experienceTone === "actual-review" && (actualEvidenceCount > 0 || explicitActual);
+  const actualExperience = Boolean(factMap?.actualExperienceProvided) || (experienceTone === "actual-review" && (actualEvidenceCount > 0 || explicitActual));
   const productLikeCategory = PRODUCT_REFERENCE_CATEGORIES.has(category);
   const imageEvidence = hasConcreteImageEvidence(imageAnalysis);
   const mustUseReferenceTone = productLikeCategory && !imageEvidence && !actualExperience;
@@ -1008,7 +1093,13 @@ export const createExperienceGuard = ({ category = "", experienceStatus = "unkno
     noImage: !imageEvidence,
     mustUseReferenceTone,
     allowedTone: mustUseReferenceTone ? "product information, selection criteria, pre-purchase checks" : experienceTone,
+    allowedClaimTypes: factMap?.claimBoundaries?.allowedClaimTypes || (
+      mustUseReferenceTone
+        ? ["product_info", "selection_criteria", "pre_purchase_check", "conditional_fit", "safe_generalization"]
+        : ["input_fact", "actual_experience_when_evidenced", "image_fact_when_evidenced", "safe_generalization"]
+    ),
     forbiddenClaimTypes: [
+      ...(factMap?.claimBoundaries?.forbiddenClaimTypes || []),
       "unprovided direct use or visit",
       "unprovided duration",
       "unprovided place or situation",
@@ -1098,7 +1189,7 @@ export const createWriterPlan = ({ form = {}, analysis = analyzeBlogWritingInput
 
 const CLAIM_HARD_FAIL_TYPES = new Set(["unsupported", "contradictory", "metaGuidance", "placeholder"]);
 const META_GUIDANCE_PATTERN =
-  /사용자\s*메모|제공된\s*정보|실제\s*사용\s*메모가\s*없으면|해당\s*(?:제품|서비스|상품|장소|메뉴)|본문에서|글을\s*읽는\s*사람|글을\s*작성할\s*때|확인\s*필요|정보가\s*부족하면|작성\s*가이드|최종\s*검수표|입력\s*사실\s*기준|unsupported\s*claim|fact\s*판단|검증\s*결과|writerPlan|factMap|프롬프트/u;
+  /사용자\s*메모|제공된\s*정보|실제\s*사용\s*메모가\s*없으면|해당\s*(?:제품|서비스|상품|장소|메뉴)|본문에서|글을\s*읽는\s*사람|글을\s*작성할\s*때|확인\s*필요|정보가\s*부족하면|작성\s*가이드|최종\s*검수표|입력\s*사실\s*기준|unsupported\s*claim|claim\s*ledger|fact\s*판단|fact\s*map|검증\s*결과|내부\s*판단|위\s*조건을\s*반영하면|자동\s*평가\s*기준|writerPlan|factMap|프롬프트/u;
 const PLACEHOLDER_PATTERN = /TODO|TBD|\{[^}]+\}|\[[^\]]*(?:제목|내용|설명|placeholder)[^\]]*\]|사진은\s*어디/u;
 const EXPERIENCE_CLAIM_PATTERN =
   /다녀왔|다녀온|방문했|방문함|들렀|갔다\s*왔|가봤|머물렀|묵었|숙박했|먹었|마셨|써봤|사용해봤|사용함|사용했|구매했|착용했|수강했|참여했|체험했|이용했|편했|기억남|기억났|남았|좋았/u;

@@ -815,12 +815,32 @@ const ensureEntityTitle = ({ title = "", primaryEntity = "", mainKeyword = "" } 
   return `${primaryEntity} ${tail}`.trim();
 };
 
+const toReferenceKeyword = (value = "") =>
+  String(value || "")
+    .replace(/(?:실제\s*)?(?:사용|착용|방문|구매|수강|숙박|이용)\s*(?:후기|리뷰|경험담)/gu, "선택 기준")
+    .replace(/실사용\s*(?:후기|리뷰)/gu, "선택 기준")
+    .replace(/직접\s*(?:써본|사용한|방문한|구매한|착용한)\s*(?:후기|리뷰)?/gu, "선택 기준")
+    .replace(/\b(?:review|real\s*use)\b/giu, "check")
+    .replace(/후기|리뷰/gu, "선택 기준")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+
+const sanitizeReferenceTitle = ({ title = "", primaryEntity = "", mainKeyword = "" } = {}) => {
+  const referenceKeyword = toReferenceKeyword(mainKeyword);
+  const sanitized = toReferenceKeyword(title);
+  const base = sanitized || referenceKeyword || primaryEntity || mainKeyword;
+  return ensureEntityTitle({ title: base, primaryEntity, mainKeyword: referenceKeyword || mainKeyword });
+};
+
 const ensureEntityTitleCandidates = ({ candidates = [], primaryEntity = "", mainKeyword = "", experienceGuard = null } = {}) => {
-  const base = normalizeList(candidates).slice(0, 5);
   const referenceMode = Boolean(experienceGuard?.mustUseReferenceTone || experienceGuard?.actualExperience === false);
+  const base = normalizeList(candidates)
+    .slice(0, 5)
+    .map((title) => (referenceMode ? sanitizeReferenceTitle({ title, primaryEntity, mainKeyword }) : title));
+  const referenceKeyword = toReferenceKeyword(mainKeyword) || mainKeyword;
   const templates = referenceMode
     ? [
-        `${primaryEntity} ${mainKeyword}`.trim(),
+        `${primaryEntity} ${referenceKeyword}`.trim(),
         `${primaryEntity} 선택 전 확인할 점`.trim(),
         `${primaryEntity} 구성 비교 기준`.trim(),
         `${primaryEntity} 구매 전 살펴볼 부분`.trim(),
@@ -887,7 +907,7 @@ const buildGroundedFactExpansionParagraph = ({ primaryEntity = "", mainKeyword =
     }
     const templates = [
       `${entity}에서 먼저 볼 부분은 "${factText}"였다. 이 내용은 실제 사용 장면을 새로 만들기보다 제품 정보와 선택 기준을 연결해 주는 역할을 한다. 그래서 장점 단정 대신 어떤 조건에서 확인하면 좋을지로 정리했다.`,
-      `"${factText}"라는 내용은 ${entity}를 비교할 때 따로 떼어 볼 만하다. 구매 전 단계에서는 만족도나 효과를 말하기보다 크기, 구성, 소재, 용도처럼 확인 가능한 항목을 차례로 보는 편이 자연스럽다.`,
+      `"${factText}"라는 내용은 ${entity}를 비교할 때 따로 떼어 볼 만하다. 구매 전 단계에서는 결론을 앞서 말하기보다 크기, 구성, 소재, 용도처럼 확인 가능한 항목을 차례로 보는 편이 자연스럽다.`,
       `${entity}를 고르기 전에는 "${factText}"를 기준으로 비슷한 제품과 비교해볼 수 있다. 지금 단계에서는 사용 기간이나 장소를 덧붙이지 않고, 선택 전에 다시 확인할 항목으로 남기는 쪽이 읽기 편하다.`,
       `"${factText}"는 ${entity}를 소개할 때 중심을 잡아주는 정보다. 이 내용을 기준으로 필요한 사람, 확인할 조건, 비교할 지점을 나누면 후기가 아닌 제품 정보 기반 글로도 충분히 구체적이다.`
     ];
@@ -903,6 +923,107 @@ const buildGroundedFactExpansionParagraph = ({ primaryEntity = "", mainKeyword =
     `"${factText}"는 ${entity}를 판단할 때 빠지면 글의 균형이 흔들리는 정보다. 좋은 점만 강조하거나 아쉬운 점만 키우지 않고, 전체 판단에서 어디에 놓이는지 중심으로 정리했다.`
   ];
   return templates[index % templates.length];
+};
+
+const REFERENCE_SAFE_FACT_BLOCK_PATTERN =
+  /본문|원고|작성|쓰지\s*말|넣지\s*말|만들지\s*말|금지|claim\s*ledger|unsupported\s*claim|fact\s*map|입력\s*사실\s*기준|검증\s*결과|내부\s*판단|자동\s*평가\s*기준/u;
+
+const REFERENCE_UNSAFE_EXPERIENCE_PATTERN =
+  /직접\s*(?:방문|사용|구매|착용|수강|숙박|이용)|(?:써|사용|착용|방문|구매|수강|숙박|이용)(?:해봤|해보니|했(?:고|다|어요|습니다)|함)|며칠\s*써|책상에\s*놓아보|확실히\s*느꼈|재구매\s*의사|재방문\s*의사|가격\s*만족|배송\s*(?:받|경험)|직원\s*(?:응대|친절)|상담\s*(?:받|경험)/u;
+
+const cleanReferenceFactText = (value = "") =>
+  String(value || "")
+    .replace(/\s+/gu, " ")
+    .replace(/본문에는?/gu, "")
+    .replace(/써야\s*한다|써야\s*합니다|들어가야\s*한다|들어가야\s*합니다/gu, "")
+    .trim();
+
+const getReferenceCoverageFacts = (factMap = {}) =>
+  (factMap.userFacts || [])
+    .filter((fact) => fact.coverageRequired !== false && Number(fact.confidence || 0) >= 0.85)
+    .map((fact) => ({ ...fact, value: cleanReferenceFactText(fact.value || "") }))
+    .filter((fact) => fact.value && !REFERENCE_SAFE_FACT_BLOCK_PATTERN.test(fact.value) && !REFERENCE_UNSAFE_EXPERIENCE_PATTERN.test(fact.value));
+
+const uniqueReferenceTexts = (items = []) => {
+  const seen = new Set();
+  return items
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const key = compact(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+const splitReferenceCheckItems = (facts = [], subKeywords = []) =>
+  uniqueReferenceTexts([
+    ...subKeywords,
+    ...facts.flatMap((fact) =>
+      String(fact.value || "")
+        .replace(/^(?:확인할\s*점은|좋게\s*본\s*점은|아쉬운\s*점은|관심이\s*간\s*부분은)\s*/u, "")
+        .split(/[,、·]/u)
+        .map((item) => item.trim())
+    )
+  ])
+    .map((item) => item.replace(/(?:이다|이라는\s*점이다|라는\s*점이다|점이다)$/u, "").trim())
+    .filter((item) => item.length >= 2 && item.length <= 32)
+    .filter((item) => !REFERENCE_SAFE_FACT_BLOCK_PATTERN.test(item) && !REFERENCE_UNSAFE_EXPERIENCE_PATTERN.test(item))
+    .slice(0, 8);
+
+const buildReferenceSafeBody = ({ pipelineContext = {}, targetCharCount = 0 } = {}) => {
+  const primaryEntity = pipelineContext.primaryEntity || pipelineContext.mainKeyword || "이 제품";
+  const mainKeyword = pipelineContext.mainKeyword || "";
+  const referenceKeyword = toReferenceKeyword(mainKeyword);
+  const subKeywords = pipelineContext.subKeywords || [];
+  const facts = getReferenceCoverageFacts(pipelineContext.factMap || {});
+  const checkItems = splitReferenceCheckItems(facts, subKeywords);
+  const target = Number(targetCharCount || pipelineContext.writerPlan?.effectiveTargetCharCount || 0) || 0;
+  const minTarget = target > 0 ? Math.ceil(target * 0.85) : 0;
+  const maxTarget = target > 0 ? Math.floor(target * 1.1) : Infinity;
+  const paragraphs = [];
+  const keywordPhrase = referenceKeyword && !includesCompact(primaryEntity, referenceKeyword) ? `${referenceKeyword} 관점에서 ` : "";
+
+  paragraphs.push(
+    `${primaryEntity}는 ${keywordPhrase}구매 전에 정보와 조건을 나눠 살펴볼 만한 주제다. 구체적인 자료나 체험 정보가 없는 경우에는 생활 장면을 단정하기보다 제품명, 용도, 구성, 비교할 항목을 차분히 정리하는 편이 자연스럽다. 이렇게 접근하면 후기처럼 꾸미지 않아도 선택 전에 봐야 할 기준이 분명해진다.`
+  );
+
+  facts.forEach((fact, index) => {
+    const factText = cleanReferenceFactText(fact.value);
+    if (!factText) return;
+    const templates = [
+      `${factText} 이 내용은 ${primaryEntity}를 볼 때 먼저 분리할 수 있는 정보다. 여기서는 생활 장면을 새로 만들지 않고, 구매 전에 확인 가능한 항목으로만 연결한다. 제품을 고르기 전에는 이 문장이 말하는 용도와 조건이 내 정리 목적과 맞는지부터 보는 흐름이 좋다.`,
+      `${primaryEntity}에서 따로 볼 부분은 ${factText} 이다. 이 정보는 결론을 앞서 단정하기보다 비교 기준을 잡는 데 더 알맞다. 비슷한 제품과 함께 볼 때도 크기, 구성, 소재, 마감처럼 눈으로 확인하거나 상세 정보에서 확인할 수 있는 항목을 우선순위로 두면 된다.`,
+      `${factText} 라는 내용은 구매 전 체크 포인트로 옮겨볼 수 있다. 질감이나 수납감처럼 추가로 확인해야 하는 부분은 단정하지 않고, 지금 단계에서는 확인할 항목과 비교할 순서를 정리하는 정도가 적절하다.`
+    ];
+    paragraphs.push(templates[index % templates.length]);
+  });
+
+  if (checkItems.length > 0) {
+    paragraphs.push(
+    `${primaryEntity}를 비교할 때는 ${checkItems.slice(0, 4).join(", ")} 같은 항목을 한 번에 묶어 볼 수 있다. 항목을 나눠두면 제품 설명을 읽을 때도 어떤 부분이 내 목적과 맞는지 빠르게 볼 수 있고, 비슷한 제품 사이에서 우선순위를 정하기 쉽다.`
+    );
+  }
+
+  paragraphs.push(
+    `${primaryEntity}가 맞을 수 있는 경우도 조건형으로 정리하는 편이 안전하다. 작은 물건을 용도별로 나누고 싶은 사람, 구성과 마감 정보를 먼저 보는 사람, 상세 페이지나 제품 설명을 다시 확인한 뒤 결정하려는 사람에게는 구매 전 체크리스트로 활용하기 좋다. 반대로 질감, 바닥 접촉면, 수납감처럼 추가 확인이 필요한 항목은 결정을 미루고 더 많은 정보를 보는 쪽이 낫다.`
+  );
+
+  paragraphs.push(
+    `마무리하면 ${primaryEntity}는 지금 단계에서 최종 평가보다 구매 전 확인 포인트로 정리하는 것이 알맞다. 칸 크기와 소재, 모서리 마감, 바닥 접촉면처럼 확인 가능한 기준을 먼저 두고, 상세 정보가 확보되면 그때 조건과 맞는지 비교하면 된다.`
+  );
+
+  while (minTarget > 0 && charLength(joinBodyParagraphs(paragraphs)) < minTarget && paragraphs.length < 10) {
+    const nextItem = checkItems[(paragraphs.length - 1) % Math.max(1, checkItems.length)] || referenceKeyword || primaryEntity;
+    const candidate =
+      `${nextItem}도 따로 볼 만한 기준이다. 이 항목은 한쪽으로 단정하기보다 제품 상세 정보에서 확인할 수 있는지, 다른 후보와 비교했을 때 차이가 분명한지, 구매 목적과 맞는지를 나눠 보면 된다. 이런 식으로 기준을 쪼개면 정보 기반 소개만으로도 선택 전 흐름이 충분히 구체적이다.`;
+    const candidateBody = joinBodyParagraphs([...paragraphs, candidate]);
+    if (charLength(candidateBody) > maxTarget) break;
+    paragraphs.splice(Math.max(1, paragraphs.length - 1), 0, candidate);
+  }
+
+  return joinBodyParagraphs(paragraphs);
 };
 
 export const getTargetLengthDecision = ({
@@ -1000,7 +1121,9 @@ const repairGroundedDraft = ({ body = "", titleCandidates = [], finalTitle = "",
   const referenceMode = Boolean(experienceGuard?.mustUseReferenceTone || pipelineContext.writerPlan?.tone === "reference");
   const applied = [];
   let repairedBody = String(body || "").trim();
-  let repairedTitle = ensureEntityTitle({ title: finalTitle, primaryEntity, mainKeyword });
+  let repairedTitle = referenceMode
+    ? sanitizeReferenceTitle({ title: finalTitle, primaryEntity, mainKeyword })
+    : ensureEntityTitle({ title: finalTitle, primaryEntity, mainKeyword });
   let repairedTitles = ensureEntityTitleCandidates({ candidates: titleCandidates, primaryEntity, mainKeyword, experienceGuard });
 
   if (repairedTitle !== finalTitle) applied.push("primaryEntityTitle");
@@ -1175,6 +1298,51 @@ const removeUnsafeClaimSegments = ({
       });
       break;
     }
+  }
+
+  for (let pass = 0; pass < 10; pass += 1) {
+    summary = getSummary();
+    if (!summary.hardFail) break;
+    const remainingHardTexts = summary.hardFailures.map((item) => String(item?.text || "").trim()).filter(Boolean);
+    if (remainingHardTexts.length === 0) break;
+    const nextParagraphs = splitBodyParagraphs(nextBody);
+    let removed = false;
+    for (const paragraph of nextParagraphs) {
+      const paragraphHasHardText = remainingHardTexts.some((textValue) => paragraph === textValue || paragraph.includes(textValue));
+      if (!paragraphHasHardText) continue;
+      const candidateParagraphs = nextParagraphs.filter((item) => item !== paragraph);
+      const candidateBody = joinBodyParagraphs(candidateParagraphs);
+      const beforeLength = charLength(nextBody);
+      const afterLength = charLength(candidateBody);
+      const reductionRatio = beforeLength > 0 ? (beforeLength - afterLength) / beforeLength : 0;
+      const coverage = calculateInputFactCoverage({
+        factMap: pipelineContext.factMap,
+        body: candidateBody
+      });
+      const lengthOk = minTarget === 0 || charLength(candidateBody) >= minTarget;
+      const priorityCoverageOk = Number(coverage.criticalFactCoverage || 0) >= 1 && Number(coverage.highFactCoverage || 0) >= 0.9;
+      if (reductionRatio > 0.1) {
+        diagnostics.skippedRemovals.push({
+          reason: "unsafeClaimParagraphRemoval",
+          skippedReason: "largePostProcessingReduction",
+          removedCharCount: Math.max(0, beforeLength - afterLength),
+          reductionRatio: Number(reductionRatio.toFixed(3))
+        });
+        continue;
+      }
+      if (lengthOk && Number(coverage.inputFactCoverage || 0) >= 0.9 && priorityCoverageOk) {
+        nextBody = candidateBody;
+        applied.push("unsafeClaimParagraphRemoval");
+        diagnostics.removals.push({
+          reason: "unsafeClaimParagraphRemoval",
+          removedCharCount: Math.max(0, beforeLength - afterLength),
+          reductionRatio: Number(reductionRatio.toFixed(3))
+        });
+        removed = true;
+        break;
+      }
+    }
+    if (!removed) break;
   }
 
   summary = getSummary();
@@ -1890,6 +2058,9 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
     allowedClaims: draft.contentPackage?.writerPlan?.factPolicy?.allowedClaims || [],
     forbiddenClaims: draft.contentPackage?.writerPlan?.factPolicy?.forbiddenClaims || [],
     unknownFields: draft.contentPackage?.writerPlan?.factPolicy?.unknownFields || [],
+    experienceGuard: draft.contentPackage?.writerPlan?.experienceGuard || null,
+    claimBoundaries: draft.contentPackage?.factMap?.claimBoundaries || null,
+    constraintFacts: draft.contentPackage?.factMap?.constraintFacts || [],
     issueCodes: getRevisionIssueCodes(humanQuality),
     revisionInstructions: humanQuality.revisionInstructions || [],
     outputSchema: {
@@ -1911,6 +2082,11 @@ const buildRevisionMessages = ({ form = {}, draft = {}, humanQuality = {}, revis
     role: "system",
     content:
       "Revision policy: if score is 90-94, repair the failing sections only; if score is below 90 or hardFail is true, rebuild the section plan and rewrite the whole draft. When targetLengthDelta.shortageChars is positive, add the exact missing amount as grounded detail from missingFactIds, missingFactValues, and sectionLengthDiagnostics shortage sections; do not pad with general advice. Use section budgets to decide which section receives each missing fact. Always fix missingFactIds, unsupportedClaims, primaryEntity placement, target length shortage/excess, generic filler, duplicated paragraphs, and category contamination. Do not invent new experiences. Return only titleCandidates, finalTitle, sections, faq, and hashtags."
+  },
+  {
+    role: "system",
+    content:
+      "If revisionFocus.experienceGuard.mustUseReferenceTone is true, rebuild as product information, selection criteria, and pre-purchase checks only. Do not transfer constraintFacts into the blog body, and do not write literal internal field names such as claim ledger, unsupported claim, fact map, or verification result."
   },
   {
     role: "user",
@@ -2481,6 +2657,42 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
   if (safetyRepair.applied.length > 0) {
     postProcessingSteps = [...postProcessingSteps, ...safetyRepair.applied.map((item) => `safety-${item}`)];
   }
+  const referenceMode = Boolean(pipelineContext.writerPlan?.experienceGuard?.mustUseReferenceTone || pipelineContext.writerPlan?.tone === "reference");
+  let referenceRewrite = { applied: [], diagnostics: {} };
+  if (referenceMode && safetyRepair.hardFailRemaining) {
+    const referenceBody = buildReferenceSafeBody({ pipelineContext, targetCharCount });
+    const referenceSummary = summarizeClaimLedger(createClaimLedger({
+      title: finalTitle,
+      body: referenceBody,
+      faq: [],
+      hashtags,
+      factMap: pipelineContext.factMap,
+      contextFacts: pipelineContext.contextFacts,
+      imageAnalysis: pipelineContext.imageAnalysis,
+      experienceStatus: pipelineContext.experienceStatus
+    }));
+    if (referenceBody && !referenceSummary.hardFail) {
+      body = referenceBody;
+      faqItems = [];
+      referenceRewrite = {
+        applied: ["referenceSafeBodyRewrite"],
+        diagnostics: {
+          previousHardFailCount: safetyRepair.diagnostics?.removals?.length || 0,
+          finalCharCount: charLength(referenceBody),
+          claimLedgerHardFail: false
+        }
+      };
+      postProcessingSteps = [...postProcessingSteps, "safety-referenceSafeBodyRewrite"];
+    } else {
+      referenceRewrite = {
+        applied: [],
+        diagnostics: {
+          skippedReason: referenceBody ? "reference-rewrite-hard-fail" : "reference-rewrite-empty",
+          claimLedgerHardFail: Boolean(referenceSummary.hardFail)
+        }
+      };
+    }
+  }
   const lengthCompression = compressOverTargetBody({
     body,
     finalTitle,
@@ -2682,6 +2894,7 @@ const mergeAcceptedLlmDraft = ({ form = {}, fallbackDraft = {}, llmDraft = {} } 
         hardFailRemaining: Boolean(safetyRepair.hardFailRemaining),
         diagnostics: safetyRepair.diagnostics
       },
+      referenceRewrite,
       targetLengthCompression: {
         applied: lengthCompression.applied,
         diagnostics: lengthCompression.diagnostics
