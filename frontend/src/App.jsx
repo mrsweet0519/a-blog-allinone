@@ -7,6 +7,7 @@ import ContentMaker from "./pages/ContentMaker.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import ProductReviewMaker from "./pages/ProductReviewMaker.jsx";
 import Settings from "./pages/Settings.jsx";
+import SimpleBlogMaker from "./pages/SimpleBlogMaker.jsx";
 import Storage from "./pages/Storage.jsx";
 import TistoryOneClickMaker from "./pages/TistoryOneClickMaker.jsx";
 import { clearAccessSession, loadAccessSession } from "./lib/accessControl.js";
@@ -36,6 +37,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/app" element={<Dashboard />} />
         <Route path="/one-click/naver" element={<ProductReviewMaker />} />
+        <Route path="/beta/naver-simple" element={<SimpleBlogMaker />} />
         <Route path="/one-click/tistory" element={<TistoryOneClickMaker />} />
         <Route path="/one-click/comments" element={<CommentReplyManager modeVariant="quick" />} />
         <Route path="/optimized/blog" element={<ContentMaker />} />

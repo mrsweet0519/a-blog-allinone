@@ -44,6 +44,7 @@ export const makerStatuses = {
   generating: "생성 중",
   generated: "생성 완료",
   editing: "수정 중",
+  error: "생성 실패",
   saved: "저장됨",
   copied: "복사 완료"
 };

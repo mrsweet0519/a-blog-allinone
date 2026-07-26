@@ -6,6 +6,7 @@ const statusClassName = {
   generating: "border-amber/35 bg-amber/15 text-[#7a5a1e]",
   generated: "border-moss/30 bg-moss/10 text-moss",
   editing: "border-coral/30 bg-coral/10 text-coral",
+  error: "border-coral/30 bg-coral/10 text-coral",
   saved: "border-moss/30 bg-moss/10 text-moss",
   copied: "border-amber/35 bg-amber/15 text-[#7a5a1e]"
 };

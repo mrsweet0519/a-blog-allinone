@@ -20,6 +20,10 @@ import {
   extractProductInfoFieldsWithMetaFromText,
   parseSubKeywords
 } from "../lib/productReviewGenerator.js";
+import {
+  fetchBlogDraftWithPolicy,
+  SIMPLE_BLOG_FAILURE_MESSAGE
+} from "../lib/blogGenerationRoute.js";
 import { saveDraft } from "../lib/localDrafts.js";
 
 const initialForm = {
@@ -37,6 +41,7 @@ const initialForm = {
   features: "",
   cautions: "",
   purchaseNotes: "",
+  experienceMode: "information_only",
   experienceMemo: "",
   emphasisPoints: "",
   avoidWords: "무조건, 보장, 완벽, 즉시효과",
@@ -59,6 +64,7 @@ const createEmptyResult = (generationId = "") => ({
   mainKeyword: "",
   subKeywords: [],
   searchIntent: null,
+  experienceMode: "information_only",
   experienceStatus: "",
   informationSufficiency: null,
   factMap: null,
@@ -98,6 +104,7 @@ const reviewCategoryOptions = [
 ];
 const MIN_TARGET_CHAR_COUNT = 800;
 const MAX_TARGET_CHAR_COUNT = 4000;
+const MIN_EXPERIENCE_MEMO_LENGTH = 10;
 const MAX_REVIEW_IMAGES = 10;
 const MAX_VISION_IMAGES = 3;
 const MAX_VISION_IMAGE_BYTES = 1_600_000;
@@ -197,6 +204,10 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
   const primaryEntity = draft.primaryEntity || packageData.primaryEntity || packageData.blogWriterAnalysis?.primaryEntity || "";
   const subKeywords = draft.subKeywords || packageData.subKeywords || packageData.blogWriterAnalysis?.subKeywords || [];
   const searchIntent = draft.searchIntent || packageData.searchIntent || packageData.blogWriterAnalysis?.searchIntent || null;
+  const experienceMode =
+    draft.experienceMode ||
+    packageData.experienceMode ||
+    (draft.experienceStatus === "actual" ? "actual_experience" : "information_only");
   const experienceStatus = draft.experienceStatus || packageData.experienceStatus || packageData.blogWriterAnalysis?.experienceStatus || "";
   const informationSufficiency =
     draft.informationSufficiency || packageData.informationSufficiency || packageData.blogWriterAnalysis?.informationSufficiency || null;
@@ -263,6 +274,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
     mainKeyword,
     subKeywords,
     searchIntent,
+    experienceMode,
     experienceStatus,
     informationSufficiency,
     factMap,
@@ -293,6 +305,7 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
           subKeywords,
           resultMode,
           searchIntent,
+          experienceMode,
           experienceStatus,
           informationSufficiency,
           factMap,
@@ -323,7 +336,7 @@ const resultToClipboard = (result, { includeImageMarkers = true } = {}) => {
   const finalTitle = getResultFinalTitle(result);
   const body = getResultBody(result);
   const hashtags = packageData.hashtags || result.hashtags || [];
-  const faqItems = packageData.faqItems || [];
+  const faqItems = packageData.faqItems || result.faq || [];
 
   if (packageData) {
     return [
@@ -447,6 +460,7 @@ const createFormSignature = (formState = {}, imageItems = []) =>
     topic: normalizeSignatureText(formState.productName),
     mainKeyword: normalizeSignatureText(formState.mainKeyword),
     subKeywords: parseSubKeywords(formState.subKeywords, formState.mainKeyword).map(normalizeSignatureText),
+    experienceMode: formState.experienceMode || "information_only",
     memo: normalizeSignatureText(formState.experienceMemo),
     photos: imageItems.map((item, index) => ({
       index,
@@ -546,7 +560,13 @@ export default function ProductReviewMaker() {
     [form.subKeywords, keywordParts, resolvedMainKeyword]
   );
   const currentFormSignature = useMemo(() => createFormSignature(form, images), [form, images]);
-  const isReady = useMemo(() => Boolean(reviewTopic), [reviewTopic]);
+  const actualExperienceMissing =
+    form.experienceMode === "actual_experience" &&
+    form.experienceMemo.replace(/\s+/gu, "").length < MIN_EXPERIENCE_MEMO_LENGTH;
+  const isReady = useMemo(
+    () => Boolean(reviewTopic) && !actualExperienceMissing,
+    [actualExperienceMissing, reviewTopic]
+  );
   const hasResult = Boolean(result.body);
   const isReading = ocrStatus === "reading" || images.some((item) => item.ocrStatus === "reading");
   const hasChangedSinceGeneration = Boolean(
@@ -554,6 +574,8 @@ export default function ProductReviewMaker() {
   );
   const generateButtonLabel = !reviewTopic
     ? "글 주제를 입력해주세요"
+    : actualExperienceMissing
+    ? "직접 사용·방문 내용을 입력해주세요"
     : status === "generating"
     ? "생성 중..."
     : hasResult
@@ -748,11 +770,23 @@ export default function ProductReviewMaker() {
     const mainKeyword = resolvedMainKeyword || topic;
     const targetCharCount = getPayloadTargetCharCount(form.targetCharCount);
     const joinedKeywords = [mainKeyword, ...subKeywords].filter(Boolean).join(", ");
+    const providedInfo = mergeTextBlocks(
+      ...fieldLabels.map(([field, label]) => (form[field] ? `${label}: ${form[field]}` : "")),
+      form.productInfoText,
+      imageText,
+      form.emphasisPoints ? `강조할 내용: ${form.emphasisPoints}` : "",
+      form.experienceMode === "information_only" ? form.experienceMemo : ""
+    );
 
     return {
       ...form,
       topic,
-      memory: form.experienceMemo,
+      primaryEntity: form.productName || topic,
+      experienceMode: form.experienceMode,
+      experienceMemo:
+        form.experienceMode === "actual_experience" ? form.experienceMemo : "",
+      providedInfo,
+      memory: form.experienceMode === "actual_experience" ? form.experienceMemo : "",
       memo: form.experienceMemo,
       productName: form.productName || topic,
       mainKeyword,
@@ -795,31 +829,22 @@ export default function ProductReviewMaker() {
   };
 
   const requestBlogDraft = async (payload, generationId) => {
-    try {
-      const response = await fetch("/api/generate-blog", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      });
+    const { draft, fallbackUsed } = await fetchBlogDraftWithPolicy({
+      payload,
+      search: window.location.search,
+      legacyFallback: () => createLocalFallbackDraft(payload, generationId)
+    });
 
-      if (!response.ok) {
-        throw new Error("blog-writer-api-unavailable");
-      }
+    if (fallbackUsed) return draft;
 
-      const draft = await response.json();
-      return normalizeReviewResult(
-        {
-          ...draft,
-          generationId
-        },
-        generationId,
-        payload
-      );
-    } catch {
-      return createLocalFallbackDraft(payload, generationId);
-    }
+    return normalizeReviewResult(
+      {
+        ...draft,
+        generationId
+      },
+      generationId,
+      payload
+    );
   };
 
   const extractInfoFromImages = async () => {
@@ -889,7 +914,13 @@ export default function ProductReviewMaker() {
   };
 
   const generateReview = async () => {
-    if (!isReady) return;
+    if (!isReady) {
+      if (actualExperienceMissing) {
+        setStatus("error");
+        setDraftMessage("직접 경험형 글을 만들려면 실제 사용·방문 내용을 구체적으로 입력해주세요.");
+      }
+      return;
+    }
 
     const generationId = createGenerationId();
     const generationSignature = currentFormSignature;
@@ -901,8 +932,8 @@ export default function ProductReviewMaker() {
     setDraftId("");
     setDraftMessage("");
 
-    const payload = await createReviewPayload({ selectedTitle: "", generationId });
-    window.setTimeout(async () => {
+    try {
+      const payload = await createReviewPayload({ selectedTitle: "", generationId });
       if (activeGenerationIdRef.current !== generationId) return;
 
       const draft = await requestBlogDraft(payload, generationId);
@@ -914,7 +945,11 @@ export default function ProductReviewMaker() {
       setStatus("generated");
       setDraftId("");
       setDraftMessage("");
-    }, 0);
+    } catch {
+      if (activeGenerationIdRef.current !== generationId) return;
+      setStatus("error");
+      setDraftMessage(SIMPLE_BLOG_FAILURE_MESSAGE);
+    }
   };
 
   const selectTitle = (title) => {
@@ -994,7 +1029,8 @@ export default function ProductReviewMaker() {
       {
         ...result,
         selectedTopic: "원클릭 네이버 블로그 글쓰기",
-        selectedTitleType: "후기형 초안"
+        selectedTitleType:
+          form.experienceMode === "actual_experience" ? "경험형 초안" : "정보형 초안"
       },
       draftId
     );
@@ -1031,7 +1067,7 @@ export default function ProductReviewMaker() {
         : imageKeywordsToClipboard(result.imageSuggestions),
       info: formatKeyValueItems(currentPackageData?.infoSummary || []),
       recommended: linesToClipboard(currentPackageData?.recommendedFor || []),
-      faq: formatFaqItems(currentPackageData?.faqItems || []),
+      faq: formatFaqItems(currentPackageData?.faqItems || result.faq || []),
       checklist: formatChecklistItems(currentPackageData?.finalChecklist || []),
       full: resultToClipboard(result, { includeImageMarkers: true })
     };
@@ -1081,10 +1117,10 @@ export default function ProductReviewMaker() {
             </span>
             <div className="min-w-0">
               <p className="text-[15px] font-bold leading-5 text-ink">
-                사진과 기억나는 내용만 넣어보세요
+                사진과 제공할 내용만 넣어보세요
               </p>
               <p className="mt-0.5 text-[13px] font-semibold leading-5 text-ink/58">
-                제품명, 매장명, 방문 느낌처럼 짧은 메모만 있어도 블로그 후기 초안을 만들 수 있습니다.
+                제품명, 매장명, 확인한 정보처럼 짧은 메모만 있어도 블로그 초안을 만들 수 있습니다.
               </p>
             </div>
           </div>
@@ -1128,14 +1164,79 @@ export default function ProductReviewMaker() {
             </section>
 
             <section className="rounded-2xl bg-[#fbfaf6] p-4">
-              <StepLabel number="4" title="기억나는 내용" optional />
+              <StepLabel number="4" title="작성 기준과 반영할 내용" />
+              <div className="mt-3 grid gap-2">
+                <label
+                  className={`focus-within:ring-2 focus-within:ring-moss flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${
+                    form.experienceMode === "information_only"
+                      ? "border-moss/35 bg-moss/10"
+                      : "border-line/40 bg-white"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="experienceMode"
+                    value="information_only"
+                    checked={form.experienceMode === "information_only"}
+                    onChange={(event) => updateForm("experienceMode", event.target.value)}
+                    className="mt-1 h-4 w-4 accent-[#496f63]"
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-ink/82">제공된 정보만으로 작성</span>
+                    <span className="mt-1 block text-xs font-semibold leading-5 text-ink/50">
+                      실사용 후기 표현 없이 소개, 선택 기준, 확인할 점 중심으로 작성합니다.
+                    </span>
+                  </span>
+                </label>
+                <label
+                  className={`focus-within:ring-2 focus-within:ring-moss flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${
+                    form.experienceMode === "actual_experience"
+                      ? "border-moss/35 bg-moss/10"
+                      : "border-line/40 bg-white"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="experienceMode"
+                    value="actual_experience"
+                    checked={form.experienceMode === "actual_experience"}
+                    onChange={(event) => updateForm("experienceMode", event.target.value)}
+                    className="mt-1 h-4 w-4 accent-[#496f63]"
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-ink/82">
+                      직접 사용·방문 경험을 바탕으로 작성
+                    </span>
+                    <span className="mt-1 block text-xs font-semibold leading-5 text-ink/50">
+                      입력한 실제 경험 범위 안에서만 후기형으로 작성합니다.
+                    </span>
+                  </span>
+                </label>
+              </div>
+              <label className="mt-4 block text-sm font-bold text-ink/72">
+                {form.experienceMode === "actual_experience"
+                  ? "직접 사용·방문한 경험"
+                  : "꼭 반영할 사실이나 내용"}
+                {form.experienceMode === "actual_experience" && (
+                  <span className="text-coral"> *</span>
+                )}
+              </label>
               <textarea
                 value={form.experienceMemo}
                 onChange={(event) => updateForm("experienceMemo", event.target.value)}
                 rows={4}
                 className="focus-ring mt-3 w-full resize-y rounded-2xl border border-line/40 bg-white p-4 text-base leading-7 text-ink/82 placeholder:text-ink/32"
-                placeholder="좋았던 점, 아쉬웠던 점, 아이 반응, 재방문 의사처럼 기억나는 말만 적어주세요."
+                placeholder={
+                  form.experienceMode === "actual_experience"
+                    ? "직접 사용하거나 방문하면서 확인한 내용을 구체적으로 적어주세요."
+                    : "광고주가 제공한 사실, 구성, 규격, 확인할 점을 적어주세요."
+                }
               />
+              {actualExperienceMissing && (
+                <p className="mt-2 text-xs font-bold leading-5 text-coral" role="alert">
+                  직접 경험형 글을 만들려면 실제 사용·방문 내용을 구체적으로 입력해주세요.
+                </p>
+              )}
             </section>
 
             <section className="rounded-2xl bg-[#fbfaf6] p-4">
@@ -1283,6 +1384,14 @@ export default function ProductReviewMaker() {
                 <WandSparkles size={19} aria-hidden="true" />
                 {generateButtonLabel}
               </button>
+              {status === "error" && draftMessage && (
+                <p
+                  className="mt-3 rounded-xl border border-coral/25 bg-coral/10 px-3 py-3 text-sm font-bold leading-6 text-coral"
+                  role="alert"
+                >
+                  {draftMessage}
+                </p>
+              )}
             </section>
           </div>
         </section>
@@ -1373,7 +1482,7 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
     packageData.summary?.targetAdjustmentReason ||
     "";
   const additionalInfoHints = (packageData.additionalInfoHints || []).slice(0, 3);
-  const faqItems = packageData.faqItems || [];
+  const faqItems = packageData.faqItems || result.faq || [];
   const lowInformationNotice = Boolean(targetAdjustmentReason);
 
   const updateSelectedTitle = (title) => {
@@ -1427,6 +1536,19 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
         </button>
       </div>
 
+      {result.publishReady === false && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold leading-6 text-amber-950">
+          <p>입력 사실과 다른 표현이 없는지 확인이 필요한 초안입니다.</p>
+          {result.reviewWarnings?.length > 0 && (
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-semibold leading-5 text-amber-900">
+              {result.reviewWarnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       <article className="rounded-[30px] bg-white p-5 shadow-[0_18px_48px_rgba(31,36,40,0.045)] sm:p-7">
         <header>
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1461,7 +1583,7 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
           {lowInformationNotice && (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-950">
               <p>
-                목표 {formatCharCount(requestedTargetCharCount)}보다 입력 정보가 적어 확인 가능한 경험을 중심으로 {formatCharCount(actualCharCount)} 초안을 만들었습니다.
+                목표 {formatCharCount(requestedTargetCharCount)}보다 입력 정보가 적어 확인 가능한 내용을 중심으로 {formatCharCount(actualCharCount)} 초안을 만들었습니다.
               </p>
               {additionalInfoHints.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-amber-900">
@@ -1475,16 +1597,18 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
         </header>
 
         <ResultDetailSection title="제목 더보기" copyActive={copied === "titles"} onCopy={() => copyText("titles")}>
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={regenerateTitles}
-              className="focus-ring inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
-            >
-              <RefreshCw size={14} aria-hidden="true" />
-              제목 다시 만들기
-            </button>
-          </div>
+          {result.engine !== "llm-simple" && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={regenerateTitles}
+                className="focus-ring inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-moss px-3 text-xs font-bold text-white transition hover:bg-[#456b61]"
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                제목 다시 만들기
+              </button>
+            </div>
+          )}
           <div className="grid gap-2">
             {titleCandidates.slice(0, 5).map((title, index) => {
               const selected = finalTitle === title || result.selectedTitle === title;

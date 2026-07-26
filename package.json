@@ -16,7 +16,8 @@
     "analyze:commercial": "node scripts/analyze-commercial-readiness.mjs",
     "repair:commercial-review": "node scripts/repair-commercial-review.mjs",
     "review:commercial": "node scripts/review-commercial-results.mjs",
-    "test:local": "node tests/local-validation.test.mjs",
+    "test:local": "node tests/local-validation.test.mjs && node tests/simple-beta.test.mjs",
+    "test:simple-beta": "node tests/simple-beta.test.mjs",
     "start": "npm run start --prefix backend"
   },
   "workspaces": [

@@ -6,6 +6,7 @@ import express from "express";
 import { commentAutomationRouter } from "./api/commentAutomationRoutes.js";
 import { commentReplyRouter } from "./api/commentReplyRoutes.js";
 import { contentRouter } from "./api/contentRoutes.js";
+import { simpleBlogRouter } from "./api/simpleBlogRoutes.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendDistPath = path.resolve(dirname, "../../frontend/dist");
@@ -55,6 +56,7 @@ const apiCors = cors((req, callback) => {
   });
 });
 
+app.use("/api/generate-blog-simple", express.json({ limit: "8mb" }));
 app.use(express.json());
 app.use("/api", apiCors);
 
@@ -67,6 +69,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/content", contentRouter);
+app.use("/api/generate-blog-simple", simpleBlogRouter);
 app.use("/api/comment-replies", commentReplyRouter);
 app.use("/api/comment-automation", commentAutomationRouter);
 app.use("/api", (_req, res) => {
