@@ -218,12 +218,16 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
   const targetLengthContract = draft.targetLengthContract || packageData.targetLengthContract || null;
   const requestedTargetCharCount =
     draft.requestedTargetCharCount ||
+    draft.requestedTargetLength ||
     packageData.requestedTargetCharCount ||
+    packageData.requestedTargetLength ||
     targetLengthContract?.requestedTargetCharCount ||
     null;
   const effectiveTargetCharCount =
     draft.effectiveTargetCharCount ||
+    draft.effectiveTargetLength ||
     packageData.effectiveTargetCharCount ||
+    packageData.effectiveTargetLength ||
     targetLengthContract?.effectiveTargetCharCount ||
     packageData.targetLengthRange?.target ||
     packageData.targetCharCount ||
@@ -232,7 +236,8 @@ const normalizeReviewResult = (draft = {}, generationId = "", sourcePayload = nu
     draft.actualCharCount ||
     packageData.actualCharCount ||
     targetLengthContract?.actualCharCount ||
-    Array.from(body).length;
+    draft.bodyLength ||
+    bodyLength;
   const summary = {
     ...(packageData.summary || {}),
     ...(draft.summary || {}),
@@ -1463,15 +1468,21 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
   const blogBody = getResultBody(result);
   const hashtags = packageData.hashtags || result.hashtags || [];
   const mainKeyword = getResultMainKeyword(result);
-  const actualCharCount = packageData.actualCharCount || result.actualCharCount || Array.from(blogBody).length;
+  const actualCharCount =
+    packageData.actualCharCount ||
+    result.actualCharCount ||
+    result.bodyLength ||
+    blogBody.replace(/\s+/g, "").length;
   const requestedTargetCharCount =
     packageData.requestedTargetCharCount ||
     result.requestedTargetCharCount ||
+    result.requestedTargetLength ||
     packageData.summary?.requestedTargetCharCount ||
     null;
   const effectiveTargetCharCount =
     packageData.effectiveTargetCharCount ||
     result.effectiveTargetCharCount ||
+    result.effectiveTargetLength ||
     packageData.summary?.effectiveTargetCharCount ||
     packageData.targetLengthRange?.target ||
     packageData.targetCharCount ||
@@ -1483,7 +1494,9 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
     "";
   const additionalInfoHints = (packageData.additionalInfoHints || []).slice(0, 3);
   const faqItems = packageData.faqItems || result.faq || [];
-  const lowInformationNotice = Boolean(targetAdjustmentReason);
+  const lowInformationNotice =
+    Boolean(targetAdjustmentReason) &&
+    requestedTargetCharCount !== effectiveTargetCharCount;
 
   const updateSelectedTitle = (title) => {
     setResult((current) => ({
@@ -1583,7 +1596,7 @@ function NaverResultSections({ result, images = [], copied, copyText, selectTitl
           {lowInformationNotice && (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold leading-6 text-amber-950">
               <p>
-                목표 {formatCharCount(requestedTargetCharCount)}보다 입력 정보가 적어 확인 가능한 내용을 중심으로 {formatCharCount(actualCharCount)} 초안을 만들었습니다.
+                입력 정보 범위에 맞춰 {formatCharCount(requestedTargetCharCount)} 요청을 약 {formatCharCount(effectiveTargetCharCount)} 정직한 초안으로 조정했습니다.
               </p>
               {additionalInfoHints.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-amber-900">

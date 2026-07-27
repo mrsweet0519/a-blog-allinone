@@ -21,6 +21,8 @@ export const COMMERCIAL_GENERAL_WRITER_PROFILE = Object.freeze({
     "입력하지 않은 경험, 기간, 장소, 동행자, 효과, 만족도, 가격 평가, 배송 상태, 직원 친절도, 재구매 의사를 만들지 않는다.",
     "experienceMode가 information_only이면 제품·서비스 정보와 구매 전 확인 기준 중심으로 작성한다.",
     "experienceMode가 actual_experience이면 experienceMemo에 명시된 경험만 1인칭으로 사용한다.",
+    "입력 사실의 반대 조건을 추론하거나 사실에서 새 만족도, 추천, 효과, 편의성 또는 적합성 평가를 도출하지 않는다.",
+    "입력 사실을 자연스럽게 바꿔 쓸 수 있지만 원문보다 평가 강도를 높이지 않는다.",
     "입력 정보가 적으면 목표 글자 수를 억지로 채우지 않고 honest_draft로 작성한다.",
     "FAQ는 제공된 사실로 답할 필요가 있을 때만 0~2개 작성한다."
   ],
@@ -28,6 +30,7 @@ export const COMMERCIAL_GENERAL_WRITER_PROFILE = Object.freeze({
     "Fact Map, Claim Ledger, unsupported claim, 입력 사실 기준, 자동 평가, 검증 결과처럼 내부 작성 과정을 설명하는 문장",
     "사용자가 입력하지 않은 특정 개인의 정체성, 가족 역할 또는 생활 패턴",
     "사용자가 입력하지 않은 가족, 아이, 남편 또는 다른 동행자 경험",
+    "실제 사용 경험 없음, 제품 정보만 전달받음, 정보형으로 작성함처럼 독자에게 내부 통제 조건을 설명하는 문장",
     "AI가 작성했다는 안내나 독자에게 작성 방법을 지시하는 메타 문장"
   ]
 });
