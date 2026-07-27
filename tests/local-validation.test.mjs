@@ -42,6 +42,7 @@ import {
 import { BLOG_WRITER_OUTPUT_JSON_SCHEMA } from "../shared/blogWriterPrompt.js";
 import {
   buildDiagnosticPayload,
+  classifyWranglerAuthentication,
   DEFAULT_DIAGNOSTIC_TIMEOUT_MS,
   evaluateConnectionResult,
   evaluateOverallResult,
@@ -51,6 +52,7 @@ import {
   parseArgs,
   parseTimeoutMs,
   runDiagnostics,
+  selectLatestPreviewDeployment,
   summarizeDiagnosticResponse
 } from "../scripts/diagnose-blog-preview.mjs";
 import {
@@ -1606,6 +1608,66 @@ assert.deepEqual(parseArgs(["--auto", "--timeout-ms", "180000", "--branch=previe
 });
 assert.equal(parseTimeoutMs("180000"), 180000);
 assert.throws(() => parseTimeoutMs("0"), /positive number/u);
+
+const oauthScopeWarning = [
+  "You are logged in with an OAuth Token",
+  "Account Name: Unit Account",
+  "Token Permissions: pages (write)",
+  "Wrangler is missing some expected Oauth scopes.",
+  "To fix this, run `wrangler login` to refresh your token.",
+  "challenge-widgets.write"
+].join("\n");
+assert.equal(classifyWranglerAuthentication(oauthScopeWarning), "authenticated");
+assert.equal(
+  classifyWranglerAuthentication(
+    "Token Permissions: pages (write)\nTo fix this, run `wrangler login` to refresh your token."
+  ),
+  "authenticated"
+);
+assert.equal(
+  classifyWranglerAuthentication("You are not authenticated. Run wrangler login."),
+  "unauthenticated"
+);
+assert.equal(classifyWranglerAuthentication("Not logged in"), "unauthenticated");
+assert.equal(
+  classifyWranglerAuthentication("To fix this warning, run `wrangler login`."),
+  "unknown"
+);
+
+const previewDeployments = [
+  {
+    Id: "older-deployment",
+    Branch: "canary/fact-grounded-blog-writer",
+    Source: "1111111",
+    Deployment: "https://older.preview.example"
+  },
+  {
+    Id: "matching-deployment",
+    Branch: "canary/fact-grounded-blog-writer",
+    Source: "2222222",
+    Deployment: "https://matching.preview.example"
+  },
+  {
+    Id: "other-branch",
+    Branch: "main",
+    Source: "2222222",
+    Deployment: "https://main.preview.example"
+  }
+];
+assert.equal(
+  selectLatestPreviewDeployment(previewDeployments, {
+    branch: "canary/fact-grounded-blog-writer",
+    source: "2222222"
+  }).Id,
+  "matching-deployment"
+);
+assert.equal(
+  selectLatestPreviewDeployment(previewDeployments, {
+    branch: "canary/fact-grounded-blog-writer",
+    source: "missing"
+  }).Id,
+  "older-deployment"
+);
 
 const originalDiagnosticFetch = globalThis.fetch;
 globalThis.fetch = async (_url, options = {}) =>

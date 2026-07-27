@@ -63,20 +63,35 @@ const runCommand = async (name, args = [], options = {}) => {
 
 const runWrangler = (args = []) => runCommand("npx", ["wrangler", ...args]);
 
+const WRANGLER_AUTHENTICATED_PATTERN =
+  /You are logged in with an OAuth Token|Account Name|Token Permissions/iu;
+const WRANGLER_UNAUTHENTICATED_PATTERN =
+  /You are not authenticated|Not logged in|Authentication required|No OAuth token found/iu;
+
+export const classifyWranglerAuthentication = (output = "") => {
+  const value = String(output || "");
+  if (WRANGLER_AUTHENTICATED_PATTERN.test(value)) return "authenticated";
+  if (WRANGLER_UNAUTHENTICATED_PATTERN.test(value)) return "unauthenticated";
+  return "unknown";
+};
+
 const assertWranglerAuthenticated = async () => {
+  let result;
   try {
-    const result = await runWrangler(["whoami"]);
-    const output = `${result.stdout}\n${result.stderr}`;
-    if (/not authenticated|wrangler login/iu.test(output)) {
-      throw new Error("Wrangler is not authenticated. Run: npx.cmd wrangler login");
-    }
-    return output;
+    result = await runWrangler(["whoami"]);
   } catch (error) {
-    if (/not authenticated|wrangler login/iu.test(error.message)) {
+    const failureOutput = `${error.stdout || ""}\n${error.stderr || ""}\n${error.message || ""}`;
+    if (classifyWranglerAuthentication(failureOutput) === "unauthenticated") {
       throw new Error("Wrangler is not authenticated. Run: npx.cmd wrangler login");
     }
     throw error;
   }
+
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (classifyWranglerAuthentication(output) === "unauthenticated") {
+    throw new Error("Wrangler is not authenticated. Run: npx.cmd wrangler login");
+  }
+  return output;
 };
 
 const getCurrentGitSource = async () => {
